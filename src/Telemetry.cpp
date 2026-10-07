@@ -86,7 +86,7 @@ bool Telemetry::Read(Frame& f, Session& s) {
     next.pit=Value("OnPitRoad",0)!=0; next.inStall=Value("PlayerCarInPitStall",0)!=0;
     next.replay=Value("IsReplayPlaying",0)!=0;
     next.limiterKnown=variables_.contains("EngineWarnings");
-    next.limiter=(static_cast<unsigned>(Value("EngineWarnings",0))&0x10)!=0;
+    next.limiter=(static_cast<unsigned>(Value("EngineWarnings",0))&EngineWarning::PitSpeedLimiter)!=0;
     next.fuel=Value("FuelLevel",-1); next.fuelKnown=next.fuel>=0;
     next.time=Value("SessionTime",0);
     next.timeLeft=Value("SessionTimeRemain",std::numeric_limits<double>::quiet_NaN());
@@ -125,7 +125,7 @@ bool Telemetry::Read(Frame& f, Session& s) {
     if(next.player<0) next.player=s.player;
     if(!next.replay && next.player>=0 && next.player<MaxCars) {
         auto& player=next.cars[next.player];
-        if(!variables_.contains("CarIdxSessionFlags")) player.sessionFlags=next.flags & 0x1f0000u;
+        if(!variables_.contains("CarIdxSessionFlags")) player.sessionFlags=next.flags & SessionFlag::DriverFlags;
         player.towingKnown=variables_.contains("PlayerCarIsTowing") || variables_.contains("PlayerCarTowTime");
         player.towing=variables_.contains("PlayerCarIsTowing")?Value("PlayerCarIsTowing",0)!=0:Value("PlayerCarTowTime",0)>0;
     }

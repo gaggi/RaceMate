@@ -6,7 +6,7 @@ namespace rm {
 namespace {
 constexpr double Epsilon=1e-7;
 bool PaceTime(double value) { return std::isfinite(value) && value>10 && value<1800; }
-bool Caution(const Frame& f) { return (f.flags&(0x8u|0x10u|0x4000u|0x8000u))!=0; }
+bool Caution(const Frame& f) { return (f.flags&SessionFlag::Neutralized)!=0; }
 int Completed(const Car& car) { return car.completed>=0?car.completed:(car.lap>0?car.lap-1:-1); }
 double Mean(const double* values,int count) {
     if(!count) return -1;

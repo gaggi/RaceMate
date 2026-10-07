@@ -234,7 +234,7 @@ void OpenOverlaySettings(int kind) {
             SendMessageW(c,BM_SETCHECK,app.fuelDisplay[i]?BST_CHECKED:BST_UNCHECKED,0);
         }
         control(L"STATIC",L"Average uses all recorded laps.\nAverage 5 / 10 uses the latest laps.",0,24,282,250,55);
-        HWND yellow=control(L"BUTTON",L"Exclude laps with yellow flags",471,24,350,250,24,BS_AUTOCHECKBOX|WS_TABSTOP);
+        HWND yellow=control(L"BUTTON",L"Exclude yellow / red flag laps",471,24,350,250,24,BS_AUTOCHECKBOX|WS_TABSTOP);
         SendMessageW(yellow,BM_SETCHECK,app.excludeYellowFuelLaps?BST_CHECKED:BST_UNCHECKED,0);
     } else if(kind==4) {
         const wchar_t* labels[]={L"Show Track Temperature",L"Show Air Temperature",L"Show Wind",L"Show Track Wetness",L"Show Track Usage",L"Show Wind Direction"};

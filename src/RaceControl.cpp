@@ -55,9 +55,9 @@ void EventRecorder::Update(const Session& s,const Frame& f) {
                 Add(s,f,d,EventType::Offtrack,f.time,"Left the track");
             const int delta=incidents>=0 && previous.incidents>=0?incidents-previous.incidents:0;
             if(delta>0) Add(s,f,d,EventType::Incident,f.time,"+"+std::to_string(delta)+" incident point(s)");
-            const unsigned newPenalty=(car.sessionFlags & ~previous.flags)&(0x10000u|0x20000u);
-            if(newPenalty) Add(s,f,d,EventType::Incident,f.time,(newPenalty&0x20000u)?"Disqualified flag":"Black flag");
-            const bool repair=(car.sessionFlags&0x100000) && !(previous.flags&0x100000);
+            const unsigned newPenalty=(car.sessionFlags & ~previous.flags)&(SessionFlag::Black|SessionFlag::Disqualify);
+            if(newPenalty) Add(s,f,d,EventType::Incident,f.time,(newPenalty&SessionFlag::Disqualify)?"Disqualified flag":"Black flag");
+            const bool repair=(car.sessionFlags&SessionFlag::Repair) && !(previous.flags&SessionFlag::Repair);
             const bool impact=speed>=0 && previous.speed>18 && previous.speed-speed>12 && dt<=1 && car.surface==0;
             if(!car.pit && (repair || impact) && f.time-previous.lastCrash>=10) {
                 Add(s,f,d,EventType::Crash,f.time,repair?"New repair flag; possible crash":"Sudden speed loss off track; possible crash",true); previous.lastCrash=f.time;
@@ -72,7 +72,7 @@ void EventRecorder::Update(const Session& s,const Frame& f) {
         // Keep previous positions until pair-wise pass detection has finished.
         previous.speed=speed; previous.incidents=incidents; previous.flags=car.sessionFlags;
     }
-    if(continuous && s.type=="Race" && f.state==4 && !(f.flags&(0x8|0x10|0x4000|0x8000))) {
+    if(continuous && s.type=="Race" && f.state==4 && !(f.flags&SessionFlag::Neutralized)) {
         for(auto it=passes_.begin();it!=passes_.end();) {
             const auto& a=f.cars[it->car]; const auto& b=f.cars[it->other];
             if(a.pit || b.pit || a.surface!=3 || b.surface!=3 || a.position<=0 || b.position<=0 || a.position>=b.position) it=passes_.erase(it);

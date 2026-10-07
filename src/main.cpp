@@ -164,10 +164,10 @@ std::wstring DriverName(const Row& row,int kind) {
 std::wstring OverlayStatus(const Row& row,int kind) {
     if(row.car.pit) return L"PIT";
     if(row.car.towing) return L"TOW";
-    if(app.driverFlags[kind][0] && (row.car.sessionFlags&0x20000u)) return L"DQ";
-    if(app.driverFlags[kind][0] && (row.car.sessionFlags&0x10000u)) return L"BLACK";
-    if(app.driverFlags[kind][2] && (row.car.sessionFlags&0x100000u)) return L"REPAIR";
-    if(app.driverFlags[kind][1] && (row.car.sessionFlags&0x80000u)) return L"SLOW";
+    if(app.driverFlags[kind][0] && (row.car.sessionFlags&SessionFlag::Disqualify)) return L"DQ";
+    if(app.driverFlags[kind][0] && (row.car.sessionFlags&SessionFlag::Black)) return L"BLACK";
+    if(app.driverFlags[kind][2] && (row.car.sessionFlags&SessionFlag::Repair)) return L"REPAIR";
+    if(app.driverFlags[kind][1] && (row.car.sessionFlags&SessionFlag::Furled)) return L"SLOW";
     return row.car.outLap?L"OUT":L"";
 }
 std::wstring DriverValue(const Row& row,int column,int kind=-1) {

@@ -5,6 +5,9 @@
 #include <limits>
 
 using namespace rm;
+// Pin the named flags to the published SDK bit values (irsdk_Flags).
+static_assert(SessionFlag::Yellow==0x8u && SessionFlag::Red==0x10u && SessionFlag::YellowWaving==0x100u);
+static_assert(SessionFlag::Caution==0x4000u && SessionFlag::CautionWaving==0x8000u && SessionFlag::Furled==0x80000u);
 void Require(bool, const char*);
 
 void ReviewRegressionTests() {
@@ -50,7 +53,7 @@ void ReviewRegressionTests() {
     frame.time += 1; frame.incidentsKnown = true; frame.incidents = 6; recorder.Update(session, frame);
     Require(recorder.Events().size() == 1, "incident telemetry recovery must not duplicate old incidents");
 
-    for(unsigned yellow : {0x8u, 0x10u, 0x4000u, 0x8000u}) for(int mode : {-1, 0, 1}) {
+    for(unsigned yellow : {SessionFlag::Yellow, SessionFlag::YellowWaving, SessionFlag::Caution, SessionFlag::CautionWaving, SessionFlag::Red}) for(int mode : {-1, 0, 1}) {
         FuelCalculator fuel;
         auto sample=frame; sample.fuelKnown=true; sample.fuel=50; sample.lapCompleted=0; sample.flags=0;
         auto update=[&] {

@@ -6,6 +6,16 @@
 
 namespace rm {
 constexpr int MaxCars = 128;
+// SessionFlags / CarIdxSessionFlags bits from the iRacing SDK (irsdk_Flags).
+namespace SessionFlag {
+constexpr unsigned Yellow = 0x8u, Red = 0x10u, YellowWaving = 0x100u, Caution = 0x4000u, CautionWaving = 0x8000u;
+constexpr unsigned Black = 0x10000u, Disqualify = 0x20000u, Servicible = 0x40000u, Furled = 0x80000u, Repair = 0x100000u;
+// Laps under these flags are not representative racing laps.
+constexpr unsigned Neutralized = Yellow | YellowWaving | Caution | CautionWaving | Red;
+constexpr unsigned DriverFlags = Black | Disqualify | Servicible | Furled | Repair;
+}
+// EngineWarnings bits from the iRacing SDK (irsdk_EngineWarnings).
+namespace EngineWarning { constexpr unsigned PitSpeedLimiter = 0x10u; }
 struct Driver {
     int index = -1, classId = 0, rating = 0;
     unsigned classColor = 0xeac14c;

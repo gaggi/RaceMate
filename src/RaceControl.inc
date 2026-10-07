@@ -278,7 +278,7 @@ LRESULT CALLBACK RaceControlProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
                 if(c==1 || c==3) { const unsigned color=row.driver.classColor; draw->clrText=RGB((color>>16)&255,(color>>8)&255,color&255); }
                 if(c==9) { const unsigned color=row.driver.licenseColor; draw->clrText=RGB((color>>16)&255,(color>>8)&255,color&255); }
                 if(c==11) draw->clrText=TireTextColor(row);
-                if(c==15 && row.car.sessionFlags) draw->clrText=(row.car.sessionFlags&0x30000u)?RGB(180,40,35):RGB(155,90,15);
+                if(c==15 && row.car.sessionFlags) draw->clrText=(row.car.sessionFlags&(SessionFlag::Black|SessionFlag::Disqualify))?RGB(180,40,35):RGB(155,90,15);
                 if(GetRValue(draw->clrText)+GetGValue(draw->clrText)+GetBValue(draw->clrText)>500) draw->clrText=RGB(GetRValue(draw->clrText)/2,GetGValue(draw->clrText)/2,GetBValue(draw->clrText)/2);
                 if(RaceCarInactive(row) || !app.frame.connected) draw->clrText=RGB(145,150,157);
                 return CDRF_NEWFONT;

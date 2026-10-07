@@ -205,10 +205,10 @@ void PitHistory::Update(const Session& s, Frame& f) {
 std::string DriverFlags(unsigned flags,bool black,bool slowdown,bool repair) {
     std::string text;
     auto add=[&](const char* value) { if(!text.empty()) text+=" "; text+=value; };
-    if(black && (flags&0x20000u)) add("DQ");
-    else if(black && (flags&0x10000u)) add("BLACK");
-    if(slowdown && (flags&0x80000u)) add("SLOW");
-    if(repair && (flags&0x100000u)) add("REPAIR");
+    if(black && (flags&SessionFlag::Disqualify)) add("DQ");
+    else if(black && (flags&SessionFlag::Black)) add("BLACK");
+    if(slowdown && (flags&SessionFlag::Furled)) add("SLOW");
+    if(repair && (flags&SessionFlag::Repair)) add("REPAIR");
     return text;
 }
 int PositionsGained(const Session& s,const Row& row,bool ownClass) {
@@ -547,7 +547,7 @@ void FuelCalculator::Update(const Session& s, const Frame& f, bool excludeYellow
     }
     if(f.lapCompleted<0) { anchored_=false; return; }
     if(stintStartLap_<0 || f.fuel>previousFuel_+.05) stintStartLap_=f.lapCompleted+1;
-    const bool caution = excludeYellowLaps && (f.flags & (0x8u | 0x10u | 0x4000u | 0x8000u)) != 0;
+    const bool caution = excludeYellowLaps && (f.flags & SessionFlag::Neutralized) != 0;
     if (!anchored_ || f.lapCompleted < lap_ || f.lapCompleted > lap_ + 1) {
         const bool observedStart=s.type=="Race" && f.state==4 && f.lapCompleted==0 && preStartTime_>=0 && f.time>=preStartTime_ && f.time-preStartTime_<=5;
         anchored_=true; dirty_=!observedStart; lap_=f.lapCompleted; fuel_=f.fuel; previousFuel_=f.fuel; time_=f.time;
@@ -609,7 +609,7 @@ FuelPlan FuelCalculator::Plan(const Frame& f, double reserveLaps, bool conservat
     double variance=0; for(int i=0;i<used_;++i) variance+=(burns_[i]-p.average)*(burns_[i]-p.average);
     const double variation=std::sqrt(variance/used_)/p.average;
     p.confidence=used_>=10 && variation<=.03?Confidence::High:(used_>=5 && variation<=.06?Confidence::Medium:Confidence::Low);
-    if(f.flags&(0x8u|0x10u|0x4000u|0x8000u)) p.confidence=Confidence::Low;
+    if(f.flags&SessionFlag::Neutralized) p.confidence=Confidence::Low;
     const double burn = conservative ? p.maximum : p.average;
     p.lapsAvailable = f.fuel / burn;
     // Timed races need the lap completed after time expires. Lapped cars may differ.
