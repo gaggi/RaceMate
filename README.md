@@ -58,17 +58,13 @@ Updates to session results are read even when the replay's telemetry tick has st
 
 ## Controls
 
-| Shortcut | Action |
-
+| Default shortcut | Action |
 | --- | --- |
+| Ctrl + Alt + Shift + E | Toggle Move mode |
+| Ctrl + Alt + Shift + H | Hide/show all overlays |
+| Ctrl + Alt + Shift + S | Open Settings |
 
-| Ctrl + Shift + E | Toggle Move mode |
-
-| Ctrl + Shift + H | Hide/show all overlays |
-
-| Ctrl + Shift + S | Open Settings |
-
-In normal operation overlays pass mouse clicks through and do not take keyboard focus. All actions are available through Settings and the tray menu if another app occupies a shortcut. Negative monitor coordinates are supported, and windows remain reachable after monitor changes.
+Shortcuts are global: while RaceMate runs, no other application receives them. Change them under **General** in Settings by clicking a field and pressing a new combination (Ctrl or Alt is required); **×** turns a shortcut off. They are stored in the `[Hotkeys]` section of settings.ini. If another application already owns a combination, the status line names it. In normal operation overlays pass mouse clicks through and do not take keyboard focus. All actions are also available through Settings and the tray menu. Negative monitor coordinates are supported, and windows remain reachable after monitor changes.
 
 ## Fuel calculation
 

@@ -19,7 +19,7 @@ constexpr COLORREF Background=RGB(246,247,249), Text=RGB(40,47,58);
 constexpr UINT TrayMessage=WM_APP+1;
 constexpr int PreviewId=110, EditId=111, HideId=112, ResetId=113, ExitId=114;
 constexpr int OverlayCount=5;
-constexpr int MainHeight=680;
+constexpr int MainHeight=714;
 const wchar_t* FuelNames[]={L"Last lap",L"Average 10",L"Average 5",L"Maximum",L"Minimum",L"Average"};
 struct Placement { int x=40,y=120,scale=100,opacity=90; bool enabled=true, growLeft=false, growUp=false; };
 struct Overlay {
@@ -36,6 +36,11 @@ struct Overlay {
 const wchar_t* FooterTitles[]={L"None",L"Track",L"Incidents",L"Track Temperature",L"Air Temperature",L"Temperatures",L"Session Time Remaining",L"Session Time Elapsed",L"Current Lap",L"Current / Expected Final Lap",L"Estimated Laps Remaining",L"Local Time",L"Sim Time",L"Session Type",L"Track Wetness",L"Wind",L"Class SOF",L"Overlay Name"};
 constexpr int FooterMetricCount=18;
 struct FooterSettings { bool enabled=true; std::array<int,3> metrics{1,0,2}; };
+// Global shortcuts, packed like the hotkey control: low byte virtual key, high byte HOTKEYF_* modifiers; 0 disables.
+constexpr int HotkeyCount=3, HotkeyFieldId=253, HotkeyClearId=256;
+const wchar_t* HotkeyKeys[]={L"Move",L"Hide",L"Settings"};
+constexpr WORD HotkeyAllModifiers=(HOTKEYF_CONTROL|HOTKEYF_ALT|HOTKEYF_SHIFT)<<8;
+constexpr WORD DefaultHotkeys[]={HotkeyAllModifiers|'E',HotkeyAllModifiers|'H',HotkeyAllModifiers|'S'};
 struct App {
     HINSTANCE instance=nullptr; HWND main=nullptr,status=nullptr;
     HFONT font=nullptr,heading=nullptr; HBRUSH brush=nullptr;
@@ -63,6 +68,7 @@ struct App {
     bool excludeYellowFuelLaps=false;
     HWND overlaySettings=nullptr; int settingsKind=-1;
     bool previousConnection=false, settingsError=false, trayAvailable=false;
+    std::array<WORD,HotkeyCount> hotkeys{}; bool hotkeysEnabled=false; std::wstring hotkeyError;
     int rows=7,gapDecimals=1,rate=10,timerMs=0,scroll=0;
     NOTIFYICONDATAW tray{}; std::vector<HWND> controls;
     int D(int v) const { return MulDiv(v,GetDpiForWindow(main),96); }
@@ -263,6 +269,10 @@ void Load() {
     const wchar_t* keys[]={L"ShowLast",L"ShowAverage10",L"ShowAverage5",L"ShowMaximum",L"ShowMinimum",L"ShowAverage"};
     for(int i=0;i<FuelMetricCount;++i) app.fuelRows[i]=ReadInt(L"Fuel Calculator",keys[i],1)!=0;
     app.excludeYellowFuelLaps=ReadInt(L"Fuel Calculator",L"ExcludeYellowLaps",0)!=0;
+    for(int i=0;i<HotkeyCount;++i) {
+        const WORD hotkey=static_cast<WORD>(ReadInt(L"Hotkeys",HotkeyKeys[i],DefaultHotkeys[i]));
+        app.hotkeys[i]=LOBYTE(hotkey)?hotkey:0;
+    }
     app.predictionOptions={}; app.predictionOptions.stops=StopMode::None;
     for(int i=0;i<OverlayCount;++i) {
         auto& p=app.overlays[i].place;
@@ -309,10 +319,29 @@ void Save() {
     const wchar_t* keys[]={L"ShowLast",L"ShowAverage10",L"ShowAverage5",L"ShowMaximum",L"ShowMinimum",L"ShowAverage"};
     for(int i=0;i<FuelMetricCount;++i) write(L"Fuel Calculator",keys[i],app.fuelRows[i]);
     write(L"Fuel Calculator",L"ExcludeYellowLaps",app.excludeYellowFuelLaps);
+    for(int i=0;i<HotkeyCount;++i) write(L"Hotkeys",HotkeyKeys[i],app.hotkeys[i]);
     for(int i=0;i<OverlayCount;++i) { const auto& p=app.overlays[i].place;
         write(Sections[i],L"X",p.x); write(Sections[i],L"Y",p.y); write(Sections[i],L"Scale",p.scale); write(Sections[i],L"Opacity",p.opacity); write(Sections[i],L"Enabled",p.enabled); write(Sections[i],L"GrowLeft",p.growLeft); write(Sections[i],L"GrowUp",p.growUp);
     }
     if(!success && !app.settingsError) { app.settingsError=true; MessageBoxW(app.main,L"Could not save settings. Please check write access to the RaceMate configuration folder.",L"RaceMate",MB_OK|MB_ICONWARNING); }
+}
+UINT HotkeyModifiers(WORD hotkey) {
+    const BYTE flags=HIBYTE(hotkey); UINT modifiers=MOD_NOREPEAT;
+    if(flags&HOTKEYF_CONTROL) modifiers|=MOD_CONTROL;
+    if(flags&HOTKEYF_ALT) modifiers|=MOD_ALT;
+    if(flags&HOTKEYF_SHIFT) modifiers|=MOD_SHIFT;
+    return modifiers;
+}
+void UnregisterHotkeys() { for(int i=0;i<HotkeyCount;++i) UnregisterHotKey(app.main,i+1); }
+// Records shortcuts that another application (or a duplicate assignment) already owns.
+void RegisterHotkeys() {
+    if(!app.hotkeysEnabled) return;
+    UnregisterHotkeys(); app.hotkeyError.clear();
+    for(int i=0;i<HotkeyCount;++i) {
+        const WORD hotkey=app.hotkeys[i];
+        if(LOBYTE(hotkey) && !RegisterHotKey(app.main,i+1,HotkeyModifiers(hotkey),LOBYTE(hotkey)))
+            app.hotkeyError+=(app.hotkeyError.empty()?L"":L", ")+std::wstring(HotkeyKeys[i]);
+    }
 }
 void RecalculatePlan() {
     if(app.preview) { FuelPlan p; p.samples=12; p.stintStartLap=4; p.lapsToFinish=12.55; p.confidence=Confidence::High;
@@ -724,6 +753,7 @@ void Tick() {
     std::wstring status=app.preview?L"Preview · sample data, no live telemetry":(app.frame.connected?L"Connected · "+Wide(app.session.track):L"Waiting for iRacing …");
     if(app.edit) status+=L" · Move overlays";
     if(!app.trayAvailable && !app.diagnostics) status+=L" · No tray icon; closing Settings exits RaceMate";
+    if(!app.hotkeyError.empty()) status+=L" · Shortcut in use: "+app.hotkeyError;
     wchar_t previous[512]{}; GetWindowTextW(app.status,previous,512);
     if(status!=previous) SetWindowTextW(app.status,status.c_str());
     UpdateOverlays(); UpdateRaceControl(); Timer();
@@ -778,6 +808,13 @@ LRESULT CALLBACK GroupProc(HWND w,UINT m,WPARAM wp,LPARAM lp,UINT_PTR id,DWORD_P
     if(m==WM_NCDESTROY) RemoveWindowSubclass(w,GroupProc,id);
     return DefSubclassProc(w,m,wp,lp);
 }
+// Global shortcuts would swallow the keys being assigned, so release them while a shortcut field has focus.
+LRESULT CALLBACK HotkeyFieldProc(HWND w,UINT m,WPARAM wp,LPARAM lp,UINT_PTR id,DWORD_PTR) {
+    if(m==WM_SETFOCUS && app.hotkeysEnabled) UnregisterHotkeys();
+    if(m==WM_KILLFOCUS) RegisterHotkeys();
+    if(m==WM_NCDESTROY) RemoveWindowSubclass(w,HotkeyFieldProc,id);
+    return DefSubclassProc(w,m,wp,lp);
+}
 void Check(const wchar_t* text,int id,int x,int y,int w,bool checked) {
     auto c=Control(L"BUTTON",text,id,x,y,w,24,BS_AUTOCHECKBOX|WS_TABSTOP); SendMessageW(c,BM_SETCHECK,checked?BST_CHECKED:BST_UNCHECKED,0);
 }
@@ -806,21 +843,31 @@ void CreateControls() {
         Combo(220+i,456,174+i*36,126,opacity,(app.overlays[i].place.opacity-40)/10);
         Control(L"BUTTON",L"Settings",240+i,610,171+i*36,106,28,WS_TABSTOP);
     }
-    group=Control(L"BUTTON",L"General",0,20,386,720,136,BS_GROUPBOX|WS_CLIPSIBLINGS);
+    group=Control(L"BUTTON",L"General",0,20,386,720,170,BS_GROUPBOX|WS_CLIPSIBLINGS);
     SetWindowSubclass(group,GroupProc,1,0);
     Control(L"STATIC",L"Refresh rate",0,38,415,116,24);
     Combo(231,167,415,112,{L"2 Hz",L"5 Hz",L"10 Hz",L"20 Hz"},app.rate==2?0:(app.rate==5?1:(app.rate==20?3:2)));
     Check(L"Start with Windows",250,38,459,300,app.startWithWindows);
     Check(L"Start Minimized",251,380,459,330,app.startMinimized);
     Check(L"Show Title Bar",252,38,490,300,app.showTitleBar);
-    Check(L"Preview with sample data",PreviewId,25,539,300,app.preview);
-    Check(L"Move overlays",EditId,380,539,330,app.edit);
-    Control(L"STATIC",L"Ctrl+Shift+E: Move  ·  H: Hide  ·  S: Settings",0,25,574,705,24);
-    Control(L"STATIC",L"Closing Settings keeps RaceMate running in the tray.",0,25,599,705,24);
-    Control(L"BUTTON",L"Reset positions",ResetId,25,626,194,30,WS_TABSTOP);
-    Control(L"BUTTON",app.hidden?L"Show overlays":L"Hide overlays",HideId,233,626,187,30,WS_TABSTOP);
-    Control(L"BUTTON",L"Race Control",115,434,626,134,30,WS_TABSTOP);
-    Control(L"BUTTON",L"Exit",ExitId,582,626,134,30,WS_TABSTOP);
+    const wchar_t* hotkeyLabels[]={L"Move",L"Hide",L"Settings"};
+    for(int i=0;i<HotkeyCount;++i) {
+        const int x=38+i*232;
+        Control(L"STATIC",hotkeyLabels[i],0,x,525,52,24);
+        HWND field=Control(HOTKEY_CLASSW,L"",HotkeyFieldId+i,x+52,522,142,26,WS_BORDER|WS_TABSTOP);
+        // A shortcut always needs Ctrl or Alt so plain typing is never captured.
+        SendMessageW(field,HKM_SETRULES,HKCOMB_NONE|HKCOMB_S,MAKELPARAM(HOTKEYF_CONTROL|HOTKEYF_ALT,0));
+        SendMessageW(field,HKM_SETHOTKEY,app.hotkeys[i],0); SetWindowSubclass(field,HotkeyFieldProc,1,0);
+        Control(L"BUTTON",L"\u00d7",HotkeyClearId+i,x+196,522,28,26,WS_TABSTOP);
+    }
+    Check(L"Preview with sample data",PreviewId,25,573,300,app.preview);
+    Check(L"Move overlays",EditId,380,573,330,app.edit);
+    Control(L"STATIC",L"Shortcuts work in every application. Click a field and press a new combination; \u00d7 turns it off.",0,25,608,705,24);
+    Control(L"STATIC",L"Closing Settings keeps RaceMate running in the tray.",0,25,633,705,24);
+    Control(L"BUTTON",L"Reset positions",ResetId,25,660,194,30,WS_TABSTOP);
+    Control(L"BUTTON",app.hidden?L"Show overlays":L"Hide overlays",HideId,233,660,187,30,WS_TABSTOP);
+    Control(L"BUTTON",L"Race Control",115,434,660,134,30,WS_TABSTOP);
+    Control(L"BUTTON",L"Exit",ExitId,582,660,134,30,WS_TABSTOP);
 }
 void ConfigureScroll() {
     if(!app.main) return;
@@ -902,6 +949,14 @@ LRESULT CALLBACK MainProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
             } else app.startMinimized=checked;
             Save();
         }
+        else if(id>=HotkeyFieldId && id<HotkeyFieldId+HotkeyCount && notification==EN_CHANGE) {
+            // Modifier-only intermediate states have no key yet; registration follows when the field loses focus.
+            const WORD hotkey=static_cast<WORD>(SendDlgItemMessageW(w,id,HKM_GETHOTKEY,0,0));
+            if(LOBYTE(hotkey)) { app.hotkeys[id-HotkeyFieldId]=hotkey; Save(); }
+        }
+        else if(id>=HotkeyClearId && id<HotkeyClearId+HotkeyCount && notification==BN_CLICKED) {
+            app.hotkeys[id-HotkeyClearId]=0; SendDlgItemMessageW(w,HotkeyFieldId+id-HotkeyClearId,HKM_SETHOTKEY,0,0); RegisterHotkeys(); Save();
+        }
         else if(id==252 && notification==BN_CLICKED) { app.showTitleBar=SendDlgItemMessageW(w,id,BM_GETCHECK,0,0)==BST_CHECKED; app.tableHeaders.fill(app.showTitleBar); for(auto& overlay:app.overlays) Fit(overlay); Save(); UpdateOverlays(); }
         else if(id==ResetId) { for(auto& o:app.overlays) { SetOverlayOrigin(o,o.kind==1?480:40,o.kind==1?120:(o.kind==2?470:(o.kind==3?720:820))); Fit(o,true); } Save(); }
         else if(id>=200 && id<200+OverlayCount && notification==BN_CLICKED) { app.overlays[id-200].place.enabled=SendMessageW(GetDlgItem(w,id),BM_GETCHECK,0,0)==BST_CHECKED; Save(); }
@@ -923,7 +978,7 @@ LRESULT CALLBACK MainProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
         CloseRaceControl();
         if(app.overlaySettings) SendMessageW(app.overlaySettings,WM_CLOSE,0,0);
         KillTimer(w,1); Shell_NotifyIconW(NIM_DELETE,&app.tray);
-        for(int i=1;i<=3;++i) UnregisterHotKey(w,i);
+        UnregisterHotkeys(); app.hotkeysEnabled=false;
         for(auto& o:app.overlays) if(o.window) DestroyWindow(o.window);
         PostQuitMessage(0); return 0;
     }
@@ -967,7 +1022,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
             p.x=i==1?480:40; p.y=i==1?120:(i==2?470:(i==3?720:820));
         }
     }
-    INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_STANDARD_CLASSES|ICC_LISTVIEW_CLASSES}; InitCommonControlsEx(&controls);
+    INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_STANDARD_CLASSES|ICC_LISTVIEW_CLASSES|ICC_HOTKEY_CLASS}; InitCommonControlsEx(&controls);
     app.brush=CreateSolidBrush(Background);
     WNDCLASSEXW cls{sizeof(cls)}; cls.lpfnWndProc=MainProc; cls.hInstance=instance; cls.hCursor=LoadCursorW(nullptr,IDC_ARROW); cls.hIcon=LoadIconW(instance,MAKEINTRESOURCEW(101)); cls.hbrBackground=app.brush; cls.lpszClassName=L"RaceMate.Settings"; RegisterClassExW(&cls);
     constexpr DWORD style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_CLIPCHILDREN|WS_VSCROLL;
@@ -995,11 +1050,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
     app.trayAvailable=Shell_NotifyIconW(NIM_ADD,&app.tray)!=FALSE;
     if(!app.trayAvailable) SetWindowTextW(app.status,L"Tray unavailable; closing Settings will exit RaceMate.");
     if(app.startWithWindows && !RegisterStartup(true)) MessageBoxW(app.main,L"Could not refresh the Windows startup path. Select Start with Windows again to retry.",L"RaceMate",MB_OK|MB_ICONWARNING);
-    bool hotkeys=true; hotkeys=RegisterHotKey(app.main,1,MOD_CONTROL|MOD_SHIFT|MOD_NOREPEAT,'E')&&hotkeys;
-    hotkeys=RegisterHotKey(app.main,2,MOD_CONTROL|MOD_SHIFT|MOD_NOREPEAT,'H')&&hotkeys;
-    hotkeys=RegisterHotKey(app.main,3,MOD_CONTROL|MOD_SHIFT|MOD_NOREPEAT,'S')&&hotkeys;
+    app.hotkeysEnabled=true; RegisterHotkeys();
     Tick(); ShowWindow(app.main,StartupShowCommand(app.trayAvailable,show)); UpdateWindow(app.main);
-    if(!hotkeys) MessageBoxW(app.main,L"An overlay shortcut is already in use. You can still access these functions through Settings and the tray menu.",L"RaceMate",MB_OK|MB_ICONINFORMATION);
+    if(!app.hotkeyError.empty()) MessageBoxW(app.main,(L"Another application already uses the shortcut for: "+app.hotkeyError+L". Choose a different combination in Settings.").c_str(),L"RaceMate",MB_OK|MB_ICONINFORMATION);
     MSG message{}; while(GetMessageW(&message,nullptr,0,0)>0) if(!(raceFieldsWindow && IsDialogMessageW(raceFieldsWindow,&message)) && !(footerSettingsWindow && IsDialogMessageW(footerSettingsWindow,&message)) && !(columnOrderWindow && IsDialogMessageW(columnOrderWindow,&message)) && !(app.overlaySettings && IsDialogMessageW(app.overlaySettings,&message)) && !IsDialogMessageW(app.main,&message)) { TranslateMessage(&message); DispatchMessageW(&message); }
     DeleteObject(app.font); DeleteObject(app.heading); DeleteObject(app.brush); if(mutex) CloseHandle(mutex); return 0;
 }
