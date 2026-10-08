@@ -39,11 +39,8 @@ private:
             push(std::move(row),Key::Hotkey,i);
         }
         header(L"Updates");
-        toggle(Key::CheckUpdates,L"Check for updates on startup",L"Looks up the latest release on GitHub; never interrupts a running session.",app.checkUpdates);
-        RowList::Row version; version.title=L"Version " RACEMATE_VERSION; version.detail=updates.status.empty()?L"Not checked yet":updates.status;
-        version.button=UpdateAvailable()?L"Install...":L"Check now"; version.buttonEnabled=!updates.check.Running() && !updates.install.Running();
-        if(UpdateAvailable()) { version.pill=L"Update"; version.pillTone=RowList::Tone::Active; }
-        push(std::move(version),Key::Version);
+        toggle(Key::CheckUpdates,L"Check for updates on startup",L"Shows a newer release here and in the sidebar; never opens a window.",app.checkUpdates);
+        push(UpdateVersionRow(),Key::Version);
         header(L"RaceMate");
         RowList::Row quit; quit.title=L"Quit RaceMate"; quit.detail=L"Closing this window keeps RaceMate running in the tray."; quit.button=L"Quit";
         push(std::move(quit),Key::Quit);
@@ -102,7 +99,10 @@ private:
         case Key::TitleBar: if(code==RowList::kToggled) { SetShowTitleBar(on); Refresh(); } break;
         case Key::Hotkey: if(code==RowList::kIconButton || code==RowList::kActivated) Expand(hotkeys_[row]); break;
         case Key::CheckUpdates: if(code==RowList::kToggled) { SetCheckUpdates(on); Refresh(); } break;
-        case Key::Version: if(pressed) { if(UpdateAvailable()) OfferUpdate(); else StartUpdateCheck(true); } break;
+        case Key::Version:
+            if(code==RowList::kIconButton) UpdateChecker::OpenReleasePage(updates.release.releasePageUrl);
+            else if(code==RowList::kButton) UpdateVersionButton();
+            break;
         case Key::Quit: if(pressed) DestroyWindow(app.main); break;
         default: break;
         }

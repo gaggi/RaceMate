@@ -1099,7 +1099,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
     app.hotkeysEnabled=true; RegisterHotkeys();
     Tick(); RestoreWindowPlacement(StartupShowCommand(app.trayAvailable,show)); UpdateWindow(app.main);
     if(!app.hotkeyError.empty()) ShowPage(Page::Settings);
-    if(app.checkUpdates) StartUpdateCheck(false);
+    if(app.checkUpdates) StartUpdateCheck(true);
     MSG message{}; while(GetMessageW(&message,nullptr,0,0)>0) if(!IsDialogMessageW(app.main,&message)) { TranslateMessage(&message); DispatchMessageW(&message); }
     DeleteObject(app.brush); if(mutex) CloseHandle(mutex); return 0;
 }

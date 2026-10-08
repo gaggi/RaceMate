@@ -458,8 +458,18 @@ int RunDiagnostics() {
     // Version tags compare numerically, a leading v is ignored, a suffix such as -beta sorts first; diagnostics never go online.
     bool updateOk=UpdateChecker::CurrentVersion()==Wide(RACEMATE_VERSION) && UpdateChecker::IsNewerVersion(L"v0.1.1",L"0.1.0") && UpdateChecker::IsNewerVersion(L"0.10.0",L"0.9.0")
         && !UpdateChecker::IsNewerVersion(L"v0.1.0",L"0.1.0") && !UpdateChecker::IsNewerVersion(L"0.0.9",L"0.1.0") && UpdateChecker::IsNewerVersion(L"0.1.0",L"0.1.0-beta");
-    StartUpdateCheck(true); updateOk=!updates.check.Running() && updates.status.empty() && updateOk;
-    report<<"Update version comparison, no network in diagnostics: "<<(updateOk?"PASS":"FAIL")<<"\n";
+    StartUpdateCheck(false); updateOk=!updates.check.Running() && updates.phase==Updates::Phase::Idle && updateOk;
+    {
+        // The Settings version row carries the whole update flow.
+        updates.phase=Updates::Phase::Available; updates.release.versionDisplay=L"0.2.0";
+        updates.release.assetDownloadUrl=L"https://example.invalid/RaceMate-0.2.0-windows-x64.exe"; updates.release.releasePageUrl=L"https://example.invalid/release";
+        const auto available=UpdateVersionRow(); updateOk=available.button==L"Install update" && available.pill==L"Update available" && available.iconButtons.size()==1 && updateOk;
+        updates.release.assetDownloadUrl.clear(); updateOk=UpdateVersionRow().button==L"Open release" && updateOk;
+        updates.phase=Updates::Phase::Downloading; updateOk=!UpdateVersionRow().buttonEnabled && updateOk;
+        updates.phase=Updates::Phase::Failed; updates.message=L"Offline"; updateOk=UpdateVersionRow().pill==L"Not updated" && UpdateVersionRow().detail==L"Offline" && updateOk;
+        updates.phase=Updates::Phase::Idle; updates.release={}; updates.message.clear();
+    }
+    report<<"Update version comparison, version row states, no network in diagnostics: "<<(updateOk?"PASS":"FAIL")<<"\n";
     SetStartWithWindows(true); SetStartMinimized(true);
     Load();
     ok=app.driverColumns[0][5] && app.driverColumns[1][5] && app.showInterval && app.rows==7 && app.standings.leaders==2 && app.standings.ahead==1 && app.standings.behind==1 && app.standings.ownClass && !app.standings.separateClasses && !app.fuelRows[1] && app.startWithWindows && app.startMinimized && ok;

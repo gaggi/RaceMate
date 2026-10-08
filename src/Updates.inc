@@ -1,88 +1,82 @@
-// Update check against the latest GitHub release, as in LaunchMate: once at startup (optional)
-// and from the Settings page. The startup check never opens a dialog while iRacing runs or
-// RaceMate sits in the tray; the Settings page shows the update instead.
+// Update check against the latest GitHub release, as in LaunchMate and TPMate: no dialogs.
+// The version row on the Settings page shows the state; a check at startup only changes that
+// row and the sidebar footer, and a failed startup check stays silent.
 struct UpdateInstall { std::filesystem::path file; std::wstring error; };
 struct Updates {
+    enum class Phase { Idle, Checking, UpToDate, Available, Downloading, Failed };
+    Phase phase=Phase::Idle;
+    std::wstring message; UpdateReleaseInfo release;
     BackgroundTask<UpdateCheckResult> check; BackgroundTask<UpdateInstall> install;
-    bool interactive=false;
-    std::optional<UpdateCheckResult> latest; // Last finished check.
-    std::wstring status;                     // Shown on the Settings page.
+    bool startup=false;
 } updates;
-constexpr int UpdateInstallButton=6101, UpdateOpenButton=6102, UpdateLaterButton=6103;
-bool UpdateAvailable() { return updates.latest && updates.latest->state==UpdateCheckState::UpdateAvailable; }
-HRESULT CALLBACK UpdateDialogCallback(HWND,UINT notification,WPARAM,LPARAM lp,LONG_PTR) {
-    if(notification==TDN_HYPERLINK_CLICKED && lp) UpdateChecker::OpenReleasePage(reinterpret_cast<const wchar_t*>(lp));
-    return S_OK;
-}
-int ShowUpdateDialog(const UpdateCheckResult& result) {
-    const bool available=result.state==UpdateCheckState::UpdateAvailable;
-    const std::wstring instruction=available?L"A newer RaceMate version is available":L"RaceMate is up to date";
-    std::wstring content=L"Current version:  "+UpdateChecker::CurrentVersion()+L"\nGitHub version:  "+(result.release.versionDisplay.empty()?std::wstring(L"Unavailable"):result.release.versionDisplay);
-    if(!result.release.releasePageUrl.empty()) content+=L"\n\n<a href=\""+result.release.releasePageUrl+L"\">Open this release on GitHub</a>";
-    TASKDIALOGCONFIG config{sizeof(config)};
-    config.hwndParent=app.main; config.dwFlags=TDF_ENABLE_HYPERLINKS|TDF_ALLOW_DIALOG_CANCELLATION|TDF_POSITION_RELATIVE_TO_WINDOW;
-    config.pszWindowTitle=L"RaceMate Update"; config.pszMainIcon=TD_INFORMATION_ICON;
-    config.pszMainInstruction=instruction.c_str(); config.pszContent=content.c_str(); config.pfCallback=UpdateDialogCallback;
-    TASKDIALOG_BUTTON buttons[2]{};
-    if(available) {
-        buttons[0]=result.release.assetDownloadUrl.empty()?TASKDIALOG_BUTTON{UpdateOpenButton,L"Open release on GitHub"}:TASKDIALOG_BUTTON{UpdateInstallButton,L"Download and install update"};
-        buttons[1]={UpdateLaterButton,L"Later"};
-        config.pButtons=buttons; config.cButtons=2; config.nDefaultButton=buttons[0].nButtonID;
-    } else config.dwCommonButtons=TDCBF_OK_BUTTON;
-    int selected=IDCANCEL;
-    if(FAILED(TaskDialogIndirect(&config,&selected,nullptr,nullptr))) {
-        const bool yes=MessageBoxW(app.main,content.c_str(),L"RaceMate Update",(available?MB_YESNO:MB_OK)|MB_ICONINFORMATION)==IDYES;
-        selected=yes?(result.release.assetDownloadUrl.empty()?UpdateOpenButton:UpdateInstallButton):IDCANCEL;
-    }
-    return selected;
-}
-void StartUpdateCheck(bool interactive) {
-    if(app.diagnostics || updates.check.Running() || updates.install.Running()) return;
-    updates.interactive=interactive; updates.status=L"Checking for updates...";
+void StartUpdateCheck(bool startup) {
+    if(app.diagnostics || updates.phase==Updates::Phase::Checking || updates.phase==Updates::Phase::Downloading) return;
+    updates.startup=startup; updates.phase=Updates::Phase::Checking;
     updates.check.Start([](const std::atomic_bool&) { return UpdateChecker::CheckForUpdate(); });
     RefreshPage();
 }
-void BeginUpdateInstall(UpdateReleaseInfo release) {
-    if(updates.install.Running()) return;
-    updates.status=L"Downloading RaceMate "+release.versionDisplay+L"...";
-    updates.install.Start([release=std::move(release)](const std::atomic_bool&) {
-        UpdateInstall result; if(!UpdateChecker::DownloadReleaseAsset(release,result.file,result.error) && result.error.empty()) result.error=L"The download failed.";
+void BeginUpdateInstall() {
+    if(updates.phase!=Updates::Phase::Available || updates.release.assetDownloadUrl.empty()) return;
+    updates.phase=Updates::Phase::Downloading;
+    updates.install.Start([release=updates.release](const std::atomic_bool&) {
+        UpdateInstall result;
+        if(!UpdateChecker::DownloadReleaseAsset(release,result.file,result.error)) result.error=L"Could not download the update. "+result.error;
         return result;
     });
     RefreshPage();
-}
-void OfferUpdate() {
-    if(!updates.latest) return;
-    const int choice=ShowUpdateDialog(*updates.latest);
-    if(choice==UpdateInstallButton) BeginUpdateInstall(updates.latest->release);
-    else if(choice==UpdateOpenButton && !UpdateChecker::OpenReleasePage(updates.latest->release.releasePageUrl))
-        MessageBoxW(app.main,L"Could not open the GitHub release page.",L"RaceMate Update",MB_OK|MB_ICONWARNING);
 }
 // Called from Tick; both tasks finish on a worker thread.
 void PollUpdates() {
     std::optional<UpdateCheckResult> checked;
     if(updates.check.Poll(checked)) {
-        if(!checked) { checked=UpdateCheckResult{}; checked->message=L"The update check stopped unexpectedly."; }
-        updates.latest=std::move(checked); const auto& result=*updates.latest;
-        if(result.state==UpdateCheckState::Failed) {
-            updates.status=L"Update check failed: "+result.message;
-            if(updates.interactive) MessageBoxW(app.main,(L"Current version:  "+UpdateChecker::CurrentVersion()+L"\nGitHub version:  Unavailable\n\n"+result.message).c_str(),L"RaceMate Update",MB_OK|MB_ICONWARNING);
-        } else if(result.state==UpdateCheckState::UpToDate) {
-            updates.status=L"Up to date";
-            if(updates.interactive) ShowUpdateDialog(result);
-        } else {
-            updates.status=L"Version "+result.release.versionDisplay+L" is available";
-            const bool quiet=!updates.interactive && (app.frame.connected || !IsWindowVisible(app.main));
-            RefreshPage(); if(!quiet) OfferUpdate();
+        if(!checked) { checked=UpdateCheckResult{}; checked->message=L"The update check failed unexpectedly."; }
+        updates.release=checked->release; updates.message=checked->message;
+        switch(checked->state) {
+        // No network yet at startup is not worth a warning.
+        case UpdateCheckState::Failed: updates.phase=updates.startup?Updates::Phase::Idle:Updates::Phase::Failed; break;
+        case UpdateCheckState::UpToDate:
+            updates.phase=Updates::Phase::UpToDate;
+            if(!checked->release.versionDisplay.empty()) updates.message=L"Latest release on GitHub: "+checked->release.versionDisplay+L".";
+            break;
+        case UpdateCheckState::UpdateAvailable:
+            updates.phase=Updates::Phase::Available; ui.nav.SetFooter(L"Update available: "+checked->release.versionDisplay,true);
+            break;
         }
         RefreshPage();
     }
     std::optional<UpdateInstall> installed;
     if(updates.install.Poll(installed)) {
-        std::wstring error=installed?installed->error:L"The download stopped unexpectedly.";
-        if(error.empty() && UpdateChecker::LaunchSelfUpdater(installed->file,GetCurrentProcessId(),error)) { DestroyWindow(app.main); return; }
-        updates.status=L"Update failed";
-        MessageBoxW(app.main,(L"Failed to install the RaceMate update.\n\n"+error).c_str(),L"RaceMate Update",MB_OK|MB_ICONWARNING);
-        RefreshPage();
+        std::wstring error=installed?installed->error:L"The update could not be installed.";
+        if(error.empty()) {
+            if(UpdateChecker::LaunchSelfUpdater(installed->file,GetCurrentProcessId(),error)) { DestroyWindow(app.main); return; }
+            error=L"Could not prepare the update. "+error;
+        }
+        updates.phase=Updates::Phase::Failed; updates.message=error; RefreshPage();
     }
+}
+// Same states as in LaunchMate and TPMate; no dialogs.
+RowList::Row UpdateVersionRow() {
+    using Phase=Updates::Phase;
+    RowList::Row row; row.title=L"Version " RACEMATE_VERSION; row.button=L"Check now";
+    switch(updates.phase) {
+    case Phase::Idle: row.detail=L"Look for a newer release on GitHub."; break;
+    case Phase::Checking: row.detail=L"Checking GitHub..."; row.buttonEnabled=false; break;
+    case Phase::UpToDate: row.detail=updates.message; row.pill=L"Up to date"; row.pillTone=RowList::Tone::Active; break;
+    case Phase::Available: {
+        const bool installable=!updates.release.assetDownloadUrl.empty();
+        row.detail=L"Version "+updates.release.versionDisplay+L" is available. "+(installable?L"RaceMate restarts after installing it.":L"It has no download for this Windows version.");
+        row.pill=L"Update available"; row.pillTone=RowList::Tone::Accent;
+        row.button=installable?L"Install update":L"Open release";
+        if(installable && !updates.release.releasePageUrl.empty()) row.iconButtons={L'\uE8A7'}; // Open the release page.
+        break;
+    }
+    case Phase::Downloading: row.detail=L"Downloading the update..."; row.button=L"Install update"; row.buttonEnabled=false; break;
+    case Phase::Failed: row.detail=updates.message; row.pill=L"Not updated"; row.pillTone=RowList::Tone::Warning; break;
+    }
+    return row;
+}
+void UpdateVersionButton() {
+    if(updates.phase!=Updates::Phase::Available) StartUpdateCheck(false);
+    else if(!updates.release.assetDownloadUrl.empty()) BeginUpdateInstall();
+    else UpdateChecker::OpenReleasePage(updates.release.releasePageUrl);
 }
