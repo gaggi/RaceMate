@@ -64,15 +64,15 @@ void ReviewRegressionTests() {
         sample.time+=100; sample.lapCompleted=1; sample.fuel=47; update();
         sample.time+=50; sample.flags=yellow; update();
         sample.time+=50; sample.flags=0; sample.lapCompleted=2; sample.fuel=44; update();
-        Require(fuel.Plan(sample,0,false).samples==(mode==1?0:1),
+        Require(fuel.Plan(sample).samples==(mode==1?0:1),
             "yellow laps are included by default and excluded only when the option is enabled");
         sample.time+=100; sample.lapCompleted=3; sample.fuel=41; update();
-        const auto plan=fuel.Plan(sample,0,false);
-        Require(plan.samples==(mode==1?1:2) && plan.average==3,
+        const auto plan=fuel.Plan(sample);
+        Require(plan.samples==(mode==1?1:2) && plan.estimates[1].consumption==3,
             "green laps resume normal learning after an optional yellow exclusion");
         sample.time+=50; sample.pit=true; update();
         sample.time+=50; sample.pit=false; sample.lapCompleted=4; sample.fuel=38; update();
-        Require(fuel.Plan(sample,0,false).samples==plan.samples,
+        Require(fuel.Plan(sample).samples==plan.samples,
             "pit laps remain excluded regardless of the yellow flag option");
     }
 }

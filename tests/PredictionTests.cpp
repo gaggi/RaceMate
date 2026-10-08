@@ -131,52 +131,36 @@ void PitWindowTests() {
 void TimedTests() {
     PitHistoryTests();
     auto s=Race(); auto f=RacingFrame(); RacePredictor calculator; calculator.Update(s,f);
-    PredictionOptions options; auto p=calculator.Predict(s,f,options);
-    Require(p.status==PredictionStatus::Racing && p.noStop.valid && p.withStops.valid,"timed race forecast available before fuel learning");
-    Near(p.noStop.leaderTotalDistance,22.01,"leader total at expiry retains fractional laps");
-    Near(p.noStop.leaderDistance,12.02,"leader remaining finish distance includes partial lap");
-    Require(p.noStop.leaderCrossings==13 && p.withStops.leaderCrossings==12,"leader integer laps are displayed independently of fractional distance");
-    Near(p.noStop.finalLapTimeLeft,1,"clock remaining when leader starts final lap");
-    Near(p.noStop.leaderFinishIn,1202,"leader crossing after expiry, no blanket extra lap");
+    auto p=calculator.Predict(s,f);
+    Require(p.status==PredictionStatus::Racing && p.finish.valid,"timed race forecast available before fuel learning");
+    Near(p.finish.leaderTotalDistance,22.01,"leader total at expiry retains fractional laps");
+    Near(p.finish.leaderDistance,12.02,"leader remaining finish distance includes partial lap");
+    Require(p.finish.leaderCrossings==13,"leader integer laps are displayed independently of fractional distance");
+    Near(p.finish.finalLapTimeLeft,1,"clock remaining when leader starts final lap");
+    Near(p.finish.leaderFinishIn,1202,"leader crossing after expiry, no blanket extra lap");
     auto shortRace=f; shortRace.timeLeft=49;
-    Near(calculator.Predict(s,shortRace,options).noStop.finalLapTimeLeft,47,"short race clock at upcoming final lap start");
+    Near(calculator.Predict(s,shortRace).finish.finalLapTimeLeft,47,"short race clock at upcoming final lap start");
     shortRace.timeLeft=0;
-    Near(calculator.Predict(s,shortRace,options).noStop.finalLapTimeLeft,98,"clock at already started final lap remains anchored to lap start");
-    Near(p.noStop.ownFinishIn,1250,"own crossing after leader");
-    Near(p.noStop.ownDistance,12.5,"own fuel distance, not leader distance");
-    Require(p.noStop.ownCrossings==13,"own integer crossings are separate from distance");
-    Require(p.whatIf && p.projectedLeaderStops==1 && !p.measuredPitLoss && p.stopConfidence==Confidence::Low,"unknown future stop explicitly hypothetical");
-    Near(p.withStops.leaderDistance,11.02,"pit delay can remove a leader lap");
-    Near(p.withStops.leaderFinishIn,1147,"pit scenario leader finish time");
-    Require(p.withStops.ownCrossings==12,"pit scenario can remove one own lap");
-    Near(p.withStops.ownDistance,11.5,"pit scenario own fuel distance");
-    options.stops=StopMode::None; p=calculator.Predict(s,f,options);
-    Near(p.withStops.ownDistance,p.noStop.ownDistance,"no further stop mode matches baseline");
-    Require(!p.whatIf && p.projectedLeaderStops==0,"no-stop mode does not manufacture a stop");
-    options.stops=StopMode::One; options.ownPitLoss=35; p=calculator.Predict(s,f,options);
-    Near(p.noStop.ownFinishIn,1285,"planned own pit delay included");
-    options.stops=StopMode::Automatic; options.leaderStintLaps=20;
-    Require(calculator.Predict(s,f,options).whatIf,"stint override cannot invent a missing last-stop time");
-    f.player=0; f.lapCompleted=10; f.lapPct=.98; options.ownPitLoss=0;
-    p=calculator.Predict(s,f,options);
-    Near(p.noStop.ownFinishIn,p.noStop.leaderFinishIn,"player is leader does not add another lap at simultaneous finish");
-    Require(p.noStop.ownCrossings==13,"leader's own crossing count");
-    f=RacingFrame(); f.cars[1].pct=.99; f.cars[1].estTime=99;
-    p=calculator.Predict(s,f,options);
-    Require(p.noStop.minCrossings<=p.noStop.ownCrossings && p.noStop.maxCrossings>=p.noStop.ownCrossings && p.noStop.minCrossings<p.noStop.maxCrossings,"pace sensitivity exposes uncertain extra lap");
-    Require(p.noStop.confidence==Confidence::Low,"crossing ambiguity lowers confidence");
+    Near(calculator.Predict(s,shortRace).finish.finalLapTimeLeft,98,"clock at already started final lap remains anchored to lap start");
+    Near(p.finish.ownFinishIn,1250,"own crossing after leader");
+    Near(p.finish.ownDistance,12.5,"own fuel distance, not leader distance");
+    Require(p.finish.ownCrossings==13,"own integer crossings are separate from distance");
+    f.player=0; f.lapCompleted=10; f.lapPct=.98;
+    p=calculator.Predict(s,f);
+    Near(p.finish.ownFinishIn,p.finish.leaderFinishIn,"player is leader does not add another lap at simultaneous finish");
+    Require(p.finish.ownCrossings==13,"leader's own crossing count");
+    // A car in the pit lane carries the assumed pit loss until its own stop has been measured.
+    f=RacingFrame(); f.cars[0].pit=true;
+    Near(calculator.Predict(s,f).finish.leaderTotalDistance,22.01-.45,"active pit visit delays the leader by the assumed loss");
 }
 void LeaderChangeTests() {
     auto s=Race(); auto f=RacingFrame();
     s.drivers.push_back({2,1,2100,0xffcc44,false,false,"Challenger","13","GT3"});
     Progress(f.cars[2],10.7); f.cars[2].position=2; f.cars[1].position=3;
-    RacePredictor calculator; calculator.Update(s,f); auto p=calculator.Predict(s,f,{});
-    Require(p.noStop.winner==0 && p.withStops.winner==2,"leader pit stop can change race winner");
-    Near(p.withStops.raceFinishIn,1130,"challenger can trigger checkered before original leader");
-    Near(p.withStops.leaderFinishIn,1147,"original leader crossing differs from start of checkered");
-    Near(p.withStops.ownFinishIn,1150,"own finish uses actual predicted winner's flag time");
+    RacePredictor calculator; calculator.Update(s,f); auto p=calculator.Predict(s,f);
+    Require(p.finish.winner==0,"leader keeps the win at equal pace");
     f.cars[2].best=f.cars[2].last=90; f.cars[2].estTime=f.cars[2].pct*90;
-    p=calculator.Predict(s,f,{}); Require(p.noStop.winner==2,"pace-based leadership change without a pit stop");
+    p=calculator.Predict(s,f); Require(p.finish.winner==2,"pace-based leadership change without a pit stop");
 }
 void CrossingInvariantTests() {
     for(double leaderPct:{0.0,.1,.5,.98}) for(double ownPct:{0.0,.2,.7,.99}) for(double expiry:{0.0,49.0,100.0,250.0,1103.0}) {
@@ -184,8 +168,8 @@ void CrossingInvariantTests() {
         Progress(f.cars[0],10+leaderPct); Progress(f.cars[1],8+ownPct);
         f.lastLap=f.bestLap=f.cars[1].last=f.cars[1].best=121;
         f.cars[1].estTime=ownPct*121;
-        RacePredictor predictor; predictor.Update(s,f); const auto forecast=predictor.Predict(s,f,{});
-        for(const auto& scene:{forecast.noStop,forecast.withStops}) {
+        RacePredictor predictor; predictor.Update(s,f); const auto forecast=predictor.Predict(s,f);
+        {   const auto& scene=forecast.finish;
             Require(scene.valid && scene.ownFinishIn>=scene.raceFinishIn-1e-6,"own crossing never precedes predicted checkered");
             Near(scene.ownDistance,scene.ownCrossings-ownPct,"fuel distance equals partial lap plus full laps");
             if(scene.ownCrossings>1) Require(scene.ownFinishIn-121<scene.raceFinishIn+1e-6,"own finish uses first eligible crossing, not an extra lap");
@@ -196,28 +180,28 @@ void CrossingInvariantTests() {
 void LimitAndStateTests() {
     auto s=Race(); auto f=RacingFrame(); RacePredictor calculator; calculator.Update(s,f);
     s.totalLaps=20;
-    auto p=calculator.Predict(s,f,{});
-    Near(p.noStop.leaderFinishIn,902,"combined limits use earlier lap limit");
-    Near(p.noStop.leaderTotalDistance,20,"earlier lap limit caps total distance instead of driving past race finish");
-    Near(p.noStop.ownDistance,9.5,"lapped driver's distance follows leader lap limit");
+    auto p=calculator.Predict(s,f);
+    Near(p.finish.leaderFinishIn,902,"combined limits use earlier lap limit");
+    Near(p.finish.leaderTotalDistance,20,"earlier lap limit caps total distance instead of driving past race finish");
+    Near(p.finish.ownDistance,9.5,"lapped driver's distance follows leader lap limit");
     f.timeLeft=-1; f.timeLeftKnown=false;
-    Near(calculator.Predict(s,f,{}).noStop.leaderFinishIn,902,"pure lap race supported");
-    s.totalLaps=-1; Require(!calculator.Predict(s,f,{}).noStop.valid,"unknown race limits are not guessed");
+    Near(calculator.Predict(s,f).finish.leaderFinishIn,902,"pure lap race supported");
+    s.totalLaps=-1; Require(!calculator.Predict(s,f).finish.valid,"unknown race limits are not guessed");
     f.timeLeftKnown=true;
-    Near(calculator.Predict(s,f,{}).noStop.leaderFinishIn,2,"expired timer still waits for leader line crossing");
-    f=RacingFrame(); f.state=3; Require(calculator.Predict(s,f,{}).status==PredictionStatus::Gridding,"no pre-race forecast");
-    f.state=4; f.replay=true; Require(calculator.Predict(s,f,{}).status==PredictionStatus::Replay,"no replay race prediction");
-    f.replay=false; f.cars[0].surface=-1; Require(calculator.Predict(s,f,{}).status==PredictionStatus::MissingLeader,"missing leader position cannot silently use another car");
+    Near(calculator.Predict(s,f).finish.leaderFinishIn,2,"expired timer still waits for leader line crossing");
+    f=RacingFrame(); f.state=3; Require(calculator.Predict(s,f).status==PredictionStatus::Gridding,"no pre-race forecast");
+    f.state=4; f.replay=true; Require(calculator.Predict(s,f).status==PredictionStatus::Replay,"no replay race prediction");
+    f.replay=false; f.cars[0].surface=-1; Require(calculator.Predict(s,f).status==PredictionStatus::MissingLeader,"missing leader position cannot silently use another car");
     f=RacingFrame(); f.cars[1].surface=-1;
-    p=calculator.Predict(s,f,{}); Require(p.noStop.valid && p.noStop.ownDistance<0 && p.status==PredictionStatus::MissingPace,"leader forecast remains visible when own car unavailable");
+    p=calculator.Predict(s,f); Require(p.finish.valid && p.finish.ownDistance<0 && p.status==PredictionStatus::MissingPace,"leader forecast remains visible when own car unavailable");
     f=RacingFrame(); f.state=5; calculator.Update(s,f);
-    p=calculator.Predict(s,f,{}); Require(p.noStop.ownCrossings==1 && p.noStop.raceFinishIn==0,"checkered does not keep forecasting extra race laps");
+    p=calculator.Predict(s,f); Require(p.finish.ownCrossings==1 && p.finish.raceFinishIn==0,"checkered does not keep forecasting extra race laps");
     for(int t=1;t<=51;++t) { f.time=1200+t; Progress(f.cars[1],8.5+t*.01); calculator.Update(s,f); }
-    Require(calculator.Predict(s,f,{}).noStop.ownCrossings==0,"own finish is latched after post-checkered crossing");
-    f.state=6; p=calculator.Predict(s,f,{}); Require(p.status==PredictionStatus::Finished && p.noStop.ownDistance==0,"cooldown needs no fuel to finish");
+    Require(calculator.Predict(s,f).finish.ownCrossings==0,"own finish is latched after post-checkered crossing");
+    f.state=6; p=calculator.Predict(s,f); Require(p.status==PredictionStatus::Finished && p.finish.ownDistance==0,"cooldown needs no fuel to finish");
     f.cars[0].surface=-1; f.cars[0].position=0;
-    Require(calculator.Predict(s,f,{}).noStop.ownDistance==0,"finished state remains authoritative after leader disconnects");
-    s.type="Practice"; Require(calculator.Predict(s,f,{}).status==PredictionStatus::NotRace,"practice does not claim a race finish");
+    Require(calculator.Predict(s,f).finish.ownDistance==0,"finished state remains authoritative after leader disconnects");
+    s.type="Practice"; Require(calculator.Predict(s,f).status==PredictionStatus::NotRace,"practice does not claim a race finish");
 }
 void HistoryTests() {
     auto s=Race(); auto f=RacingFrame(); RacePredictor calculator;
@@ -234,33 +218,11 @@ void HistoryTests() {
         Progress(f.cars[1],std::max(.05,progress-.1)); f.lapCompleted=f.cars[1].completed; f.lapPct=f.cars[1].pct;
         calculator.Update(s,f);
     }
-    auto p=calculator.Predict(s,f,{});
-    Require(p.observedLeaderStops==2 && p.measuredPitLoss,"observed pit entry and exit learn stops");
-    Near(p.leaderPitLoss,25,"pit loss excludes normal travel through pit segment");
-    Near(p.leaderStint,4.4,"complete observed stints used instead of late-join partial stint");
-    Near(p.leaderLastPitLaps,.7,"laps since leader last pit exit");
-    Near(p.leaderLastPitSeconds,70,"seconds since leader last pit exit");
-    Near(p.leaderPace,100,"pit laps excluded from learned race pace");
-    Require(!p.whatIf && p.stopConfidence==Confidence::Medium && p.projectedLeaderStops>0,"automatic stop forecast uses observed stint evidence");
-    f.timeLeft=30000; Require(calculator.Predict(s,f,{}).projectedLeaderStops>16,"long races project repeated stops without a short fixed stop-list limit");
-    calculator.Update(s,f); Require(calculator.Predict(s,f,{}).observedLeaderStops==2,"unchanged telemetry does not duplicate stops");
-    f.time=0; calculator.Update(s,f); Require(calculator.Predict(s,f,{}).observedLeaderStops==0,"rewind resets learned pit history");
-    s.key="another-server"; f.time=1001; calculator.Update(s,f);
-    Require(calculator.Predict(s,f,{}).observedLeaderStops==0,"server change resets learned pit history");
-    // Uniform full laps establish high pace confidence; yellow laps cannot establish it.
-    calculator.Reset(); s=Race(); f=RacingFrame();
-    for(int t=0;t<=1400;++t) {
-        f.time=t; f.timeLeft=500;
-        Progress(f.cars[0],.2+t*.01); Progress(f.cars[1],.1+t*.01);
-        calculator.Update(s,f);
-    }
-    PredictionOptions options; options.stops=StopMode::None;
-    p=calculator.Predict(s,f,options);
-    Require(p.noStop.confidence==Confidence::High,"stable observed ten-lap pace supports high conditional confidence");
-    f.flags=0x4000; Require(calculator.Predict(s,f,options).noStop.confidence==Confidence::Low,"caution lowers race confidence");
-    f.flags=0; s.drivers.push_back({2,1,2200,0xffcc44,false,false,"Unknown pace","99","GT3"});
-    f.cars[2].position=3; f.cars[2].surface=3;
-    Require(calculator.Predict(s,f,options).noStop.confidence==Confidence::Low,"missing front-runner pace prevents high confidence");
+    Near(calculator.Predict(s,f).leaderPace,100,"pit laps excluded from learned race pace");
+    // Observed stops measured 25 s of loss; a new pit visit uses that instead of the assumed 45 s.
+    f.time+=1; Progress(f.cars[0],f.cars[0].completed+f.cars[0].pct+.0025); f.cars[0].pit=true; calculator.Update(s,f);
+    RacePredictor unmeasured;
+    Near(unmeasured.Predict(s,f).finish.leaderFinishIn-calculator.Predict(s,f).finish.leaderFinishIn,20,"measured pit loss replaces the assumption");
 }
 void MulticlassEnduranceTests() {
     auto s=Race(); s.fuelCapacity=100;
@@ -272,21 +234,20 @@ void MulticlassEnduranceTests() {
     s.drivers.push_back({2,2,2200,0x55aaff,false,false,"Class leader","25","GT4"});
     Progress(f.cars[2],51.1); f.cars[2].position=2; f.cars[2].best=f.cars[2].last=118; f.cars[2].estTime=11.8;
     f.cars[1].position=3;
-    PredictionOptions options; options.stops=StopMode::None;
     RacePredictor predictor; predictor.Update(s,f);
-    auto prediction=predictor.Predict(s,f,options);
-    Require(prediction.leader==0 && prediction.noStop.winner==0,"multiclass uses overall leader, not own class leader");
-    Near(prediction.noStop.raceFinishIn,3645,"overall leader triggers flag after timed expiry");
-    Near(prediction.noStop.leaderTotalDistance,160.25,"leader total is fractional progress at timer expiry including completed laps");
-    Near(prediction.noStop.leaderDistance,60.75,"fast class remaining distance");
-    Near(prediction.noStop.ownDistance,30.5,"slow class needs half the distance plus its eligible finish crossing");
-    Near(prediction.noStop.ownFinishIn,3660,"lapped slow class finishes at first own line crossing after flag");
-    Require(prediction.noStop.leaderCrossings==61 && prediction.noStop.ownCrossings==31,"thirty further laps lost over one remaining hour");
+    auto prediction=predictor.Predict(s,f);
+    Require(prediction.leader==0 && prediction.finish.winner==0,"multiclass uses overall leader, not own class leader");
+    Near(prediction.finish.raceFinishIn,3645,"overall leader triggers flag after timed expiry");
+    Near(prediction.finish.leaderTotalDistance,160.25,"leader total is fractional progress at timer expiry including completed laps");
+    Near(prediction.finish.leaderDistance,60.75,"fast class remaining distance");
+    Near(prediction.finish.ownDistance,30.5,"slow class needs half the distance plus its eligible finish crossing");
+    Near(prediction.finish.ownFinishIn,3660,"lapped slow class finishes at first own line crossing after flag");
+    Require(prediction.finish.leaderCrossings==61 && prediction.finish.ownCrossings==31,"thirty further laps lost over one remaining hour");
     // Learn fuel independently, then feed the slow-class forecast into the entire fuel plan.
     FuelCalculator fuel; auto learning=f; learning.time=0; learning.lapCompleted=0; learning.fuel=100;
     fuel.Update(s,learning);
     for(int lap=1;lap<=11;++lap) { learning.time=lap*120; learning.lapCompleted=lap; learning.fuel-=3; fuel.Update(s,learning); }
-    f.fuel=20; const auto plan=fuel.Plan(f,0,false,0,&prediction);
+    f.fuel=20; const auto plan=fuel.Plan(f,&prediction);
     Near(plan.lapsToFinish,30.5,"fuel plan preserves slow class distance despite being many laps behind");
     Near(plan.estimates[5].consumption,3,"whole-race average learned for multiclass fuel plan");
     Near(plan.estimates[5].add,71.5,"fuel add uses own 91.5 liters required, not leader 182.25 liters");
@@ -294,35 +255,32 @@ void MulticlassEnduranceTests() {
     Near(window.fuelAtEnd,-71.5,"finish fuel uses same multiclass distance as refuel amount");
     Near(window.timeEmpty,800,"time empty uses own slower pace");
     Require(window.stops==1 && window.finishLap==81,"multiclass pit plan needs one stop and own lap 81 finish");
-    Require(CalculatePitWindow(s,f,prediction.noStop.leaderDistance,3).stops==2,"using leader distance would wrongly require an extra stop");
+    Require(CalculatePitWindow(s,f,prediction.finish.leaderDistance,3).stops==2,"using leader distance would wrongly require an extra stop");
     auto lapRace=s; lapRace.totalLaps=161; auto untimed=f; untimed.timeLeft=-1; untimed.timeLeftKnown=false;
-    const auto lapPrediction=predictor.Predict(lapRace,untimed,options);
-    Near(lapPrediction.noStop.leaderTotalDistance,161,"pure lap race total remains its finish lap limit");
-    Near(lapPrediction.noStop.ownDistance,30.5,"lapped own finish also follows overall leader in lap-limited races");
+    const auto lapPrediction=predictor.Predict(lapRace,untimed);
+    Near(lapPrediction.finish.leaderTotalDistance,161,"pure lap race total remains its finish lap limit");
+    Near(lapPrediction.finish.ownDistance,30.5,"lapped own finish also follows overall leader in lap-limited races");
     f.timeLeft=10800;
-    prediction=predictor.Predict(s,f,options);
-    Near(prediction.noStop.leaderTotalDistance,280.25,"three-hour leader total uses expiry position rather than integer finish goal");
-    Near(prediction.noStop.ownDistance,90.5,"three-hour slow-class forecast includes repeated future lapping");
-    Require(prediction.noStop.leaderCrossings-prediction.noStop.ownCrossings==90,"ninety further leader crossings over three hours");
+    prediction=predictor.Predict(s,f);
+    Near(prediction.finish.leaderTotalDistance,280.25,"three-hour leader total uses expiry position rather than integer finish goal");
+    Near(prediction.finish.ownDistance,90.5,"three-hour slow-class forecast includes repeated future lapping");
+    Require(prediction.finish.leaderCrossings-prediction.finish.ownCrossings==90,"ninety further leader crossings over three hours");
     f.timeLeft=3600; f.lastLap=f.bestLap=f.cars[1].best=f.cars[1].last=150; f.cars[1].estTime=75;
-    prediction=predictor.Predict(s,f,options);
-    Near(prediction.noStop.ownDistance,24.5,"slower updated own pace lowers remaining distance without manual lap adjustment");
-    Near(fuel.Plan(f,0,false,0,&prediction).estimates[5].add,53.5,"updated class pace propagates into required fuel");
+    prediction=predictor.Predict(s,f);
+    Near(prediction.finish.ownDistance,24.5,"slower updated own pace lowers remaining distance without manual lap adjustment");
+    Near(fuel.Plan(f,&prediction).estimates[5].add,53.5,"updated class pace propagates into required fuel");
 }
 void FuelForecastTests() {
     auto s=Race(); auto f=RacingFrame(); FuelCalculator fuel;
     f.pit=false; f.time=0; f.lapCompleted=0; f.fuel=100; fuel.Update(s,f);
     for(int i=1;i<=11;++i) { f.time=i*100; f.lapCompleted=i; f.fuel-=3; fuel.Update(s,f); }
     f.fuel=20;
-    RacePredictor predictor; predictor.Update(s,f); const auto forecast=predictor.Predict(s,f,{});
-    const auto plan=fuel.Plan(f,0,false,0,&forecast);
-    Require(plan.confidence==Confidence::High,"stable ten-lap fuel usage supports high consumption confidence");
-    Near(plan.estimates[1].add,forecast.noStop.ownDistance*3-20,"baseline refuel uses own projected finish distance");
-    Near(plan.estimates[1].addWithStops,forecast.withStops.ownDistance*3-20,"stop scenario has separate refuel amount");
-    Require(plan.estimates[1].safeAdd>=plan.estimates[1].add && plan.estimates[1].safeAdd>=plan.estimates[1].addWithStops,"range upper covers both modelled scenarios");
+    RacePredictor predictor; predictor.Update(s,f); const auto forecast=predictor.Predict(s,f);
+    const auto plan=fuel.Plan(f,&forecast);
+    Near(plan.estimates[1].add,forecast.finish.ownDistance*3-20,"baseline refuel uses own projected finish distance");
     RacePrediction missing;
-    Require(fuel.Plan(f,0,false,0,&missing).estimates[1].add<0,"missing prediction never falls back to the obsolete time-plus-one rule");
-    f.replay=true; Require(fuel.Plan(f,0,false,0,&forecast).confidence==Confidence::Unknown,"no fuel confidence in replay");
+    Require(fuel.Plan(f,&missing).estimates[1].add<0,"missing prediction never falls back to the obsolete time-plus-one rule");
+    f.replay=true; Require(fuel.Plan(f,&forecast).estimates[1].add<0,"no refuel amount in replay");
 }
 }
 void PredictionTests() { PitWindowTests(); TimedTests(); LeaderChangeTests(); CrossingInvariantTests(); LimitAndStateTests(); HistoryTests(); MulticlassEnduranceTests(); FuelForecastTests(); }

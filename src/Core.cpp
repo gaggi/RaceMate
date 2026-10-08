@@ -557,7 +557,7 @@ void FuelCalculator::Update(const Session& s, const Frame& f, bool excludeYellow
     if (f.lapCompleted != lap_) {
         const double burn = fuel_ - f.fuel, duration = f.time - time_;
         if (!dirty_ && burn > 0.01 && duration > 10 && std::isfinite(burn)) {
-            burns_[cursor_] = burn; times_[cursor_] = duration; cursor_ = (cursor_ + 1) % 10;
+            burns_[cursor_] = burn; cursor_ = (cursor_ + 1) % 10;
             used_ = std::min(10, used_ + 1); ++samples_; totalBurn_+=burn; last_ = burn;
             maximum_=std::max(maximum_,burn); minimum_=std::min(minimum_,burn);
         }
@@ -599,49 +599,21 @@ PitWindow CalculatePitWindow(const Session& s,const Frame& f,double distance,dou
     window.openNow=window.status==PitWindowStatus::Open && finish<=reachable+stint+1e-6 && progress<=latest;
     return window;
 }
-FuelPlan FuelCalculator::Plan(const Frame& f, double reserveLaps, bool conservative, int manualLaps, const RacePrediction* prediction) const {
-    FuelPlan p; p.samples = samples_; p.last = last_; p.stintStartLap=stintStartLap_;
-    if(prediction) { p.prediction=*prediction; p.lapsToFinish=prediction->noStop.ownDistance; }
+FuelPlan FuelCalculator::Plan(const Frame& f, const RacePrediction* prediction) const {
+    FuelPlan p; p.samples = samples_; p.stintStartLap=stintStartLap_;
+    if(prediction) { p.prediction=*prediction; p.lapsToFinish=prediction->finish.valid?prediction->finish.ownDistance:-1; }
     if (!used_ || !f.fuelKnown || f.replay) return p;
-    double duration = 0;
-    for (int i = 0; i < used_; ++i) { p.average += burns_[i]; p.maximum = std::max(p.maximum,burns_[i]); duration += times_[i]; }
-    p.average /= used_; duration /= used_;
-    double variance=0; for(int i=0;i<used_;++i) variance+=(burns_[i]-p.average)*(burns_[i]-p.average);
-    const double variation=std::sqrt(variance/used_)/p.average;
-    p.confidence=used_>=10 && variation<=.03?Confidence::High:(used_>=5 && variation<=.06?Confidence::Medium:Confidence::Low);
-    if(f.flags&SessionFlag::Neutralized) p.confidence=Confidence::Low;
-    const double burn = conservative ? p.maximum : p.average;
-    p.lapsAvailable = f.fuel / burn;
-    // Timed races need the lap completed after time expires. Lapped cars may differ.
-    double laps = -1;
-    if (f.lapsLeft >= 0 && f.lapsLeft < 32767) laps = std::max(0.0, f.lapsLeft - f.lapPct);
-    if (f.timeLeft >= 0 && f.timeLeft < 604800 && duration > 0) {
-        const double timed = f.timeLeft / duration + 1;
-        laps = laps < 0 ? timed : std::min(laps,timed);
-    }
-    if (manualLaps > 0) laps = manualLaps;
-    if(prediction) laps=prediction->noStop.valid?prediction->noStop.ownDistance:-1;
-    p.lapsToFinish = laps;
-    if (laps >= 0) { p.required = (laps + std::max(0.0,reserveLaps)) * burn; p.add = std::max(0.0,p.required - f.fuel); }
-    double recent5=0;
+    double average=0, recent5=0;
+    for (int i = 0; i < used_; ++i) average += burns_[i];
     const int count5=std::min(5,used_);
     for(int i=0;i<count5;++i) recent5+=burns_[(cursor_+9-i)%10];
     p.estimates[0]={last_,-1,1};
-    p.estimates[1]={p.average,-1,used_};
+    p.estimates[1]={average/used_,-1,used_};
     p.estimates[2]={recent5/count5,-1,count5};
     p.estimates[3]={maximum_,-1,samples_};
     p.estimates[4]={minimum_,-1,samples_};
     p.estimates[5]={samples_?totalBurn_/samples_:0,-1,samples_};
-    for(auto& estimate:p.estimates) {
-        if(laps>=0) estimate.add=std::max(0.0,(laps+std::max(0.0,reserveLaps))*estimate.consumption-f.fuel);
-        if(prediction && prediction->withStops.valid && prediction->withStops.ownDistance>=0)
-            estimate.addWithStops=std::max(0.0,prediction->withStops.ownDistance*estimate.consumption-f.fuel);
-        if(prediction && prediction->noStop.valid && prediction->noStop.maxDistance>=0) {
-            double upper=prediction->noStop.maxDistance;
-            if(prediction->withStops.valid) upper=std::max(upper,prediction->withStops.maxDistance);
-            estimate.safeAdd=std::max(0.0,upper*estimate.consumption-f.fuel);
-        }
-    }
+    if(p.lapsToFinish>=0) for(auto& estimate:p.estimates) estimate.add=std::max(0.0,p.lapsToFinish*estimate.consumption-f.fuel);
     return p;
 }
 Session DemoSession() {

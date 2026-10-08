@@ -91,12 +91,12 @@ int RunDiagnostics() {
         bool filterOk=!app.excludeYellowFuelLaps;
         for(bool enabled:{true,false}) {
             OpenOverlaySettings(2);
-            SendDlgItemMessageW(app.overlaySettings,471,BM_SETCHECK,enabled?BST_CHECKED:BST_UNCHECKED,0);
-            SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(471,BN_CLICKED),0);
+            SendDlgItemMessageW(app.overlaySettings,ExcludeYellowId,BM_SETCHECK,enabled?BST_CHECKED:BST_UNCHECKED,0);
+            SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(ExcludeYellowId,BN_CLICKED),0);
             Load(); filterOk=(app.excludeYellowFuelLaps==enabled) && filterOk;
             SendMessageW(app.overlaySettings,WM_CLOSE,0,0);
             OpenOverlaySettings(2);
-            filterOk=(SendDlgItemMessageW(app.overlaySettings,471,BM_GETCHECK,0,0)==(enabled?BST_CHECKED:BST_UNCHECKED)) && filterOk;
+            filterOk=(SendDlgItemMessageW(app.overlaySettings,ExcludeYellowId,BM_GETCHECK,0,0)==(enabled?BST_CHECKED:BST_UNCHECKED)) && filterOk;
             SendMessageW(app.overlaySettings,WM_CLOSE,0,0);
         }
         app.excludeYellowFuelLaps=savedFilter; Save();
@@ -194,7 +194,7 @@ int RunDiagnostics() {
         for(int kind=0;kind<2;++kind) {
             OpenOverlaySettings(kind); SendMessageW(app.overlaySettings,WM_COMMAND,446,0);
             footerOk=footerSettingsWindow && !IsWindowEnabled(app.overlaySettings) && footerOk;
-            footerOk=SendDlgItemMessageW(footerSettingsWindow,481,CB_GETCOUNT,0,0)==FooterMetricCount && footerOk;
+            footerOk=SendDlgItemMessageW(footerSettingsWindow,481,CB_GETCOUNT,0,0)==MetricCount && footerOk;
             const int values[]={3,8,6};
             for(int slot=0;slot<3;++slot) { SendDlgItemMessageW(footerSettingsWindow,481+slot,CB_SETCURSEL,values[slot],0); SendMessageW(footerSettingsWindow,WM_COMMAND,MAKEWPARAM(481+slot,CBN_SELCHANGE),0); }
             Save(); Load(); footerOk=app.footers[kind].metrics==std::array<int,3>{3,8,6} && footerOk;
@@ -208,7 +208,7 @@ int RunDiagnostics() {
             SendMessageW(app.overlaySettings,WM_CLOSE,0,0); app.footers[kind]={}; Save(); UpdateOverlays();
         }
         footerOk=FooterValue(9)==L"Lap 8 / ~20" && FooterValue(10)==L"~12.6 laps" && FooterValue(16).find(L"SOF ")==0 && footerOk;
-        for(int metric=1;metric<FooterMetricCount;++metric) footerOk=!FooterValue(metric).empty() && footerOk;
+        for(int metric=1;metric<MetricCount;++metric) footerOk=!FooterValue(metric).empty() && footerOk;
         app.frame.airTemperature=-5; app.frame.timeOfDay=86400+65*60;
         footerOk=FooterValue(4)==L"Air -5°C" && FooterValue(12)==L"Sim 01:05" && FooterValue(8)==L"Lap 8" && footerOk;
         app.frame.incidents=3; app.session.incidentLimit=17; footerOk=FooterValue(2)==L"3/17x" && footerOk;
@@ -251,7 +251,7 @@ int RunDiagnostics() {
             const int before=HeightWithTitle(4);
             SendDlgItemMessageW(app.overlaySettings,490+element,BM_SETCHECK,BST_UNCHECKED,0);
             SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(490+element,BN_CLICKED),0);
-            Load(); weatherOk=!app.weatherDisplay[element] && HeightWithTitle(4)==before-(element<5?WeatherHeights[element]+8:0) && weatherOk;
+            Load(); weatherOk=!app.weatherDisplay[element] && HeightWithTitle(4)==before-(element<WeatherCardCount?WeatherElements[element].height+8:0) && weatherOk;
             if(element==2) weatherOk=!IsWindowEnabled(GetDlgItem(app.overlaySettings,495)) && weatherOk;
         }
         weatherOk=!IsWindowVisible(app.overlays[4].window) && weatherOk;
@@ -312,13 +312,12 @@ int RunDiagnostics() {
     {
         LARGE_INTEGER frequency{}; QueryPerformanceFrequency(&frequency);
         for(int kind:{1,4}) {
-            HDC target=GetDC(app.overlays[kind].window); Render(app.overlays[kind],target);
+            auto& overlay=app.overlays[kind]; InvalidateModel(); RefreshOverlay(overlay);
             const DWORD handles=GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS);
             LARGE_INTEGER begin{},end{}; QueryPerformanceCounter(&begin);
-            for(int pass=0;pass<300;++pass) { auto content=Content(kind); Render(app.overlays[kind],target); }
+            for(int pass=0;pass<300;++pass) { overlay.scene.clear(); InvalidateModel(); RefreshOverlay(overlay); }
             GdiFlush(); QueryPerformanceCounter(&end);
-            report<<"Content + paint benchmark kind "<<kind<<": "<<(end.QuadPart-begin.QuadPart)*1000000.0/frequency.QuadPart/300<<" us; GDI handle delta "<<(static_cast<int>(GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS))-static_cast<int>(handles))<<"\n";
-            ReleaseDC(app.overlays[kind].window,target);
+            report<<"Full scene + paint benchmark kind "<<kind<<": "<<(end.QuadPart-begin.QuadPart)*1000000.0/frequency.QuadPart/300<<" us; GDI handle delta "<<(static_cast<int>(GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS))-static_cast<int>(handles))<<"\n";
         }
     }
     {
@@ -392,29 +391,31 @@ int RunDiagnostics() {
             } else if(kind==2) {
                 SendDlgItemMessageW(app.overlaySettings,411,BM_SETCHECK,BST_UNCHECKED,0);
                 SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(411,BN_CLICKED),0);
-                ok=!app.fuelRows[1] && BaseHeight(2)==(app.showTitleBar?524:492) && ok;
-                for(int i=0;i<11;++i) {
+                const int newElements=FuelElements[KeyNumbersElement].height+FuelElements[PitTimelineElement].height;
+                ok=!app.fuelRows[1] && BaseHeight(2)==(app.showTitleBar?524:492)+newElements && ok;
+                for(int i=0;i<FuelElementCount;++i) {
                     const int before=HeightWithTitle(2);
-                    SendDlgItemMessageW(app.overlaySettings,460+i,BM_SETCHECK,BST_UNCHECKED,0);
-                    SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(460+i,BN_CLICKED),0);
-                    ok=!app.fuelDisplay[i] && HeightWithTitle(2)==before-FuelDisplayHeights[i] && ok;
+                    SendDlgItemMessageW(app.overlaySettings,FuelDisplayId+i,BM_SETCHECK,BST_UNCHECKED,0);
+                    SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(FuelDisplayId+i,BN_CLICKED),0);
+                    ok=!app.fuelDisplay[i] && HeightWithTitle(2)==before-FuelElements[i].height && ok;
                 }
                 ok=HeightWithTitle(2)==213 && OverlayWidth(2)==365 && ok;
                 Save(); Load();
                 ok=std::none_of(app.fuelDisplay.begin(),app.fuelDisplay.end(),[](bool value){return value;}) && ok;
                 ok=Export(app.overlays[2].window,L"build\\qa\\fuel-compact.bmp") && ok;
-                for(int i=0;i<11;++i) {
-                    SendDlgItemMessageW(app.overlaySettings,460+i,BM_SETCHECK,BST_CHECKED,0);
-                    SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(460+i,BN_CLICKED),0);
+                for(int i=0;i<FuelElementCount;++i) {
+                    SendDlgItemMessageW(app.overlaySettings,FuelDisplayId+i,BM_SETCHECK,BST_CHECKED,0);
+                    SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(FuelDisplayId+i,BN_CLICKED),0);
                 }
                 ok=Export(app.overlaySettings,L"build\\qa\\settings-2.bmp") && ok;
                 const auto originalOrder=app.fuelOrder;
                 OpenColumnOrder(app.overlaySettings,2);
                 ok=columnOrderWindow && !IsWindowEnabled(app.overlaySettings) && ok;
-                SendDlgItemMessageW(columnOrderWindow,450,LB_SETCURSEL,10,0);
-                SendMessageW(columnOrderWindow,WM_COMMAND,451,0);
-                ok=app.fuelOrder[9]==8 && ok;
-                Save(); Load(); ok=app.fuelOrder[9]==8 && ok;
+                const int table=static_cast<int>(std::find(app.fuelOrder.begin(),app.fuelOrder.end(),ConsumptionTableElement)-app.fuelOrder.begin());
+                SendDlgItemMessageW(columnOrderWindow,OrderListId,LB_SETCURSEL,table,0);
+                SendMessageW(columnOrderWindow,WM_COMMAND,MoveUpId,0);
+                ok=table>0 && app.fuelOrder[table-1]==ConsumptionTableElement && ok;
+                Save(); Load(); ok=app.fuelOrder[table-1]==ConsumptionTableElement && ok;
                 UpdateOverlays();
                 ok=Export(app.overlays[2].window,L"build\\qa\\fuel-reordered.bmp") && ok;
                 SendMessageW(columnOrderWindow,WM_CLOSE,0,0);
@@ -516,7 +517,7 @@ int RunDiagnostics() {
     const auto startup=StartupCommand(); ok=(!startup.empty() && startup.front()==L'"' && startup.back()==L'"') && ok;
     SendMessageW(app.main,WM_CLOSE,0,0); ok=!IsWindowVisible(app.main) && IsWindow(app.main) && ok;
     report<<"Overlay dialogs, independent options, class view switch, fuel rows, close-to-tray and persistence: "<<(ok?"PASS":"FAIL")<<"\n";
-    app.rows=9; app.standings={}; app.fuelRows.fill(true); app.fuelDisplay.fill(true); app.predictionOptions={}; app.startWithWindows=app.startMinimized=false;
+    app.rows=9; app.standings={}; app.fuelRows.fill(true); app.fuelDisplay.fill(true); app.startWithWindows=app.startMinimized=false;
     {
         const auto savedSession=app.session; const auto savedFrame=app.frame; const bool savedPreview=app.preview;
         app.preview=false; app.fuel.Reset(); app.predictor.Reset(); app.session.type="Race"; app.session.number=app.frame.session;
@@ -528,7 +529,7 @@ int RunDiagnostics() {
         app.frame.time=101; app.frame.lapCompleted=1; app.frame.fuel=46.8; app.frame.bestLap=app.frame.lastLap=100;
         auto& own=app.frame.cars[app.frame.player]; own.lap=2; own.completed=1; own.pct=0; own.estTime=0; own.best=own.last=100; own.position=own.classPosition=1; own.surface=3;
         app.fuel.Update(app.session,app.frame); UpdateOverlays();
-        ok=app.fuelPlan.estimates[0].samples==1 && std::abs(app.fuelPlan.estimates[0].consumption-3.2)<.001 && app.fuelPlan.estimates[5].samples==1 && ok;
+        ok=Plan().estimates[0].samples==1 && std::abs(Plan().estimates[0].consumption-3.2)<.001 && Plan().estimates[5].samples==1 && ok;
         ok=Export(app.overlays[2].window,L"build\\qa\\fuel-first-race-lap.bmp") && ok;
         report<<"Fuel Last Lap and Average populated immediately after observed first race lap: "<<(ok?"PASS":"FAIL")<<"\n";
         app.session=savedSession; app.frame=savedFrame; app.preview=savedPreview; app.fuel.Reset(); app.predictor.Reset(); UpdateOverlays();
@@ -684,4 +685,59 @@ int RunDiagnostics() {
     ok=trayFallbackOk && ok;
     if(IsWindow(app.main)) DestroyWindow(app.main);
     DeleteObject(app.font); DeleteObject(app.heading); DeleteObject(app.brush); return ok?0:2;
+}
+// Main-thread cost of one connected refresh with a 60-car multiclass race and every overlay visible.
+int RunTickBenchmark() {
+    // Move mode drops WS_EX_TRANSPARENT so UpdateWindow paints synchronously instead of deferring to the message loop.
+    app.preview=false; app.edit=true; app.hidden=false;
+    for(auto& o:app.overlays) { o.place.enabled=true; o.place.scale=100; }
+    app.weatherDisplay.fill(true); app.fuelDisplay.fill(true); app.fuelRows.fill(true);
+    app.showInterval=true; app.driverColumns[1][0]=app.driverColumns[1][1]=app.driverColumns[0][4]=true;
+    Session session=DemoSession(); session.drivers.clear(); session.key="benchmark"; session.number=0; session.trackMeters=7004;
+    const char* classes[]={"GTP","LMP2","GT3"}; const unsigned colors[]={0xffda59,0x33ceff,0xff5888};
+    for(int i=0;i<60;++i) session.drivers.push_back({i,i%3+1,1500+i*37,colors[i%3],false,false,"Driver Number "+std::to_string(i),std::to_string(i+1),classes[i%3],"Car","car",0,"A 3.45"});
+    session.player=7; app.session=session;
+    Frame frame=DemoFrame(0); frame.player=7; frame.session=0; frame.state=4; frame.pit=false; frame.timeLeft=3600; frame.cars={};
+    double progress[60];
+    for(int i=0;i<60;++i) progress[i]=10+(60-i)*.02;
+    LARGE_INTEGER frequency{},start{},end{}; QueryPerformanceFrequency(&frequency);
+    FILETIME created{},exited{},kernelBefore{},userBefore{},kernelAfter{},userAfter{};
+    constexpr int iterations=3000; double phases[3]{},paints[OverlayCount]{}; int changes[OverlayCount]{};
+    auto step=[&](int t) {
+        frame.time=1000+t*.1; frame.timeLeft=3600-t*.1;
+        for(int i=0;i<60;++i) {
+            progress[i]+=.1/(120+(i%3)*6+(i%7)*.3);
+            auto& c=frame.cars[i]; c.completed=static_cast<int>(progress[i]); c.lap=c.completed+1; c.pct=progress[i]-c.completed;
+            c.estTime=c.pct*120; c.best=119+i*.05; c.last=120+i*.05; c.surface=3; c.f2Time=(progress[0]-progress[i])*120+std::sin(t*.37+i)*.4;
+            c.estTime+=std::sin(t*.29+i*1.7)*.3;
+        }
+        std::vector<int> order(60); for(int i=0;i<60;++i) order[i]=i;
+        std::sort(order.begin(),order.end(),[&](int a,int b){return progress[a]>progress[b];});
+        int classCount[4]{};
+        for(int p=0;p<60;++p) { auto& c=frame.cars[order[p]]; c.position=p+1; c.classPosition=++classCount[order[p]%3+1]; }
+        frame.lapCompleted=frame.cars[7].completed; frame.lapPct=frame.cars[7].pct; frame.fuel=60-frame.time*.02;
+        std::array<std::vector<DrawCommand>,OverlayCount> previous; for(const auto& o:app.overlays) previous[o.kind]=o.scene;
+        LARGE_INTEGER a{},b{},c{},d{};
+        QueryPerformanceCounter(&a); app.frame=frame; ProcessFrame(true);
+        QueryPerformanceCounter(&b); UpdateOverlays(); UpdateRaceControl();
+        for(const auto& o:app.overlays) changes[o.kind]+=!(o.scene==previous[o.kind]);
+        QueryPerformanceCounter(&c);
+        for(auto& o:app.overlays) { LARGE_INTEGER before{},after{}; QueryPerformanceCounter(&before); UpdateWindow(o.window); QueryPerformanceCounter(&after); paints[o.kind]+=after.QuadPart-before.QuadPart; }
+        QueryPerformanceCounter(&d); phases[0]+=b.QuadPart-a.QuadPart; phases[1]+=c.QuadPart-b.QuadPart; phases[2]+=d.QuadPart-c.QuadPart;
+    };
+    for(int t=0;t<100;++t) step(t);
+    for(double& phase:phases) phase=0;
+    for(double& paint:paints) paint=0;
+    for(int& change:changes) change=0;
+    GetThreadTimes(GetCurrentThread(),&created,&exited,&kernelBefore,&userBefore); QueryPerformanceCounter(&start);
+    for(int t=100;t<100+iterations;++t) step(t);
+    QueryPerformanceCounter(&end); GetThreadTimes(GetCurrentThread(),&created,&exited,&kernelAfter,&userAfter);
+    auto ticks=[](FILETIME a,FILETIME b){ return (ULARGE_INTEGER{{b.dwLowDateTime,b.dwHighDateTime}}.QuadPart-ULARGE_INTEGER{{a.dwLowDateTime,a.dwHighDateTime}}.QuadPart)/10.0; };
+    const double cpu=(ticks(kernelBefore,kernelAfter)+ticks(userBefore,userAfter))/iterations;
+    const double wall=(end.QuadPart-start.QuadPart)*1e6/frequency.QuadPart/iterations;
+    std::ofstream report("build/qa/benchmark.txt");
+    report<<"60-car race, all overlays visible, "<<iterations<<" refreshes: "<<wall<<" us wall, "<<cpu<<" us CPU per refresh\n";
+    report<<"  model "<<phases[0]*1e6/frequency.QuadPart/iterations<<" us, overlay update "<<phases[1]*1e6/frequency.QuadPart/iterations<<" us, paint "<<phases[2]*1e6/frequency.QuadPart/iterations<<" us\n";
+    for(const auto& o:app.overlays) report<<"  overlay "<<o.kind<<": "<<changes[o.kind]<<" repaints, "<<paints[o.kind]*1e6/frequency.QuadPart/iterations<<" us per refresh"<<std::endl;
+    return 0;
 }

@@ -3,7 +3,6 @@
 #include "RaceControl.h"
 #include <windows.h>
 #include <cstdint>
-#include <unordered_map>
 
 namespace rm {
 bool SendIRacingMessage(const SimMessage&, HWND target = HWND_BROADCAST);
@@ -22,6 +21,16 @@ struct VariableHeader {
 static_assert(sizeof(MemoryHeader) == 112 && sizeof(VariableHeader) == 144);
 class Telemetry {
 public:
+    // Variables RaceMate reads; resolved once per connection instead of looked up by name every frame.
+    enum Var {
+        PlayerCarIdx, CamGroupNumber, ReplaySessionNum, ReplaySessionTime, CamCarIdx, SessionNum, IsOnTrack, OnPitRoad,
+        PlayerCarInPitStall, IsReplayPlaying, EngineWarnings, FuelLevel, SessionTime, SessionTimeRemain, SessionLapsRemainEx,
+        SessionLapsRemain, LapCompleted, LapDistPct, LapLastLapTime, LapBestLapTime, SessionState, SessionFlags,
+        PlayerCarMyIncidentCount, AirTemp, TrackTempCrew, TrackTemp, WindDir, YawNorth, SessionTimeOfDay, WindVel, TrackWetness,
+        CarIdxPosition, CarIdxClassPosition, CarIdxLap, CarIdxTrackSurface, CarIdxSessionFlags, CarIdxTireCompound,
+        CarIdxLapCompleted, CarIdxLapDistPct, CarIdxEstTime, CarIdxF2Time, CarIdxBestLapTime, CarIdxLastLapTime, CarIdxOnPitRoad,
+        PlayerCarIsTowing, PlayerCarTowTime, Speed, PlayerTrackSurface, VarCount
+    };
     explicit Telemetry(const wchar_t* mappingName = L"Local\\IRSDKMemMapFileName") : name_(mappingName) {}
     ~Telemetry() { Close(); }
     bool Read(Frame&, Session&);
@@ -30,13 +39,15 @@ private:
     bool Range(int offset, size_t size) const;
     bool Open();
     bool BuildVariables(const MemoryHeader&);
-    double Value(const char* name, double fallback, int index = 0) const;
+    bool Has(Var v) const { return vars_[v].count > 0; }
+    double Value(Var, double fallback, int index = 0) const;
     std::wstring name_;
     HANDLE mapping_ = nullptr;
     const unsigned char* view_ = nullptr;
     size_t size_ = 0;
     int tick_ = -1, sessionUpdate_ = -1, sessionNumber_ = -1;
+    bool resolved_ = false;
     std::vector<unsigned char> data_;
-    std::unordered_map<std::string, VariableHeader> variables_;
+    std::array<VariableHeader, VarCount> vars_{};
 };
 }

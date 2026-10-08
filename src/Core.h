@@ -115,43 +115,34 @@ struct StandingsGroup {
 std::vector<StandingsGroup> SelectStandings(const Session&, const Frame&, const StandingsOptions&);
 enum class FuelMetric { Last, Average10, Average5, Maximum, Minimum, Average, Count };
 constexpr int FuelMetricCount = static_cast<int>(FuelMetric::Count);
-enum class Confidence { Unknown, Low, Medium, High };
-enum class StopMode { Automatic, None, One };
-struct PredictionOptions {
-    StopMode stops = StopMode::Automatic;
-    int assumedPitLoss = 45, leaderStintLaps = 0, ownPitLoss = 0;
-};
 struct FinishScenario {
     bool valid = false;
-    int winner = -1, leaderCrossings = -1, ownCrossings = -1, minCrossings = -1, maxCrossings = -1;
+    int winner = -1, leaderCrossings = -1, ownCrossings = -1;
     double leaderTotalDistance = -1; // Total leader progress at timer expiry; at the finish for lap-limited races.
     double leaderDistance = -1, leaderFinishIn = -1, raceFinishIn = -1, ownDistance = -1, ownFinishIn = -1;
     double finalLapTimeLeft = -1; // Race clock at the start of the leader's projected final lap.
-    double minDistance = -1, maxDistance = -1;
-    Confidence confidence = Confidence::Unknown;
 };
 enum class PredictionStatus { Waiting, NotRace, Replay, Gridding, MissingLeader, MissingPace, Racing, Checkered, Finished };
+// Assumes no further pit stops; cars currently in the pit lane carry their remaining pit loss.
 struct RacePrediction {
     PredictionStatus status = PredictionStatus::Waiting;
-    FinishScenario noStop, withStops;
-    int leader = -1, projectedLeaderStops = 0, observedLeaderStops = 0;
-    double leaderPace = -1, ownPace = -1, leaderLastPitLaps = -1, leaderLastPitSeconds = -1, leaderPitLoss = -1, leaderStint = -1;
-    bool whatIf = false, measuredPitLoss = false, ownPitActive = false;
-    Confidence stopConfidence = Confidence::Unknown;
+    FinishScenario finish;
+    int leader = -1;
+    double leaderPace = -1, ownPace = -1;
 };
 class RacePredictor {
 public:
     void Reset();
     void Update(const Session&, const Frame&);
-    RacePrediction Predict(const Session&, const Frame&, const PredictionOptions&) const;
+    RacePrediction Predict(const Session&, const Frame&) const;
 private:
     struct History {
         bool seen = false, dirty = true, pitObserved = false, wasPit = false;
-        int completed = -1, used = 0, cursor = 0, stopUsed = 0, stopCursor = 0, stintUsed = 0, stintCursor = 0, stops = 0;
+        int completed = -1, used = 0, cursor = 0, lossUsed = 0, lossCursor = 0;
         double progress = -1, sampleTime = -1, crossTime = -1, lastCross = -1;
-        double entryTime = -1, entryProgress = -1, exitProgress = -1, exitTime = -1;
+        double entryTime = -1, entryProgress = -1;
         std::array<double,10> laps{};
-        std::array<double,6> losses{}, stints{};
+        std::array<double,6> losses{};
     };
     std::array<History,MaxCars> history_{};
     std::string key_;
@@ -161,20 +152,19 @@ private:
 enum class PitWindowStatus { Unavailable, NoStopNeeded, ExtraStopNeeded, Open };
 struct PitWindow { PitWindowStatus status=PitWindowStatus::Unavailable; int currentLap=-1, firstLap=-1, lastLap=-1, finishLap=-1, stops=-1; bool openNow=false; double fuelAtEnd=std::numeric_limits<double>::quiet_NaN(), timeEmpty=-1; };
 PitWindow CalculatePitWindow(const Session&, const Frame&, double remainingDistance, double consumption, double lapTime=-1);
-struct FuelEstimate { double consumption = 0, add = -1; int samples = 0; double addWithStops = -1, safeAdd = -1; };
+struct FuelEstimate { double consumption = 0, add = -1; int samples = 0; };
 struct FuelPlan {
     int samples = 0, stintStartLap = -1;
-    double average = 0, last = 0, maximum = 0, lapsAvailable = 0;
-    double lapsToFinish = -1, required = -1, add = -1;
+    double lapsToFinish = -1;
     std::array<FuelEstimate, FuelMetricCount> estimates{};
-    Confidence confidence = Confidence::Unknown;
     RacePrediction prediction;
 };
 class FuelCalculator {
 public:
     void Reset();
     void Update(const Session&, const Frame&, bool excludeYellowLaps = false);
-    FuelPlan Plan(const Frame&, double reserveLaps, bool conservative, int manualLaps = 0, const RacePrediction* prediction = nullptr) const;
+    // Without a prediction the consumption estimates are still filled, but no finish distance or fuel to add.
+    FuelPlan Plan(const Frame&, const RacePrediction* prediction = nullptr) const;
 private:
     std::string key_;
     int session_ = -1, player_ = -1, lap_ = -1, samples_ = 0, used_ = 0, cursor_ = 0;
@@ -184,7 +174,7 @@ private:
     int stintStartLap_ = -1;
     double totalBurn_ = 0;
     double maximum_ = 0, minimum_ = std::numeric_limits<double>::max();
-    std::array<double, 10> burns_{}, times_{};
+    std::array<double, 10> burns_{};
 };
 Session DemoSession();
 Frame DemoFrame(double time);

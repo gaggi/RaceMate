@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(RaceMate VERSION 0.4.36 LANGUAGES CXX RC)
+project(RaceMate VERSION 0.4.37 LANGUAGES CXX RC)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_library(racemate_core src/Core.cpp src/Prediction.cpp src/RaceControl.cpp)

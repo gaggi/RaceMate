@@ -440,12 +440,12 @@ void FuelMetricsTests() {
  for(int burn=1;burn<=12;++burn) {
   f.time+=100; ++f.lapCompleted; f.fuel-=burn; calculator.Update(s,f);
   if(burn==3) {
-   const auto early=calculator.Plan(f,0,false);
+   const auto early=calculator.Plan(f);
    Require(early.estimates[1].samples==3 && early.estimates[2].samples==3,"partial rolling windows report actual sample counts");
    Near(early.estimates[1].consumption,2,"partial average");
   }
  }
- auto plan=calculator.Plan(f,0,false);
+ auto plan=calculator.Plan(f);
  Near(plan.estimates[0].consumption,12,"last lap fuel");
  Near(plan.estimates[1].consumption,7.5,"last ten average wraps ring buffer");
  Near(plan.estimates[2].consumption,10,"last five average wraps ring buffer");
@@ -454,17 +454,18 @@ void FuelMetricsTests() {
  Near(plan.estimates[5].consumption,6.5,"complete average retains all twelve samples beyond rolling history");
  Require(plan.estimates[5].samples==12,"complete average reports all observed samples");
  Require(plan.estimates[1].samples==10 && plan.estimates[2].samples==5,"full rolling window counts");
- f.fuel=10; plan=calculator.Plan(f,0,false);
+ RacePrediction forecast; forecast.finish.valid=true; forecast.finish.ownDistance=5;
+ f.fuel=10; plan=calculator.Plan(f,&forecast);
  for(const auto& estimate:plan.estimates) Near(estimate.add,std::max(0.0,estimate.consumption*5-10),"fuel to add per strategy");
- f.lapsLeft=-1; plan=calculator.Plan(f,0,false);
+ plan=calculator.Plan(f);
  Require(plan.estimates[0].consumption>0 && plan.estimates[0].add<0,"unknown finish keeps consumption but no fabricated refuel amount");
- f.replay=true; plan=calculator.Plan(f,0,false);
+ f.replay=true; plan=calculator.Plan(f);
  Require(plan.estimates[0].samples==0 && plan.estimates[0].add<0,"replay fuel estimates unavailable");
  f.replay=false; f.time+=1; f.fuel=200; calculator.Update(s,f);
- plan=calculator.Plan(f,0,false); Near(plan.estimates[5].consumption,6.5,"refueling retains complete race average");
+ plan=calculator.Plan(f); Near(plan.estimates[5].consumption,6.5,"refueling retains complete race average");
  Require(plan.stintStartLap==f.lapCompleted+1,"refueling updates the full-stint display anchor");
- calculator.Reset(); Require(calculator.Plan(f,0,false).estimates[5].samples==0,"complete average resets with fuel history");
- Require(calculator.Plan(f,0,false).estimates[4].samples==0,"metric history resets");
+ calculator.Reset(); Require(calculator.Plan(f).estimates[5].samples==0,"complete average resets with fuel history");
+ Require(calculator.Plan(f).estimates[4].samples==0,"metric history resets");
 }
 void FirstRaceLapFuelTests() {
  auto session=DemoSession(); session.type="Race";
@@ -472,56 +473,54 @@ void FirstRaceLapFuelTests() {
  FuelCalculator calculator; calculator.Update(session,frame);
  frame.time=10; frame.state=3; frame.fuel=52; calculator.Update(session,frame);
  frame.time=20; frame.fuel=50; frame.lapCompleted=0; calculator.Update(session,frame);
- Require(calculator.Plan(frame,0,false).samples==0,"formation fuel excluded from race learning");
+ Require(calculator.Plan(frame).samples==0,"formation fuel excluded from race learning");
  frame.time=20.1; frame.state=4; frame.fuel=49.9; frame.lapPct=.01; calculator.Update(session,frame);
  frame.time=120.1; frame.lapCompleted=1; frame.lapPct=.01; frame.fuel=46.7; calculator.Update(session,frame);
- auto plan=calculator.Plan(frame,0,false);
+ auto plan=calculator.Plan(frame);
  Require(plan.samples==1 && plan.estimates[0].samples==1,"observed clean first race lap immediately provides Last Lap fuel");
- Near(plan.last,3.2,"first-race-lap burn excludes grid and formation consumption");
+ Near(plan.estimates[0].consumption,3.2,"first-race-lap burn excludes grid and formation consumption");
  Near(plan.estimates[0].consumption,3.2,"Last Lap row is populated after lap one");
  Near(plan.estimates[5].consumption,3.2,"whole-race average starts with observed first racing lap");
  Require(plan.estimates[5].samples==1 && plan.estimates[1].samples==1,"partial averages report first sample immediately");
- calculator.Update(session,frame); Require(calculator.Plan(frame,0,false).samples==1,"duplicate first-lap frame never counts twice");
- frame.time=220.1; frame.lapCompleted=2; frame.fuel=43.7; calculator.Update(session,frame); plan=calculator.Plan(frame,0,false);
- Near(plan.last,3,"second lap replaces Last Lap fuel"); Near(plan.estimates[5].consumption,3.1,"race average contains both observed race laps");
+ calculator.Update(session,frame); Require(calculator.Plan(frame).samples==1,"duplicate first-lap frame never counts twice");
+ frame.time=220.1; frame.lapCompleted=2; frame.fuel=43.7; calculator.Update(session,frame); plan=calculator.Plan(frame);
+ Near(plan.estimates[0].consumption,3,"second lap replaces Last Lap fuel"); Near(plan.estimates[5].consumption,3.1,"race average contains both observed race laps");
  // A late join still cannot claim to have measured a complete lap.
  calculator.Reset(); frame.state=4; frame.time=50; frame.lapCompleted=0; frame.lapPct=.5; frame.fuel=50; calculator.Update(session,frame);
  frame.time=100; frame.lapCompleted=1; frame.lapPct=0; frame.fuel=48.5; calculator.Update(session,frame);
- Require(calculator.Plan(frame,0,false).samples==0,"mid-lap join continues to discard first partial sample");
- frame.time=200; frame.lapCompleted=2; frame.fuel=45.5; calculator.Update(session,frame); Near(calculator.Plan(frame,0,false).last,3,"first full lap after late join provides consumption");
+ Require(calculator.Plan(frame).samples==0,"mid-lap join continues to discard first partial sample");
+ frame.time=200; frame.lapCompleted=2; frame.fuel=45.5; calculator.Update(session,frame); Near(calculator.Plan(frame).estimates[0].consumption,3,"first full lap after late join provides consumption");
  // Start evidence expires on long gaps, disconnects, replay and driver/session changes.
  auto grid=frame; grid.state=3; grid.time=0; grid.lapCompleted=0; grid.fuel=50;
  calculator.Reset(); calculator.Update(session,grid); auto start=grid; start.state=4; start.time=100; calculator.Update(session,start);
- start.time=200; start.lapCompleted=1; start.fuel=47; calculator.Update(session,start); Require(calculator.Plan(start,0,false).samples==0,"stale pre-start evidence cannot validate an unobserved lap");
+ start.time=200; start.lapCompleted=1; start.fuel=47; calculator.Update(session,start); Require(calculator.Plan(start).samples==0,"stale pre-start evidence cannot validate an unobserved lap");
  calculator.Reset(); calculator.Update(session,grid); auto invalid=grid; invalid.connected=false; calculator.Update(session,invalid);
- start=grid; start.state=4; start.time=1; calculator.Update(session,start); start.time=101; start.lapCompleted=1; start.fuel=47; calculator.Update(session,start); Require(calculator.Plan(start,0,false).samples==0,"disconnect clears race-start evidence");
+ start=grid; start.state=4; start.time=1; calculator.Update(session,start); start.time=101; start.lapCompleted=1; start.fuel=47; calculator.Update(session,start); Require(calculator.Plan(start).samples==0,"disconnect clears race-start evidence");
  calculator.Reset(); calculator.Update(session,grid); invalid=grid; invalid.replay=true; calculator.Update(session,invalid);
- start=grid; start.state=4; start.time=1; calculator.Update(session,start); start.time=101; start.lapCompleted=1; start.fuel=47; calculator.Update(session,start); Require(calculator.Plan(start,0,false).samples==0,"replay clears race-start evidence");
- calculator.Reset(); calculator.Update(session,grid); start=grid; start.state=4; start.time=1; start.session+=1; calculator.Update(session,start); start.time=101; start.lapCompleted=1; start.fuel=47; calculator.Update(session,start); Require(calculator.Plan(start,0,false).samples==0,"new session does not inherit another race start");
+ start=grid; start.state=4; start.time=1; calculator.Update(session,start); start.time=101; start.lapCompleted=1; start.fuel=47; calculator.Update(session,start); Require(calculator.Plan(start).samples==0,"replay clears race-start evidence");
+ calculator.Reset(); calculator.Update(session,grid); start=grid; start.state=4; start.time=1; start.session+=1; calculator.Update(session,start); start.time=101; start.lapCompleted=1; start.fuel=47; calculator.Update(session,start); Require(calculator.Plan(start).samples==0,"new session does not inherit another race start");
  calculator.Reset(); calculator.Update(session,grid); start=grid; start.state=4; start.time=1; calculator.Update(session,start);
- start.time=30; start.flags=0x4000; calculator.Update(session,start,true); start.time=101; start.flags=0; start.lapCompleted=1; start.fuel=47; calculator.Update(session,start,true); Require(calculator.Plan(start,0,false).samples==0,"first lap caution excluded when the filter is enabled");
+ start.time=30; start.flags=0x4000; calculator.Update(session,start,true); start.time=101; start.flags=0; start.lapCompleted=1; start.fuel=47; calculator.Update(session,start,true); Require(calculator.Plan(start).samples==0,"first lap caution excluded when the filter is enabled");
  calculator.Reset(); calculator.Update(session,grid); start=grid; start.state=4; start.time=1; calculator.Update(session,start);
- start.time=30; start.pit=true; calculator.Update(session,start); start.time=101; start.pit=false; start.lapCompleted=1; start.fuel=47; calculator.Update(session,start); Require(calculator.Plan(start,0,false).samples==0,"first lap pit visit stays excluded");
+ start.time=30; start.pit=true; calculator.Update(session,start); start.time=101; start.pit=false; start.lapCompleted=1; start.fuel=47; calculator.Update(session,start); Require(calculator.Plan(start).samples==0,"first lap pit visit stays excluded");
 }
 void FuelTests() {
  auto s=DemoSession(); auto f=DemoFrame(0); FuelCalculator c;
  f.pit=false; f.fuel=50; f.lapCompleted=0; f.lapsLeft=10; f.lapPct=0; f.timeLeft=604800;
  c.Update(s,f);
  f.time=100; f.lapCompleted=1; f.fuel=47; c.Update(s,f);
- Require(c.Plan(f,1,false).samples==0,"initial partial lap excluded");
+ Require(c.Plan(f).samples==0,"initial partial lap excluded");
  f.time=200; f.lapCompleted=2; f.fuel=44; c.Update(s,f);
- Near(c.Plan(f,1,false).average,3,"clean lap consumption"); Near(c.Plan(f,1,false).required,33,"reserve");
+ Near(c.Plan(f).estimates[1].consumption,3,"clean lap consumption");
  f.time=300; f.lapCompleted=3; f.fuel=40; c.Update(s,f);
- Near(c.Plan(f,0,true,5).required,20,"conservative max"); Near(c.Plan(f,0,false,5).required,17.5,"mean");
+ Near(c.Plan(f).estimates[3].consumption,4,"maximum consumption"); Near(c.Plan(f).estimates[1].consumption,3.5,"mean consumption");
  f.time=350; f.fuel=45; c.Update(s,f); f.time=400; f.lapCompleted=4; f.fuel=43; c.Update(s,f);
- Require(c.Plan(f,0,false).samples==2,"refueling lap excluded");
+ Require(c.Plan(f).samples==2,"refueling lap excluded");
  f.time=410; f.flags=0x4000; c.Update(s,f,true); f.time=500; f.lapCompleted=5; f.fuel=40; f.flags=0; c.Update(s,f,true);
- Require(c.Plan(f,0,false).samples==2,"yellow lap excluded when the filter is enabled");
+ Require(c.Plan(f).samples==2,"yellow lap excluded when the filter is enabled");
  f.time=600; f.lapCompleted=6; f.fuel=37; c.Update(s,f);
- f.timeLeft=250; f.lapsLeft=32767; Near(c.Plan(f,0,false).lapsToFinish,3.5,"timed final lap");
- f.lapsLeft=2; f.lapPct=.5; Near(c.Plan(f,0,false).lapsToFinish,1.5,"dual limits");
- f.replay=true; c.Update(s,f); Require(c.Plan(f,0,false).required<0,"no replay plan");
- f.replay=false; f.session=1; c.Update(s,f); Require(c.Plan(f,0,false).samples==0,"session reset");
+ f.replay=true; c.Update(s,f); Require(c.Plan(f).estimates[1].samples==0,"no replay plan");
+ f.replay=false; f.session=1; c.Update(s,f); Require(c.Plan(f).samples==0,"session reset");
 }
 void TelemetryTests() {
  const std::wstring name=L"Local\\RaceMate.Test."+std::to_wstring(GetCurrentProcessId());
@@ -617,17 +616,41 @@ int main(int argc,char** argv) {
   }
   RacePredictor predictor; predictor.Update(session,frame); int crossings=0;
   const auto start=std::chrono::steady_clock::now();
-  for(int i=0;i<1000;++i) crossings+=predictor.Predict(session,frame,{}).noStop.ownCrossings;
+  for(int i=0;i<1000;++i) crossings+=predictor.Predict(session,frame).finish.ownCrossings;
   const auto micros=std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-start).count()/1000;
-  std::cout<<"128-car forecast including both scenarios and sensitivity bands: "<<micros<<" microseconds per update; checksum "<<crossings<<'\n'; return 0;
+  std::cout<<"128-car finish forecast: "<<micros<<" microseconds per update; checksum "<<crossings<<'\n'; return 0;
+ }
+ if(argc==2 && std::string(argv[1])=="--benchmark-telemetry") {
+  // iRacing publishes roughly 300 variables with 64-entry CarIdx arrays.
+  const std::wstring name=L"Local\\RaceMate.Benchmark."+std::to_wstring(GetCurrentProcessId());
+  HANDLE map=CreateFileMappingW(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,0,1<<20,name.c_str());
+  auto* memory=static_cast<unsigned char*>(MapViewOfFile(map,FILE_MAP_ALL_ACCESS,0,0,0));
+  auto* h=reinterpret_cast<MemoryHeader*>(memory); *h={}; h->version=2; h->status=1; h->numBuffers=1; h->varsOffset=256;
+  h->buffers[0]={1,200000,{0,0}}; h->sessionOffset=400000; h->sessionLength=static_cast<int>(strlen(Yaml)+1); h->sessionUpdate=1; std::memcpy(memory+h->sessionOffset,Yaml,h->sessionLength);
+  int offset=0;
+  auto add=[&](const std::string& variable,int type,int count) {
+   auto* v=reinterpret_cast<VariableHeader*>(memory+h->varsOffset)+h->numVars++; *v={}; v->type=type; v->offset=offset; v->count=count; strcpy_s(v->name,variable.c_str());
+   offset+=(type==5?8:4)*count;
+  };
+  for(const char* array:{"CarIdxBestLapTime","CarIdxClassPosition","CarIdxEstTime","CarIdxLap","CarIdxLapCompleted","CarIdxLapDistPct","CarIdxLastLapTime","CarIdxOnPitRoad","CarIdxPosition","CarIdxSessionFlags","CarIdxTireCompound","CarIdxTrackSurface","CarIdxF2Time"}) add(array,4,64);
+  for(const char* scalar:{"AirTemp","CamCarIdx","CamGroupNumber","EngineWarnings","FuelLevel","IsOnTrack","IsReplayPlaying","LapBestLapTime","LapCompleted","LapDistPct","LapLastLapTime","OnPitRoad","PlayerCarIdx","PlayerCarInPitStall","PlayerCarIsTowing","PlayerCarMyIncidentCount","PlayerCarTowTime","PlayerTrackSurface","ReplaySessionNum","ReplaySessionTime","SessionFlags","SessionLapsRemain","SessionLapsRemainEx","SessionNum","SessionState","SessionTime","SessionTimeOfDay","SessionTimeRemain","Speed","TrackTemp","TrackTempCrew","TrackWetness","WindDir","WindVel","YawNorth"}) add(scalar,4,1);
+  for(int i=0;h->numVars<300;++i) add("Unused"+std::to_string(i),4,1);
+  h->bufferLength=offset;
+  Telemetry reader(name.c_str()); Frame frame; Session session; reader.Read(frame,session);
+  constexpr int iterations=20000; int checksum=0;
+  const auto start=std::chrono::steady_clock::now();
+  for(int i=0;i<iterations;++i) { ++h->buffers[0].tick; reader.Read(frame,session); checksum+=frame.cars[3].position; }
+  const auto micros=std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-start).count()/iterations;
+  std::cout<<"Telemetry read with 300 variables: "<<micros<<" microseconds per frame; checksum "<<checksum<<'\n';
+  UnmapViewOfFile(memory); CloseHandle(map); return 0;
  }
  if(argc==2 && std::string(argv[1])=="--live-prediction") {
   Telemetry reader; Frame frame; Session session;
   if(!reader.Read(frame,session)) { std::cout<<"No connected iRacing telemetry available.\n"; return 2; }
-  RacePredictor predictor; predictor.Update(session,frame); const auto forecast=predictor.Predict(session,frame,{});
+  RacePredictor predictor; predictor.Update(session,frame); const auto forecast=predictor.Predict(session,frame);
   std::cout<<"Session: "<<session.type<<"; state: "<<frame.state<<"; time left: "<<frame.timeLeft<<" s; lap limit: "<<session.totalLaps
-   <<"; forecast status: "<<static_cast<int>(forecast.status)<<"; leader finish in: "<<forecast.noStop.leaderFinishIn
-   <<" s; own distance: "<<forecast.noStop.ownDistance<<" laps; own crossings: "<<forecast.noStop.ownCrossings<<'\n'; return 0;
+   <<"; forecast status: "<<static_cast<int>(forecast.status)<<"; leader finish in: "<<forecast.finish.leaderFinishIn
+   <<" s; own distance: "<<forecast.finish.ownDistance<<" laps; own crossings: "<<forecast.finish.ownCrossings<<'\n'; return 0;
  }
  if(argc==2 && std::string(argv[1])=="--live-summary") {
   Telemetry reader; Frame frame; Session session;
