@@ -28,10 +28,12 @@ try {
     New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
     $builtExe = Join-Path $buildRoot 'Release/RaceMate.exe'
     $releaseVersion = (Get-Item -LiteralPath $builtExe).VersionInfo.FileVersion
-    $versionedExe = Join-Path $outputPath "RaceMate-$releaseVersion.exe"
+    # The updater picks the release asset ending in windows-x64.exe / windows-x86.exe.
+    $platform = if ($Architecture -eq 'x64') { 'x64' } else { 'x86' }
+    $versionedExe = Join-Path $outputPath "RaceMate-$releaseVersion-windows-$platform.exe"
     try { Copy-Item -LiteralPath $builtExe -Destination $versionedExe }
     catch [System.IO.IOException] {
-        $versionedExe = Join-Path $outputPath ("RaceMate-{0}-{1}.exe" -f $releaseVersion, (Get-Date -Format 'yyyyMMdd-HHmmss'))
+        $versionedExe = Join-Path $outputPath ("RaceMate-{0}-windows-{1}-{2}.exe" -f $releaseVersion, $platform, (Get-Date -Format 'yyyyMMdd-HHmmss'))
         Copy-Item -LiteralPath $builtExe -Destination $versionedExe
         Write-Warning "The previous versioned executable is in use. A separate executable was created."
     }

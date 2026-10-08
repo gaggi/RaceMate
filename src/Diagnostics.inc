@@ -5,63 +5,28 @@ bool Export(HWND window,const std::wstring& path) {
     info.bmiHeader.biPlanes=1; info.bmiHeader.biBitCount=32; info.bmiHeader.biCompression=BI_RGB;
     HDC screen=GetDC(window),dc=CreateCompatibleDC(screen); void* bits=nullptr;
     HBITMAP bitmap=CreateDIBSection(screen,&info,DIB_RGB_COLORS,&bits,nullptr,0); auto old=SelectObject(dc,bitmap);
-    if(window==app.main || window==app.overlaySettings || window==raceControl.window || window==columnOrderWindow || window==footerSettingsWindow || window==raceFieldsWindow) {
-        FillRect(dc,&r,app.brush);
-        for(HWND child=GetWindow(window,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)) {
-            RECT bounds{}; GetWindowRect(child,&bounds); MapWindowPoints(nullptr,window,reinterpret_cast<POINT*>(&bounds),2);
-            const int saved=SaveDC(dc); SetViewportOrgEx(dc,bounds.left,bounds.top,nullptr);
-            IntersectClipRect(dc,0,0,bounds.right-bounds.left,bounds.bottom-bounds.top);
-            SendMessageW(child,WM_PRINT,reinterpret_cast<WPARAM>(dc),PRF_CLIENT|PRF_NONCLIENT|PRF_CHILDREN|PRF_ERASEBKGND);
-            RestoreDC(dc,saved);
-        }
+    if(window==app.main || window==raceControl.window) {
+        // Let the freshly shown window and its custom controls paint before capturing it.
+        RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN|RDW_UPDATENOW);
+        for(int pass=0;pass<5;++pass) { MSG message{}; while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&message); Sleep(20); }
+        PrintWindow(window,dc,PW_RENDERFULLCONTENT);
     }
     else SendMessageW(window,WM_PRINTCLIENT,reinterpret_cast<WPARAM>(dc),PRF_CLIENT);
     BITMAPFILEHEADER file{}; file.bfType=0x4d42; file.bfOffBits=sizeof(file)+sizeof(info.bmiHeader); file.bfSize=file.bfOffBits+w*h*4;
     std::ofstream out(path,std::ios::binary); out.write(reinterpret_cast<char*>(&file),sizeof(file)); out.write(reinterpret_cast<char*>(&info.bmiHeader),sizeof(info.bmiHeader)); out.write(static_cast<char*>(bits),static_cast<std::streamsize>(w)*h*4);
     SelectObject(dc,old); DeleteObject(bitmap); DeleteDC(dc); ReleaseDC(window,screen); return out.good();
 }
-bool SettingsViewportDiagnostics(std::ostream& report) {
+// A DPI change rebuilds fonts and the current page in place.
+bool MainDpiDiagnostics(std::ostream& report) {
     bool ok=true;
-    const int savedRows=app.rows;
-    for(int kind=0; kind<OverlayCount; ++kind) {
-        OpenOverlaySettings(kind);
-        HWND window=app.overlaySettings;
-        auto* view=reinterpret_cast<SettingsViewport*>(GetPropW(window,L"SettingsViewport"));
-        if(!view) return false;
-        RECT original{}; GetWindowRect(window,&original);
-        SetWindowPos(window,nullptr,0,0,MulDiv(480,view->dpi,96),MulDiv(220,view->dpi,96),SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
-        SendMessageW(window,WM_MOUSEWHEEL,MAKEWPARAM(0,-WHEEL_DELTA),0);
-        report<<"Viewport "<<kind<<": wheel y="<<view->y;
-        ok=view->y>0 && ok;
-        SendMessageW(GetDlgItem(window,IDOK),WM_SETFOCUS,0,0);
-        RECT done{},client{}; GetWindowRect(GetDlgItem(window,IDOK),&done); GetClientRect(window,&client);
-        MapWindowPoints(nullptr,window,reinterpret_cast<POINT*>(&done),2);
-        report<<"; done="<<done.left<<","<<done.top<<","<<done.right<<","<<done.bottom<<" client="<<client.right<<","<<client.bottom;
-        ok=done.left>=0 && done.top>=0 && done.right<=client.right && done.bottom<=client.bottom && ok;
-        ok=Export(window,L"build\\qa\\settings-small-"+std::to_wstring(kind)+L".bmp") && ok;
-        SetWindowPos(window,nullptr,0,0,original.right-original.left,original.bottom-original.top,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
-        ok=view->x==0 && view->y==0 && ok;
-        report<<"; restored scroll="<<view->x<<","<<view->y<<"\n";
-        if(kind==0) {
-            SetDlgItemInt(window,400,15,FALSE);
-            const int dpi=view->dpi;
-            // DPI changes must keep the same dialog and any uncommitted edit text.
-            for(int target:{96,192,dpi}) {
-                RECT bounds{}; GetWindowRect(window,&bounds);
-                SendMessageW(window,WM_DPICHANGED,MAKEWPARAM(target,target),reinterpret_cast<LPARAM>(&bounds));
-                report<<"DPI "<<target<<": same window="<<(app.overlaySettings==window)<<" rows="<<GetDlgItemInt(window,400,nullptr,FALSE)<<" dpi="<<view->dpi<<"\n";
-                ok=app.overlaySettings==window && GetDlgItemInt(window,400,nullptr,FALSE)==15 && view->dpi==target && ok;
-            }
-        }
-        SendMessageW(window,WM_CLOSE,0,0);
-        if(kind==0) ok=app.rows==15 && ok;
+    OpenOverlay(RelativeKind);
+    for(UINT target:{96u,192u,GetDpiForWindow(app.main)}) {
+        RECT bounds{}; GetWindowRect(app.main,&bounds);
+        SendMessageW(app.main,WM_DPICHANGED,MAKEWPARAM(target,target),reinterpret_cast<LPARAM>(&bounds));
+        const bool same=ui.page==Page::Overlay && ui.overlayKind==RelativeKind && ui.host.Content()!=nullptr && ui.text!=nullptr;
+        report<<"DPI "<<target<<": page kept="<<same<<"\n"; ok=same && ok;
     }
-    app.rows=savedRows; Save();
-    OpenOverlaySettings(0); OpenColumnOrder(app.overlaySettings,0);
-    const HWND nested=columnOrderWindow;
-    SendMessageW(app.overlaySettings,WM_CLOSE,0,0);
-    ok=!app.overlaySettings && !columnOrderWindow && !IsWindow(nested) && ok;
-    report<<"Nested closed="<<(!app.overlaySettings && !columnOrderWindow && !IsWindow(nested))<<"\n";
+    ShowPage(Page::Overlays);
     return ok;
 }
 
@@ -69,20 +34,23 @@ int RunDiagnostics() {
     MONITORINFO monitor{sizeof(monitor)};
     GetMonitorInfoW(MonitorFromPoint({0,0},MONITOR_DEFAULTTOPRIMARY),&monitor);
     std::ofstream report("build/qa/controls.txt");
-    for(int id:{210,220,231}) {
-        wchar_t value[128]{}; HWND c=GetDlgItem(app.main,id);
-        const auto index=SendMessageW(c,CB_GETCURSEL,0,0);
-        SendMessageW(c,CB_GETLBTEXT,index,reinterpret_cast<LPARAM>(value));
-        report<<id<<": index="<<index<<" count="<<SendMessageW(c,CB_GETCOUNT,0,0)<<" text-length="<<wcslen(value)<<"\n";
-    }
-    app.preview=true; app.edit=false; PreviewData(0);
-    SendMessageW(GetDlgItem(app.main,PreviewId),BM_SETCHECK,BST_CHECKED,0);
-    SetWindowTextW(app.status,L"Preview · sample data, no live telemetry");
+    app.preview=true; app.edit=false; PreviewData(0); UpdateStatus(); RefreshPage();
     SetWindowPos(app.main,nullptr,-30000,-30000,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
     ShowWindow(app.main,SW_SHOWNOACTIVATE); UpdateWindow(app.main);
-    bool ok=Export(app.main,L"build\\qa\\settings.bmp");
-    const bool viewportOk=SettingsViewportDiagnostics(report);
-    report<<"Settings scrolling, keyboard focus visibility, DPI edits and nested dialog cleanup: "<<(viewportOk?"PASS":"FAIL")<<"\n";
+    bool ok=Export(app.main,L"build\\qa\\main-overlays.bmp");
+    {
+        ShowPage(Page::Settings); UpdateWindow(app.main); ok=Export(app.main,L"build\\qa\\main-settings.bmp") && ok;
+        bool pagesOk=ui.page==Page::Settings && ui.host.Content()!=nullptr;
+        for(int kind=0;kind<OverlayCount;++kind) {
+            OpenOverlay(kind); UpdateWindow(app.main);
+            pagesOk=ui.page==Page::Overlay && ui.overlayKind==kind && IsWindowVisible(ui.back) && pagesOk;
+            ok=Export(app.main,L"build\\qa\\main-"+std::to_wstring(kind)+L".bmp") && ok;
+        }
+        ShowPage(Page::Overlays); UpdateWindow(app.main); pagesOk=!IsWindowVisible(ui.back) && pagesOk;
+        report<<"Main window pages, banner and navigation: "<<(pagesOk && ui.page==Page::Overlays?"PASS":"FAIL")<<"\n"; ok=pagesOk && ok;
+    }
+    const bool viewportOk=MainDpiDiagnostics(report);
+    report<<"Main window DPI changes keep the current page: "<<(viewportOk?"PASS":"FAIL")<<"\n";
     ok=viewportOk && ok;
     {
         const bool savedFilter=app.excludeYellowFuelLaps;
@@ -90,14 +58,8 @@ int RunDiagnostics() {
         Load();
         bool filterOk=!app.excludeYellowFuelLaps;
         for(bool enabled:{true,false}) {
-            OpenOverlaySettings(2);
-            SendDlgItemMessageW(app.overlaySettings,ExcludeYellowId,BM_SETCHECK,enabled?BST_CHECKED:BST_UNCHECKED,0);
-            SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(ExcludeYellowId,BN_CLICKED),0);
+            app.excludeYellowFuelLaps=enabled; SettingChanged();
             Load(); filterOk=(app.excludeYellowFuelLaps==enabled) && filterOk;
-            SendMessageW(app.overlaySettings,WM_CLOSE,0,0);
-            OpenOverlaySettings(2);
-            filterOk=(SendDlgItemMessageW(app.overlaySettings,ExcludeYellowId,BM_GETCHECK,0,0)==(enabled?BST_CHECKED:BST_UNCHECKED)) && filterOk;
-            SendMessageW(app.overlaySettings,WM_CLOSE,0,0);
         }
         app.excludeYellowFuelLaps=savedFilter; Save();
         report<<"Optional yellow fuel filter defaults off, persists and restores in settings: "<<(filterOk?"PASS":"FAIL")<<"\n";
@@ -111,9 +73,9 @@ int RunDiagnostics() {
         app.frame.cars[1].outLap=true; app.frame.cars[1].sessionFlags=0x80000u; app.frame.cars[2].pit=true; app.frame.cars[2].sessionFlags=0x100000u;
         for(int kind=0;kind<2;++kind) {
             app.showDriver[kind]=app.showStatus[kind]=app.columnHeaders[kind]=true; app.tableHeaders[kind]=false; app.footers[kind].enabled=true; app.nameFormat[kind]=0; Save(); UpdateOverlays();
-            OpenOverlaySettings(kind); Row test; test.driver.name="Daniel Fischer";
+            Row test; test.driver.name="Daniel Fischer";
             for(int format=0;format<3;++format) {
-                SendDlgItemMessageW(app.overlaySettings,511,CB_SETCURSEL,format,0); SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(511,CBN_SELCHANGE),0);
+                app.nameFormat[kind]=format; SettingChanged();
                 const wchar_t* expected[]={L"Daniel Fischer",L"D. Fischer",L"D Fischer"}; displayOk=DriverName(test,kind)==expected[format] && displayOk;
             }
             test.driver.name="Éric van der Meer"; app.nameFormat[kind]=1; displayOk=DriverName(test,kind)==L"É. van der Meer" && displayOk;
@@ -124,38 +86,34 @@ int RunDiagnostics() {
             displayOk=OverlayStatus(status,kind)==L"REPAIR" && displayOk; status.car.sessionFlags&=~0x100000u;
             displayOk=OverlayStatus(status,kind)==L"SLOW" && displayOk; status.car.sessionFlags=0;
             displayOk=OverlayStatus(status,kind)==L"OUT" && displayOk;
-            SendDlgItemMessageW(app.overlaySettings,511,CB_SETCURSEL,1,0);
-            int before=BaseHeight(kind); SendMessageW(app.overlaySettings,WM_COMMAND,449,0);
-            displayOk=footerSettingsWindow && !IsWindowEnabled(app.overlaySettings) && displayOk;
-            SendDlgItemMessageW(footerSettingsWindow,480,BM_SETCHECK,BST_CHECKED,0); SendMessageW(footerSettingsWindow,WM_COMMAND,MAKEWPARAM(480,BN_CLICKED),0); displayOk=BaseHeight(kind)==before+32 && displayOk;
-            const int metrics[]={17,3,11}; for(int slot=0;slot<3;++slot) { SendDlgItemMessageW(footerSettingsWindow,481+slot,CB_SETCURSEL,metrics[slot],0); SendMessageW(footerSettingsWindow,WM_COMMAND,MAKEWPARAM(481+slot,CBN_SELCHANGE),0); }
-            Load(); displayOk=app.headerMetrics[kind]==std::array<int,3>{17,3,11} && FooterValue(17,kind)==Titles[kind] && app.footers[kind].metrics==savedFooters[kind].metrics && displayOk;
-            Export(footerSettingsWindow,L"build\\qa\\header-settings-"+std::to_wstring(kind)+L".bmp"); SendMessageW(footerSettingsWindow,WM_CLOSE,0,0);
-            Export(app.overlaySettings,L"build\\qa\\integrated-settings-"+std::to_wstring(kind)+L".bmp"); Export(app.overlays[kind].window,L"build\\qa\\configured-header-status-"+std::to_wstring(kind)+L".bmp");
+            app.nameFormat[kind]=1; SettingChanged();
+            int before=BaseHeight(kind);
+            app.tableHeaders[kind]=true; SettingChanged(); displayOk=BaseHeight(kind)==before+32 && displayOk;
+            app.headerMetrics[kind]={OverlayNameMetric,TrackTempMetric,LocalTimeMetric}; SettingChanged();
+            Load(); displayOk=app.headerMetrics[kind]==Slots{OverlayNameMetric,TrackTempMetric,LocalTimeMetric} && FooterValue(OverlayNameMetric,kind)==Titles[kind] && app.footers[kind].metrics==savedFooters[kind].metrics && displayOk;
+            OpenOverlay(kind); Export(app.main,L"build\\qa\\integrated-settings-"+std::to_wstring(kind)+L".bmp"); Export(app.overlays[kind].window,L"build\\qa\\configured-header-status-"+std::to_wstring(kind)+L".bmp");
             const int expandedWidth=OverlayWidth(kind);
-            SendDlgItemMessageW(app.overlaySettings,514,BM_SETCHECK,BST_UNCHECKED,0); SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(514,BN_CLICKED),0); displayOk=BaseHeight(kind)==before+5 && OverlayWidth(kind)<expandedWidth && displayOk;
+            app.columnHeaders[kind]=false; SettingChanged(); displayOk=BaseHeight(kind)==before+5 && OverlayWidth(kind)<expandedWidth && displayOk;
             Export(app.overlays[kind].window,L"build\\qa\\compact-status-"+std::to_wstring(kind)+L".bmp");
             int width=OverlayWidth(kind);
-            SendDlgItemMessageW(app.overlaySettings,510,BM_SETCHECK,BST_UNCHECKED,0); SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(510,BN_CLICKED),0); displayOk=!ColumnVisible(kind,2) && !IsWindowEnabled(GetDlgItem(app.overlaySettings,511)) && OverlayWidth(kind)==width-ColumnWidth(2,kind) && displayOk;
+            SetColumnVisible(kind,DriverColumn,false); displayOk=!ColumnVisible(kind,DriverColumn) && OverlayWidth(kind)==width-ColumnWidth(DriverColumn,kind) && displayOk;
             width=OverlayWidth(kind);
-            SendDlgItemMessageW(app.overlaySettings,512,BM_SETCHECK,BST_UNCHECKED,0); SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(512,BN_CLICKED),0); displayOk=!ColumnVisible(kind,15) && OverlayWidth(kind)==width-ColumnWidth(15,kind) && displayOk;
-            SendMessageW(app.overlaySettings,WM_COMMAND,446,0); SendDlgItemMessageW(footerSettingsWindow,480,BM_SETCHECK,BST_UNCHECKED,0); SendMessageW(footerSettingsWindow,WM_COMMAND,MAKEWPARAM(480,BN_CLICKED),0); SendMessageW(footerSettingsWindow,WM_CLOSE,0,0);
+            SetColumnVisible(kind,StatusColumn,false); displayOk=!ColumnVisible(kind,StatusColumn) && OverlayWidth(kind)==width-ColumnWidth(StatusColumn,kind) && displayOk;
+            app.footers[kind].enabled=false; SettingChanged();
             displayOk=BaseHeight(kind)==before+5-28 && displayOk;
             Load(); displayOk=!app.showDriver[kind] && !app.showStatus[kind] && !app.columnHeaders[kind] && app.tableHeaders[kind] && !app.footers[kind].enabled && app.nameFormat[kind]==1 && displayOk;
-            SendMessageW(app.overlaySettings,WM_CLOSE,0,0);
         }
         app.showDriver=savedDriver; app.showStatus=savedStatus; app.tableHeaders=savedHeaders; app.columnHeaders=savedHeadings; app.nameFormat=savedFormats; app.footers=savedFooters; app.headerMetrics=savedHeaderMetrics; app.frame=savedFrame; Save(); UpdateOverlays();
-        report<<"Integrated table settings, name formats, single status priority, configurable headers and independent footer persistence: "<<(displayOk?"PASS":"FAIL")<<"\n"; ok=displayOk && ok;
+        report<<"Table page settings, name formats, single status priority, configurable headers and independent footer persistence: "<<(displayOk?"PASS":"FAIL")<<"\n"; ok=displayOk && ok;
     }
     {
         const auto savedFlags=app.driverFlags; const auto savedFrame=app.frame; bool flagsOk=true;
         app.frame.cars[0].sessionFlags=0x10000u; app.frame.cars[1].sessionFlags=0x80000u; app.frame.cars[2].sessionFlags=0x100000u; app.frame.cars[3].sessionFlags=0x190000u;
         for(int kind=0;kind<2;++kind) {
-            app.driverFlags[kind]={true,true,true}; Save(); OpenOverlaySettings(kind); UpdateOverlays();
-            Export(app.overlaySettings,L"build\\qa\\driver-flags-settings-"+std::to_wstring(kind)+L".bmp"); Export(app.overlays[kind].window,L"build\\qa\\driver-flags-overlay-"+std::to_wstring(kind)+L".bmp");
-            for(int i=0;i<3;++i) { SendDlgItemMessageW(app.overlaySettings,497+i,BM_SETCHECK,BST_UNCHECKED,0); SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(497+i,BN_CLICKED),0); }
-            Load(); flagsOk=ColumnVisible(kind,15) && std::none_of(app.driverFlags[kind].begin(),app.driverFlags[kind].end(),[](bool v){return v;}) && flagsOk;
-            SendMessageW(app.overlaySettings,WM_CLOSE,0,0);
+            app.driverFlags[kind]={true,true,true}; SettingChanged(); OpenOverlay(kind);
+            Export(app.main,L"build\\qa\\driver-flags-settings-"+std::to_wstring(kind)+L".bmp"); Export(app.overlays[kind].window,L"build\\qa\\driver-flags-overlay-"+std::to_wstring(kind)+L".bmp");
+            app.driverFlags[kind]={false,false,false}; SettingChanged();
+            Load(); flagsOk=ColumnVisible(kind,StatusColumn) && std::none_of(app.driverFlags[kind].begin(),app.driverFlags[kind].end(),[](bool v){return v;}) && flagsOk;
         }
         app.driverFlags=savedFlags; app.frame=savedFrame; Save(); UpdateOverlays();
         report<<"Driver flag display settings, independent overlays and persisted disabled flags with PIT/OUT status retained: "<<(flagsOk?"PASS":"FAIL")<<"\n"; ok=flagsOk && ok;
@@ -165,11 +123,7 @@ int RunDiagnostics() {
         bool shortOk=true;
         for(int kind=0;kind<2;++kind) {
             app.driverShortView[kind]={false,false}; app.driverColumns[kind][0]=app.driverColumns[kind][1]=true;
-            OpenOverlaySettings(kind);
-            for(int i=0;i<2;++i) {
-                shortOk=IsWindowEnabled(GetDlgItem(app.overlaySettings,447+i)) && shortOk;
-                SendDlgItemMessageW(app.overlaySettings,447+i,BM_SETCHECK,BST_CHECKED,0); SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(447+i,BN_CLICKED),0);
-            }
+            app.driverShortView[kind]={true,true}; SettingChanged();
             Load(); shortOk=app.driverShortView[kind][0] && app.driverShortView[kind][1] && shortOk;
             Row test; test.driver.license="A 3.45"; test.driver.rating=2400;
             shortOk=DriverValue(test,0,kind)==L"3,45" && DriverValue(test,1,kind)==L"2,4K" && DriverValue(test,0)==L"A 3.45" && shortOk;
@@ -177,35 +131,26 @@ int RunDiagnostics() {
             shortOk=DriverValue(test,0,kind)==L"4,99" && DriverValue(test,1,kind)==L"3,5K" && shortOk;
             test.driver.license=""; test.driver.rating=0;
             shortOk=DriverValue(test,0,kind)==L"—" && DriverValue(test,1,kind)==L"—" && shortOk;
-            Export(app.overlaySettings,L"build\\qa\\short-view-settings-"+std::to_wstring(kind)+L".bmp");
+            OpenOverlay(kind); Export(app.main,L"build\\qa\\short-view-settings-"+std::to_wstring(kind)+L".bmp");
             UpdateOverlays(); Export(app.overlays[kind].window,L"build\\qa\\short-view-overlay-"+std::to_wstring(kind)+L".bmp");
-            for(int i=0;i<2;++i) {
-                SendDlgItemMessageW(app.overlaySettings,430+i,BM_SETCHECK,BST_UNCHECKED,0); SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(430+i,BN_CLICKED),0);
-                shortOk=!IsWindowEnabled(GetDlgItem(app.overlaySettings,447+i)) && app.driverShortView[kind][i] && shortOk;
-            }
-            SendMessageW(app.overlaySettings,WM_CLOSE,0,0);
+            // Hiding the column keeps its short-view choice.
+            for(int i=0;i<2;++i) { SetColumnVisible(kind,LicenseColumn+i,false); shortOk=!ColumnVisible(kind,LicenseColumn+i) && app.driverShortView[kind][i] && shortOk; }
         }
         app.driverShortView=savedShort; app.driverColumns=savedColumns; Save(); UpdateOverlays();
-        report<<"Independent short license/iRating views, formatting, missing values, dependent switches and persistence: "<<(shortOk?"PASS":"FAIL")<<"\n"; ok=shortOk && ok;
+        report<<"Independent short license/iRating views, formatting, missing values, kept choice when hidden and persistence: "<<(shortOk?"PASS":"FAIL")<<"\n"; ok=shortOk && ok;
     }
     {
         const Frame originalFrame=app.frame; const Session originalSession=app.session;
         bool footerOk=true;
         for(int kind=0;kind<2;++kind) {
-            OpenOverlaySettings(kind); SendMessageW(app.overlaySettings,WM_COMMAND,446,0);
-            footerOk=footerSettingsWindow && !IsWindowEnabled(app.overlaySettings) && footerOk;
-            footerOk=SendDlgItemMessageW(footerSettingsWindow,481,CB_GETCOUNT,0,0)==MetricCount && footerOk;
-            const int values[]={3,8,6};
-            for(int slot=0;slot<3;++slot) { SendDlgItemMessageW(footerSettingsWindow,481+slot,CB_SETCURSEL,values[slot],0); SendMessageW(footerSettingsWindow,WM_COMMAND,MAKEWPARAM(481+slot,CBN_SELCHANGE),0); }
-            Save(); Load(); footerOk=app.footers[kind].metrics==std::array<int,3>{3,8,6} && footerOk;
-            footerOk=Export(footerSettingsWindow,L"build\\qa\\footer-settings-"+std::to_wstring(kind)+L".bmp") && footerOk;
+            app.footers[kind].metrics={TrackTempMetric,CurrentLapMetric,TimeRemainingMetric}; SettingChanged();
+            Save(); Load(); footerOk=app.footers[kind].metrics==Slots{TrackTempMetric,CurrentLapMetric,TimeRemainingMetric} && footerOk;
             footerOk=Export(app.overlays[kind].window,L"build\\qa\\footer-custom-"+std::to_wstring(kind)+L".bmp") && footerOk;
             const int before=HeightWithTitle(kind);
-            SendDlgItemMessageW(footerSettingsWindow,480,BM_SETCHECK,BST_UNCHECKED,0); SendMessageW(footerSettingsWindow,WM_COMMAND,MAKEWPARAM(480,BN_CLICKED),0);
+            app.footers[kind].enabled=false; SettingChanged();
             Load(); footerOk=!app.footers[kind].enabled && HeightWithTitle(kind)==before-28 && footerOk;
             footerOk=Export(app.overlays[kind].window,L"build\\qa\\footer-hidden-"+std::to_wstring(kind)+L".bmp") && footerOk;
-            SendMessageW(footerSettingsWindow,WM_CLOSE,0,0); footerOk=IsWindowEnabled(app.overlaySettings) && footerOk;
-            SendMessageW(app.overlaySettings,WM_CLOSE,0,0); app.footers[kind]={}; Save(); UpdateOverlays();
+            app.footers[kind]={}; SettingChanged();
         }
         footerOk=FooterValue(9)==L"Lap 8 / ~20" && FooterValue(10)==L"~12.6 laps" && FooterValue(16).find(L"SOF ")==0 && footerOk;
         for(int metric=1;metric<MetricCount;++metric) footerOk=!FooterValue(metric).empty() && footerOk;
@@ -220,7 +165,7 @@ int RunDiagnostics() {
         app.frame.airTemperature=std::numeric_limits<double>::quiet_NaN(); footerOk=FooterValue(4)==L"Air —" && footerOk;
         app.frame.connected=false; footerOk=FooterValue(3)==L"—" && FooterValue(9)==L"—" && footerOk;
         app.frame=originalFrame; app.session=originalSession; UpdateOverlays();
-        report<<"Independent footer dialogs, choices, persistence, resize, watched car, missing values and signed temperatures: "<<(footerOk?"PASS":"FAIL")<<"\n";
+        report<<"Independent footers, choices, persistence, resize, watched car, missing values and signed temperatures: "<<(footerOk?"PASS":"FAIL")<<"\n";
         ok=footerOk && ok;
     }
     {
@@ -237,31 +182,25 @@ int RunDiagnostics() {
         report<<"Wind overlay cardinal and arbitrary source angles, speed, missing heading and rendering: "<<(windOk?"PASS":"FAIL")<<"\n"; ok=windOk && ok;
     }
     {
-        bool weatherOk=true; OpenOverlaySettings(4);
-        weatherOk=Export(app.overlaySettings,L"build\\qa\\weather-settings.bmp") && weatherOk;
+        bool weatherOk=true; OpenOverlay(WeatherKind);
+        weatherOk=Export(app.main,L"build\\qa\\weather-settings.bmp") && weatherOk;
         const auto originalOrder=app.weatherOrder;
-        SendMessageW(app.overlaySettings,WM_COMMAND,445,0);
-        weatherOk=columnOrderWindow && SendDlgItemMessageW(columnOrderWindow,450,LB_GETCOUNT,0,0)==5 && weatherOk;
-        SendDlgItemMessageW(columnOrderWindow,450,LB_SETCURSEL,4,0);
-        for(int step=0;step<4;++step) SendMessageW(columnOrderWindow,WM_COMMAND,451,0);
+        for(int step=0;step<4;++step) weatherOk=MoveInOrder(app.weatherOrder,originalOrder.back(),-1) && weatherOk;
+        weatherOk=!MoveInOrder(app.weatherOrder,originalOrder.back(),-1) && weatherOk;
         Save(); Load(); weatherOk=app.weatherOrder.front()==originalOrder.back() && weatherOk;
         weatherOk=Export(app.overlays[4].window,L"build\\qa\\weather-reordered.bmp") && weatherOk;
-        SendMessageW(columnOrderWindow,WM_CLOSE,0,0); app.weatherOrder=originalOrder; Save(); UpdateOverlays();
-        for(int element=0;element<6;++element) {
+        app.weatherOrder=originalOrder; SettingChanged();
+        for(int element=0;element<=WindDirectionOption;++element) {
             const int before=HeightWithTitle(4);
-            SendDlgItemMessageW(app.overlaySettings,490+element,BM_SETCHECK,BST_UNCHECKED,0);
-            SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(490+element,BN_CLICKED),0);
+            app.weatherDisplay[element]=false; SettingChanged();
             Load(); weatherOk=!app.weatherDisplay[element] && HeightWithTitle(4)==before-(element<WeatherCardCount?WeatherElements[element].height+8:0) && weatherOk;
-            if(element==2) weatherOk=!IsWindowEnabled(GetDlgItem(app.overlaySettings,495)) && weatherOk;
         }
         weatherOk=!IsWindowVisible(app.overlays[4].window) && weatherOk;
-        for(int element=0;element<6;++element) { SendDlgItemMessageW(app.overlaySettings,490+element,BM_SETCHECK,BST_CHECKED,0); SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(490+element,BN_CLICKED),0); }
-        weatherOk=IsWindowEnabled(GetDlgItem(app.overlaySettings,495)) && weatherOk;
-        SendMessageW(app.overlaySettings,WM_CLOSE,0,0);
+        app.weatherDisplay.fill(true); SettingChanged();
         app.weatherDisplay={false,false,true,false,false,true}; Save(); UpdateOverlays();
         weatherOk=Export(app.overlays[4].window,L"build\\qa\\weather-wind-only.bmp") && weatherOk;
         app.weatherDisplay.fill(true); Save(); UpdateOverlays();
-        report<<"Weather card settings, element ordering, dependent direction switch, persistence, compact layout and all-hidden visibility: "<<(weatherOk?"PASS":"FAIL")<<"\n"; ok=weatherOk && ok;
+        report<<"Weather card settings, card ordering, direction switch, persistence, compact layout and all-hidden visibility: "<<(weatherOk?"PASS":"FAIL")<<"\n"; ok=weatherOk && ok;
     }
     {
         const auto rosterSession=app.session; const auto rosterFrame=app.frame; const auto rosterOptions=app.standings;
@@ -269,25 +208,24 @@ int RunDiagnostics() {
         app.frame.camera=-1; app.frame.onTrack=true; app.standings.ownClass=false; app.standings.leaders=MaxCars;
         UpdateOverlays(); bool rosterOk=!Rows(1).empty() && Rows(0).size()==1 && Rows(0)[0].gap==0 && Rows(0)[0].car.position==0;
         Export(app.overlays[0].window,L"build\\qa\\relative-missing-progress.bmp"); Export(app.overlays[1].window,L"build\\qa\\qualifying-untimed.bmp");
-        OpenOverlaySettings(1); SendDlgItemMessageW(app.overlaySettings,438,CB_SETCURSEL,1,0); SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(438,CBN_SELCHANGE),0);
+        app.standings.fallbackByRating=true; SettingChanged();
         Load(); rosterOk=app.standings.fallbackByRating && rosterOk;
-        SendMessageW(app.overlaySettings,WM_CLOSE,0,0);
         app.session=rosterSession; app.frame=rosterFrame; app.standings=rosterOptions; Save(); UpdateOverlays();
         report<<"Untimed qualifying roster, relative missing progress and sort preference persistence: "<<(rosterOk?"PASS":"FAIL")<<"\n"; ok=rosterOk && ok;
         const bool savedGained=app.standingsGained; const auto gainedGrid=app.session.gridPositions;
         app.standingsGained=false; Save(); const int gainedWidth=OverlayWidth(1);
-        OpenOverlaySettings(1); SendDlgItemMessageW(app.overlaySettings,437,BM_SETCHECK,BST_CHECKED,0); SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(437,BN_CLICKED),0);
+        SetColumnVisible(StandingsKind,GainedColumn,true);
         Load(); bool gainedOk=app.standingsGained && ColumnVisible(1,14) && !ColumnVisible(0,14) && OverlayWidth(1)==gainedWidth+ColumnWidth(14,1);
         for(const auto& driver:app.session.drivers) app.session.gridPositions[driver.index]=driver.index+2;
         app.session.gridPositions[0]=3; app.session.gridPositions[1]=2;
         app.frame.cars[2].towing=true; UpdateOverlays();
         Export(app.overlays[1].window,L"build\\qa\\standings-gained-tow.bmp");
         app.frame.cars[2].towing=false;
-        SendMessageW(app.overlaySettings,WM_CLOSE,0,0); app.standingsGained=savedGained; app.session.gridPositions=gainedGrid; Save();
+        app.standingsGained=savedGained; app.session.gridPositions=gainedGrid; Save();
         report<<"Standings gained column settings: "<<(gainedOk?"PASS":"FAIL")<<"\n"; ok=gainedOk && ok;
         const auto savedSession=app.session; const auto savedFrame=app.frame; const auto savedOrder=app.columnOrder[1]; const bool savedLaps=app.standingsLaps;
         app.standingsLaps=false; Save(); UpdateOverlays(); const int before=OverlayWidth(1);
-        OpenOverlaySettings(1); SendDlgItemMessageW(app.overlaySettings,436,BM_SETCHECK,BST_CHECKED,0); SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(436,BN_CLICKED),0);
+        SetColumnVisible(StandingsKind,LapsColumn,true);
         Load(); bool lapsOk=app.standingsLaps && OverlayWidth(1)==before+ColumnWidth(13,1) && ColumnVisible(1,13) && !ColumnVisible(0,13);
         Row row; row.driver.index=0; row.car.completed=5; row.car.lap=7; lapsOk=CompletedLaps(row)==L"5" && lapsOk;
         row.car.completed=-1; row.car.lap=1; lapsOk=CompletedLaps(row)==L"0" && lapsOk;
@@ -296,16 +234,13 @@ int RunDiagnostics() {
         app.session=savedSession;
         app.frame.cars[0].completed=6; app.frame.cars[0].lap=7;
         UpdateOverlays(); lapsOk=Export(app.overlays[1].window,L"build\\qa\\standings-laps.bmp") && lapsOk;
-        lapsOk=Export(app.overlaySettings,L"build\\qa\\standings-laps-settings.bmp") && lapsOk;
-        SendMessageW(app.overlaySettings,WM_COMMAND,445,0);
-        const int index=static_cast<int>(std::find(app.columnOrder[1].begin(),app.columnOrder[1].end(),13)-app.columnOrder[1].begin());
-        SendDlgItemMessageW(columnOrderWindow,450,LB_SETCURSEL,index,0); for(int step=0;step<index;++step) SendMessageW(columnOrderWindow,WM_COMMAND,451,0);
+        OpenOverlay(StandingsKind); lapsOk=Export(app.main,L"build\\qa\\standings-laps-settings.bmp") && lapsOk;
+        const int index=static_cast<int>(std::find(app.columnOrder[1].begin(),app.columnOrder[1].end(),LapsColumn)-app.columnOrder[1].begin());
+        for(int step=0;step<index;++step) MoveInOrder(app.columnOrder[1],LapsColumn,-1);
         Load(); lapsOk=app.columnOrder[1].front()==13 && app.standingsLaps && lapsOk;
         lapsOk=Export(app.overlays[1].window,L"build\\qa\\standings-laps-first.bmp") && lapsOk;
-        SendMessageW(columnOrderWindow,WM_CLOSE,0,0);
-        SendDlgItemMessageW(app.overlaySettings,436,BM_SETCHECK,BST_UNCHECKED,0); SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(436,BN_CLICKED),0);
+        SetColumnVisible(StandingsKind,LapsColumn,false);
         lapsOk=!app.standingsLaps && OverlayWidth(1)==before && lapsOk;
-        SendMessageW(app.overlaySettings,WM_CLOSE,0,0);
         app.session=savedSession; app.frame=savedFrame; app.columnOrder[1]=savedOrder; app.standingsLaps=savedLaps; Save(); UpdateOverlays();
         report<<"Standings completed laps: toggle, width, persistence, column order, live count, zero laps, session fallback and missing data: "<<(lapsOk?"PASS":"FAIL")<<"\n"; ok=lapsOk && ok;
     }
@@ -357,158 +292,175 @@ int RunDiagnostics() {
     app.session.fuelCapacity=savedCapacity; app.frame.fuel=savedFuel; UpdateOverlays();
     report<<"Fuel time empty, signed finish fuel, open/closed text and three-stop UI: "<<(ok?"PASS":"FAIL")<<"\n";
     for(int kind=0;kind<OverlayCount;++kind) {
-        SendMessageW(app.main,WM_COMMAND,240+kind,0);
-        ok=(app.overlaySettings && app.settingsKind==kind)&&ok;
-        if(app.overlaySettings) {
-            ok=Export(app.overlaySettings,L"build\\qa\\settings-"+std::to_wstring(kind)+L".bmp")&&ok;
-            if(kind==0) {
-                SetDlgItemInt(app.overlaySettings,400,7,FALSE);
-                SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(400,EN_KILLFOCUS),0);
-                ok=app.rows==7 && ok;
-            } else if(kind==1) {
-                const int originalWidth=OverlayWidth(1); app.showInterval=false; Fit(app.overlays[1]);
-                SendDlgItemMessageW(app.overlaySettings,408,BM_SETCHECK,BST_CHECKED,0);
-                SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(408,BN_CLICKED),0);
-                ok=app.showInterval && OverlayWidth(1)>=originalWidth && ok;
-                SendDlgItemMessageW(app.overlaySettings,409,BM_SETCHECK,BST_CHECKED,0);
-                SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(409,BN_CLICKED),0);
-                ok=app.standings.liveGaps && ok; Save(); Load(); ok=app.standings.liveGaps && ok;
-                SendDlgItemMessageW(app.overlaySettings,409,BM_SETCHECK,BST_UNCHECKED,0);
-                SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(409,BN_CLICKED),0);
-                ok=!app.standings.liveGaps && ok;
-
-                ok=Export(app.overlays[1].window,L"build\\qa\\standings-interval.bmp") && ok;
-                ok=Export(app.overlaySettings,L"build\\qa\\settings-1.bmp") && ok;
-                SetDlgItemInt(app.overlaySettings,402,2,FALSE); SetDlgItemInt(app.overlaySettings,403,1,FALSE); SetDlgItemInt(app.overlaySettings,404,1,FALSE);
-                SendDlgItemMessageW(app.overlaySettings,401,CB_SETCURSEL,1,0);
-                SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(401,CBN_SELCHANGE),0);
-                const auto groups=SelectStandings(app.session,app.frame,app.standings);
-                ok=(!app.standings.separateClasses && groups.size()==1 && groups[0].rows.size()==5 && app.rows==7)&&ok;
-                ok=Export(app.overlays[1].window,L"build\\qa\\standings-combined.bmp")&&ok;
-                SendDlgItemMessageW(app.overlaySettings,405,BM_SETCHECK,BST_CHECKED,0);
-                SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(405,BN_CLICKED),0);
-                ok=app.standings.ownClass && Rows(0).size()<=7 && ok;
-            } else if(kind==2) {
-                SendDlgItemMessageW(app.overlaySettings,411,BM_SETCHECK,BST_UNCHECKED,0);
-                SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(411,BN_CLICKED),0);
-                const int newElements=FuelElements[KeyNumbersElement].height+FuelElements[PitTimelineElement].height;
-                ok=!app.fuelRows[1] && BaseHeight(2)==(app.showTitleBar?524:492)+newElements && ok;
-                for(int i=0;i<FuelElementCount;++i) {
-                    const int before=HeightWithTitle(2);
-                    SendDlgItemMessageW(app.overlaySettings,FuelDisplayId+i,BM_SETCHECK,BST_UNCHECKED,0);
-                    SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(FuelDisplayId+i,BN_CLICKED),0);
-                    ok=!app.fuelDisplay[i] && HeightWithTitle(2)==before-FuelElements[i].height && ok;
-                }
-                ok=HeightWithTitle(2)==213 && OverlayWidth(2)==365 && ok;
-                Save(); Load();
-                ok=std::none_of(app.fuelDisplay.begin(),app.fuelDisplay.end(),[](bool value){return value;}) && ok;
-                ok=Export(app.overlays[2].window,L"build\\qa\\fuel-compact.bmp") && ok;
-                for(int i=0;i<FuelElementCount;++i) {
-                    SendDlgItemMessageW(app.overlaySettings,FuelDisplayId+i,BM_SETCHECK,BST_CHECKED,0);
-                    SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(FuelDisplayId+i,BN_CLICKED),0);
-                }
-                ok=Export(app.overlaySettings,L"build\\qa\\settings-2.bmp") && ok;
-                const auto originalOrder=app.fuelOrder;
-                OpenColumnOrder(app.overlaySettings,2);
-                ok=columnOrderWindow && !IsWindowEnabled(app.overlaySettings) && ok;
-                const int table=static_cast<int>(std::find(app.fuelOrder.begin(),app.fuelOrder.end(),ConsumptionTableElement)-app.fuelOrder.begin());
-                SendDlgItemMessageW(columnOrderWindow,OrderListId,LB_SETCURSEL,table,0);
-                SendMessageW(columnOrderWindow,WM_COMMAND,MoveUpId,0);
-                ok=table>0 && app.fuelOrder[table-1]==ConsumptionTableElement && ok;
-                Save(); Load(); ok=app.fuelOrder[table-1]==ConsumptionTableElement && ok;
-                UpdateOverlays();
-                ok=Export(app.overlays[2].window,L"build\\qa\\fuel-reordered.bmp") && ok;
-                SendMessageW(columnOrderWindow,WM_CLOSE,0,0);
-                app.fuelOrder=originalOrder; Save(); UpdateOverlays();
-                const auto savedFrame=app.frame; const double savedDistance=app.fuelPlan.lapsToFinish;
-                app.frame.lapCompleted=7; app.frame.lapPct=.2; app.fuelPlan.lapsToFinish=12.02;
-                ok=FuelFinishLap()==20 && ok;
-                app.frame.lapPct=.99; ok=FuelFinishLap()==21 && ok;
-                app.fuelPlan.lapsToFinish=0; ok=FuelFinishLap()==8 && ok;
-                app.fuelPlan.lapsToFinish=-1; ok=FuelFinishLap()==-1 && ok;
-                app.frame=savedFrame; app.fuelPlan.lapsToFinish=savedDistance;
-
-
+        OpenOverlay(kind);
+        ok=ui.page==Page::Overlay && ui.overlayKind==kind && ok;
+        ok=Export(app.main,L"build\\qa\\settings-"+std::to_wstring(kind)+L".bmp")&&ok;
+        if(kind==RelativeKind) {
+            app.rows=RelativeRowCount(6); SettingChanged();
+            ok=app.rows==7 && ok;
+        } else if(kind==StandingsKind) {
+            const int originalWidth=OverlayWidth(1); app.showInterval=false; Fit(app.overlays[1]);
+            SetColumnVisible(StandingsKind,IntervalColumn,true);
+            ok=app.showInterval && OverlayWidth(1)>=originalWidth && ok;
+            app.standings.liveGaps=true; SettingChanged();
+            ok=app.standings.liveGaps && ok; Save(); Load(); ok=app.standings.liveGaps && ok;
+            app.standings.liveGaps=false; SettingChanged();
+            ok=!app.standings.liveGaps && ok;
+            ok=Export(app.overlays[1].window,L"build\\qa\\standings-interval.bmp") && ok;
+            app.standings.leaders=2; app.standings.ahead=1; app.standings.behind=1; app.standings.separateClasses=false; SettingChanged();
+            const auto groups=SelectStandings(app.session,app.frame,app.standings);
+            ok=(!app.standings.separateClasses && groups.size()==1 && groups[0].rows.size()==5 && app.rows==7)&&ok;
+            ok=Export(app.overlays[1].window,L"build\\qa\\standings-combined.bmp")&&ok;
+            app.standings.ownClass=true; SettingChanged();
+            ok=app.standings.ownClass && Rows(0).size()<=7 && ok;
+        } else if(kind==FuelKind) {
+            app.fuelRows[1]=false; SettingChanged();
+            const int newElements=FuelElements[KeyNumbersElement].height+FuelElements[PitTimelineElement].height;
+            ok=!app.fuelRows[1] && BaseHeight(2)==(app.showTitleBar?524:492)+newElements && ok;
+            for(int i=0;i<FuelElementCount;++i) {
+                const int before=HeightWithTitle(2);
+                app.fuelDisplay[i]=false; SettingChanged();
+                ok=!app.fuelDisplay[i] && HeightWithTitle(2)==before-FuelElements[i].height && ok;
             }
-            if(kind<2) {
-                SendDlgItemMessageW(app.overlaySettings,435,BM_SETCHECK,BST_CHECKED,0);
-                SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(435,BN_CLICKED),0);
-                ok=app.driverColumns[kind][5] && DriverValue(Rows(kind).front(),5).find(L" s")!=std::wstring::npos && ok;
-                ok=Export(app.overlays[kind].window,L"build\\qa\\pit-stop-"+std::to_wstring(kind)+L".bmp") && ok;
-                ok=Export(app.overlaySettings,L"build\\qa\\settings-"+std::to_wstring(kind)+L".bmp") && ok;
-            }
-            SendMessageW(app.overlaySettings,WM_CLOSE,0,0);
-            ok=!app.overlaySettings && ok;
+            ok=HeightWithTitle(2)==213 && OverlayWidth(2)==365 && ok;
+            Save(); Load();
+            ok=std::none_of(app.fuelDisplay.begin(),app.fuelDisplay.end(),[](bool value){return value;}) && ok;
+            ok=Export(app.overlays[2].window,L"build\\qa\\fuel-compact.bmp") && ok;
+            app.fuelDisplay.fill(true); SettingChanged();
+            const auto originalOrder=app.fuelOrder;
+            const int table=static_cast<int>(std::find(app.fuelOrder.begin(),app.fuelOrder.end(),ConsumptionTableElement)-app.fuelOrder.begin());
+            ok=MoveInOrder(app.fuelOrder,ConsumptionTableElement,-1) && ok;
+            ok=table>0 && app.fuelOrder[table-1]==ConsumptionTableElement && ok;
+            Save(); Load(); ok=app.fuelOrder[table-1]==ConsumptionTableElement && ok;
+            UpdateOverlays();
+            ok=Export(app.overlays[2].window,L"build\\qa\\fuel-reordered.bmp") && ok;
+            app.fuelOrder=originalOrder; SettingChanged();
+            const auto savedFrame=app.frame; const double savedDistance=app.fuelPlan.lapsToFinish;
+            app.frame.lapCompleted=7; app.frame.lapPct=.2; app.fuelPlan.lapsToFinish=12.02;
+            ok=FuelFinishLap()==20 && ok;
+            app.frame.lapPct=.99; ok=FuelFinishLap()==21 && ok;
+            app.fuelPlan.lapsToFinish=0; ok=FuelFinishLap()==8 && ok;
+            app.fuelPlan.lapsToFinish=-1; ok=FuelFinishLap()==-1 && ok;
+            app.frame=savedFrame; app.fuelPlan.lapsToFinish=savedDistance;
+        }
+        if(IsTable(kind)) {
+            SetColumnVisible(kind,PitStopColumn,true);
+            ok=app.driverColumns[kind][5] && DriverValue(Rows(kind).front(),5).find(L" s")!=std::wstring::npos && ok;
+            ok=Export(app.overlays[kind].window,L"build\\qa\\pit-stop-"+std::to_wstring(kind)+L".bmp") && ok;
         }
     }
+    ShowPage(Page::Overlays);
     OpenRaceControl(); UpdateRaceControl(true);
     ok=raceControl.window && !raceControl.rows.empty() && raceControl.events.size()==6 && ok;
-    ok=raceControl.columns.size()>=9 && raceControl.columns[3]==8 && std::find(raceControl.columns.begin(),raceControl.columns.end(),5)!=raceControl.columns.end() && ok;
+    auto shown=[](int field){ return std::find(raceControl.columns.begin(),raceControl.columns.end(),field)!=raceControl.columns.end(); };
+    ok=shown(5) && shown(8) && shown(RaceIncidentsField) && ok;
     for(const auto& row:raceControl.rows) {
-        if(row.driver.index==1) ok=RaceCarStatus(row)==L"Outlap" && ok;
-        if(row.driver.index==2) ok=RaceCarStatus(row)==L"Pit lane" && ok;
-        if(row.driver.index==5) ok=RaceCarInactive(row) && RaceCarStatus(row)==L"Inactive" && ok;
+        if(row.driver.index==1) ok=RaceCarStatus(row).text==L"Out" && ok;
+        if(row.driver.index==2) ok=RaceCarStatus(row).text==L"Pit" && ok;
+        if(row.driver.index==3) ok=RaceCarStatus(row).text.empty() && ok;
+        if(row.driver.index==5) ok=RaceCarInactive(row) && RaceCarStatus(row).text==L"Inactive" && ok;
     }
-    const int chase=static_cast<int>(SendMessageW(raceControl.camera,CB_FINDSTRINGEXACT,static_cast<WPARAM>(-1),reinterpret_cast<LPARAM>(L"Far Chase")));
-    SendMessageW(raceControl.camera,CB_SETCURSEL,chase,0);
-    SendMessageW(raceControl.window,WM_COMMAND,MAKEWPARAM(818,CBN_SELCHANGE),0);
-    ok=chase>=0 && RaceCameraGroup()==11 && ok;
+    int chase=-1; for(int i=0;i<static_cast<int>(raceControl.cameras.size());++i) if(raceControl.cameras[i].name=="Far Chase") chase=i;
+    SetRaceCamera(chase); ok=chase>=0 && RaceCameraGroup()==11 && ok;
     ok=Export(raceControl.window,L"build\\qa\\race-control.bmp") && ok;
     if(raceControl.events.size()>0) {
-        NMITEMACTIVATE action{}; action.hdr.hwndFrom=raceControl.feed; action.hdr.code=NM_CLICK; action.iItem=0; action.iSubItem=0;
-        SendMessageW(raceControl.window,WM_NOTIFY,811,reinterpret_cast<LPARAM>(&action));
-        ok=!raceControl.pendingNumber.empty() && raceControl.pendingGroup==11 && ok;
+        ReplayRaceEvent(0,5); ok=!raceControl.pendingNumber.empty() && raceControl.pendingGroup==11 && ok;
         KillTimer(raceControl.window,1); raceControl.pendingNumber.clear();
-        SendMessageW(raceControl.camera,CB_SETCURSEL,2,0);
-        SendMessageW(raceControl.window,WM_COMMAND,MAKEWPARAM(818,CBN_SELCHANGE),0);
-        action.iSubItem=1; SendMessageW(raceControl.window,WM_NOTIFY,811,reinterpret_cast<LPARAM>(&action));
-        ok=!raceControl.pendingNumber.empty() && raceControl.pendingGroup==12 && ok;
+        SetRaceCamera(2);
+        // Replay from 10 s, then a double-click on the selected event.
+        SetRaceReplayMode(2); ListView_SetItemState(raceControl.feed,0,LVIS_SELECTED,LVIS_SELECTED);
+        NMITEMACTIVATE open{}; open.hdr.hwndFrom=raceControl.feed; open.hdr.code=NM_DBLCLK; open.iItem=0;
+        SendMessageW(raceControl.window,WM_NOTIFY,RaceFeedId,reinterpret_cast<LPARAM>(&open));
+        ok=SelectedEventIndex()==0 && raceControl.pendingNumber==raceControl.events[0].number && raceControl.pendingGroup==12 && ok;
         KillTimer(raceControl.window,1); raceControl.pendingNumber.clear();
-        CloseRaceControl(); OpenRaceControl(); ok=RaceCameraGroup()==12 && ok;
-        SendMessageW(raceControl.camera,CB_SETCURSEL,chase,0);
-        SendMessageW(raceControl.window,WM_COMMAND,MAKEWPARAM(818,CBN_SELCHANGE),0);
+        CloseRaceControl(); OpenRaceControl(); ok=RaceCameraGroup()==12 && raceControl.replayMode==2 && raceControl.replay.Selected()==2 && ok;
+        SetRaceReplayMode(1);
+        SetRaceCamera(chase);
     }
-    SendMessageW(raceControl.filter,CB_SETCURSEL,1,0); SendMessageW(raceControl.window,WM_COMMAND,MAKEWPARAM(812,CBN_SELCHANGE),0);
-    ok=raceControl.events.size()==1 && raceControl.events.front().type==EventType::Offtrack && ok;
+    SetRaceEventFilter(1);
+    ok=raceControl.events.size()==3 && std::all_of(raceControl.events.begin(),raceControl.events.end(),[](const RaceEvent& e){return EventCategory(e.type)==1;}) && ok;
+    SetRaceEventFilter(3); ok=raceControl.events.size()==1 && raceControl.events.front().type==EventType::Overtake && ok;
+    SetRaceEventFilter(0);
+    SetRaceOnTop(true); ok=(GetWindowLongPtrW(raceControl.window,GWL_EXSTYLE)&WS_EX_TOPMOST) && ok;
+    SetRaceOnTop(false); ok=!(GetWindowLongPtrW(raceControl.window,GWL_EXSTYLE)&WS_EX_TOPMOST) && ok;
+    LoadRaceFields(); ok=!raceControl.onTop && ok;
+    {
+        // Watching live from outside the car is not a replay; behind live or another session is.
+        Frame f; f.replay=true; f.session=f.replaySession=2; f.time=100; f.replayTime=99.5; ok=!ReviewingReplay(f) && ok;
+        f.replayTime=90; ok=ReviewingReplay(f) && ok; f.replaySession=1; f.replayTime=99.5; ok=ReviewingReplay(f) && ok;
+    }
+    // A DPI change swaps fonts; the segmented controls must follow instead of keeping a deleted one.
+    RaceControlFonts(); ApplyRaceControlFonts();
+    for(HWND segmented:{raceControl.filter.Handle(),raceControl.replay.Handle()}) ok=reinterpret_cast<HFONT>(SendMessageW(segmented,WM_GETFONT,0,0))==raceControl.font && ok;
     SendMessageW(raceControl.window,WM_CLOSE,0,0); ok=!IsWindowVisible(raceControl.window) && ok;
     OpenRaceControl(); ok=IsWindowVisible(raceControl.window) && ok;
     NMITEMACTIVATE click{}; click.hdr.hwndFrom=raceControl.standings; click.hdr.code=NM_DBLCLK; click.iItem=0;
-    SendMessageW(raceControl.window,WM_NOTIFY,810,reinterpret_cast<LPARAM>(&click));
-    ok=raceControl.message.find(L"camera action simulated")!=std::wstring::npos && ok;
-    report<<"Race Control standings, event filters, replay actions and close/reopen: "<<(ok?"PASS":"FAIL")<<"\n";
+    ListView_SetItemState(raceControl.standings,0,LVIS_SELECTED,LVIS_SELECTED);
+    // 5 s (default): replay that car from the moment on screen; Live: camera only.
+    SendMessageW(raceControl.window,WM_NOTIFY,RaceStandingsId,reinterpret_cast<LPARAM>(&click));
+    ok=raceControl.pendingNumber==raceControl.rows[0].driver.number && raceControl.message.find(L"replay action simulated")!=std::wstring::npos && ok;
+    KillTimer(raceControl.window,1); raceControl.pendingNumber.clear();
+    SetRaceReplayMode(0); SendMessageW(raceControl.window,WM_NOTIFY,RaceStandingsId,reinterpret_cast<LPARAM>(&click));
+    ok=raceControl.pendingNumber.empty() && raceControl.message.find(L"camera action simulated")!=std::wstring::npos && ok;
+    SetRaceReplayMode(1);
+    report<<"Race Control banner, standings status, event filters, replay bar, keep on top and close/reopen: "<<(ok?"PASS":"FAIL")<<"\n";
     {
         bool rcOk=true; const auto savedFields=raceControl.fields; const auto savedEvents=raceControl.eventFields; const auto savedOptions=app.standings; const auto savedDrivers=app.session.drivers;
-        SendMessageW(raceControl.filter,CB_SETCURSEL,0,0); app.standings.ownClass=false; UpdateRaceControl(true);
+        app.standings.ownClass=false; UpdateRaceControl(true);
         DWORD_PTR headerData=0; rcOk=GetWindowSubclass(ListView_GetHeader(raceControl.standings),RaceHeaderProc,1,&headerData) && rcOk;
-        OpenRaceFields(); rcOk=raceFieldsWindow && !IsWindowEnabled(raceControl.window) && rcOk;
-        SendDlgItemMessageW(raceFieldsWindow,906,BM_SETCHECK,BST_UNCHECKED,0); SendMessageW(raceFieldsWindow,WM_COMMAND,MAKEWPARAM(906,BN_CLICKED),0);
-        SendDlgItemMessageW(raceFieldsWindow,920,BM_SETCHECK,BST_UNCHECKED,0); SendMessageW(raceFieldsWindow,WM_COMMAND,MAKEWPARAM(920,BN_CLICKED),0);
-        rcOk=std::find(raceControl.columns.begin(),raceControl.columns.end(),6)==raceControl.columns.end() && raceControl.feedColumns.front()==1 && rcOk;
-        Export(raceFieldsWindow,L"build\\qa\\race-manage-fields.bmp"); SendMessageW(raceFieldsWindow,WM_CLOSE,0,0);
-        rcOk=IsWindowEnabled(raceControl.window) && rcOk; LoadRaceFields(); rcOk=!raceControl.fields[6] && !raceControl.eventFields[0] && rcOk;
+        ShowRaceControlPage(); rcOk=ui.page==Page::RaceControl && rcOk;
+        rcOk=SetRaceField(false,6,false) && SetRaceField(true,2,false) && !SetRaceField(true,0,true) && rcOk;
+        rcOk=std::find(raceControl.columns.begin(),raceControl.columns.end(),6)==raceControl.columns.end() && raceControl.feedColumns.front()==3 && rcOk;
+        {
+            auto only=raceControl.fields; raceControl.fields.fill(false); raceControl.fields[2]=true;
+            rcOk=!SetRaceField(false,2,false) && raceControl.fields[2] && rcOk; raceControl.fields=only; SaveRaceFields();
+        }
+        RefreshPage(); Export(app.main,L"build\\qa\\main-race-control.bmp"); ShowPage(Page::Overlays);
+        LoadRaceFields(); rcOk=!raceControl.fields[6] && !raceControl.eventFields[2] && rcOk;
+        SetRaceField(true,2,true);
         // Numeric iRating sorting, missing values last in either direction.
         for(auto& driver:app.session.drivers) driver.rating=driver.index==0?0:(driver.index==1?999:10000+driver.index);
         SetRaceSort(false,10,0); rcOk=raceControl.rows.front().driver.index==1 && raceControl.rows.back().driver.index==0 && rcOk;
         SetRaceSort(false,10,1); rcOk=raceControl.rows.front().driver.rating>=10000 && raceControl.rows.back().driver.index==0 && rcOk;
         // Actual column click toggles event order.
         NMLISTVIEW sort{}; sort.hdr.hwndFrom=raceControl.feed; sort.hdr.code=LVN_COLUMNCLICK; sort.iSubItem=static_cast<int>(std::find(raceControl.feedColumns.begin(),raceControl.feedColumns.end(),2)-raceControl.feedColumns.begin());
-        SendMessageW(raceControl.window,WM_NOTIFY,811,reinterpret_cast<LPARAM>(&sort)); rcOk=raceControl.events.front().time<raceControl.events.back().time && rcOk;
-        SendMessageW(raceControl.window,WM_NOTIFY,811,reinterpret_cast<LPARAM>(&sort)); rcOk=raceControl.events.front().time>raceControl.events.back().time && rcOk;
-        int carItem=-1; for(int i=0;i<SendMessageW(raceControl.carFilter,CB_GETCOUNT,0,0);++i) if(SendMessageW(raceControl.carFilter,CB_GETITEMDATA,i,0)==2) carItem=i;
-        SendMessageW(raceControl.carFilter,CB_SETCURSEL,carItem,0); SendMessageW(raceControl.window,WM_COMMAND,MAKEWPARAM(819,CBN_SELCHANGE),0);
-        rcOk=raceControl.events.size()==1 && raceControl.events.front().car==2 && rcOk;
-        NMITEMACTIVATE action{}; action.hdr.hwndFrom=raceControl.feed; action.hdr.code=NM_CLICK; action.iItem=0; action.iSubItem=0;
-        SendMessageW(raceControl.window,WM_NOTIFY,811,reinterpret_cast<LPARAM>(&action)); rcOk=raceControl.pendingNumber==raceControl.events.front().number && rcOk;
+        SendMessageW(raceControl.window,WM_NOTIFY,RaceFeedId,reinterpret_cast<LPARAM>(&sort)); rcOk=raceControl.events.front().time<raceControl.events.back().time && rcOk;
+        SendMessageW(raceControl.window,WM_NOTIFY,RaceFeedId,reinterpret_cast<LPARAM>(&sort)); rcOk=raceControl.events.front().time>raceControl.events.back().time && rcOk;
+        // Car filter from a standings row and cleared from its pill.
+        int carRow=-1; for(int i=0;i<static_cast<int>(raceControl.rows.size());++i) if(raceControl.rows[i].driver.index==2) carRow=i;
+        ListView_SetItemState(raceControl.standings,carRow,LVIS_SELECTED,LVIS_SELECTED);
+        SendMessageW(raceControl.window,WM_COMMAND,MAKEWPARAM(RaceCarEventsId,BN_CLICKED),0);
+        rcOk=raceControl.car==2 && raceControl.events.size()==1 && raceControl.events.front().car==2 && IsWindowVisible(RaceItem(RaceCarPillId)) && rcOk;
+        ReplayRaceEvent(0,5); rcOk=raceControl.pendingNumber==raceControl.events.front().number && rcOk;
         KillTimer(raceControl.window,1); raceControl.pendingNumber.clear();
-        SendMessageW(raceControl.filter,CB_SETCURSEL,1,0); UpdateRaceControl(true); rcOk=raceControl.events.empty() && rcOk;
+        SetRaceEventFilter(3); rcOk=raceControl.events.empty() && rcOk;
         Export(raceControl.window,L"build\\qa\\race-control-filtered.bmp");
+        SendMessageW(raceControl.window,WM_COMMAND,MAKEWPARAM(RaceCarPillId,BN_CLICKED),0); rcOk=raceControl.car<0 && !IsWindowVisible(RaceItem(RaceCarPillId)) && rcOk;
         raceControl.fields=savedFields; raceControl.eventFields=savedEvents; app.standings=savedOptions; app.session.drivers=savedDrivers;
         raceControl.sortColumn=-1; raceControl.eventSortColumn=2; raceControl.eventSortDescending=true; SaveRaceFields();
-        SendMessageW(raceControl.carFilter,CB_SETCURSEL,0,0); SendMessageW(raceControl.filter,CB_SETCURSEL,0,0); UpdateRaceControl(true);
-        report<<"Race Control field visibility, numeric sorting, missing values, event sorting, car/type filters and remapped replay buttons: "<<(rcOk?"PASS":"FAIL")<<"\n"; ok=rcOk && ok;
+        SetRaceEventFilter(0);
+        report<<"Race Control field visibility, numeric sorting, missing values, event sorting, car/type filters and replay for the filtered event: "<<(rcOk?"PASS":"FAIL")<<"\n"; ok=rcOk && ok;
     }
-    SendDlgItemMessageW(app.main,250,BM_SETCHECK,BST_CHECKED,0); SendMessageW(app.main,WM_COMMAND,MAKEWPARAM(250,BN_CLICKED),0);
-    SendDlgItemMessageW(app.main,251,BM_SETCHECK,BST_CHECKED,0); SendMessageW(app.main,WM_COMMAND,MAKEWPARAM(251,BN_CLICKED),0);
+    // Kept apart from ok, which later checks reuse for their own line; folded in at the end.
+    bool listOk=true;
+    {
+        // The first click into a scrolled, unfocused list must hit the row under the mouse.
+        RowList list; listOk=list.Create(app.instance,app.main,9990,ui.heading,ui.text);
+        std::vector<RowList::Row> rows(30); for(size_t i=0;i<rows.size();++i) rows[i].title=L"Row "+std::to_wstring(i);
+        list.SetRows(std::move(rows)); SetWindowPos(list.Handle(),HWND_TOP,0,0,400,240,SWP_NOACTIVATE);
+        SetFocus(app.main); SendMessageW(list.Handle(),WM_VSCROLL,SB_BOTTOM,0);
+        RECT client{}; GetClientRect(list.Handle(),&client); const LPARAM at=MAKELPARAM(20,client.bottom-20);
+        SendMessageW(list.Handle(),WM_LBUTTONDOWN,MK_LBUTTON,at); SendMessageW(list.Handle(),WM_LBUTTONUP,0,at);
+        listOk=GetFocus()==list.Handle() && list.NotifiedRow()==29 && listOk;
+        DestroyWindow(list.Handle());
+        report<<"First click into a scrolled list hits the row under the mouse: "<<(listOk?"PASS":"FAIL")<<"\n";
+    }
+    // Version tags compare numerically, a leading v is ignored, a suffix such as -beta sorts first; diagnostics never go online.
+    bool updateOk=UpdateChecker::CurrentVersion()==Wide(RACEMATE_VERSION) && UpdateChecker::IsNewerVersion(L"v0.1.1",L"0.1.0") && UpdateChecker::IsNewerVersion(L"0.10.0",L"0.9.0")
+        && !UpdateChecker::IsNewerVersion(L"v0.1.0",L"0.1.0") && !UpdateChecker::IsNewerVersion(L"0.0.9",L"0.1.0") && UpdateChecker::IsNewerVersion(L"0.1.0",L"0.1.0-beta");
+    StartUpdateCheck(true); updateOk=!updates.check.Running() && updates.status.empty() && updateOk;
+    report<<"Update version comparison, no network in diagnostics: "<<(updateOk?"PASS":"FAIL")<<"\n";
+    SetStartWithWindows(true); SetStartMinimized(true);
     Load();
     ok=app.driverColumns[0][5] && app.driverColumns[1][5] && app.showInterval && app.rows==7 && app.standings.leaders==2 && app.standings.ahead==1 && app.standings.behind==1 && app.standings.ownClass && !app.standings.separateClasses && !app.fuelRows[1] && app.startWithWindows && app.startMinimized && ok;
     ShowWindow(app.main,StartupShowCommand(true,SW_SHOW)); UpdateOverlays();
@@ -516,7 +468,7 @@ int RunDiagnostics() {
     ShowWindow(app.main,StartupShowCommand(false,SW_SHOW)); ok=IsWindowVisible(app.main) && ok;
     const auto startup=StartupCommand(); ok=(!startup.empty() && startup.front()==L'"' && startup.back()==L'"') && ok;
     SendMessageW(app.main,WM_CLOSE,0,0); ok=!IsWindowVisible(app.main) && IsWindow(app.main) && ok;
-    report<<"Overlay dialogs, independent options, class view switch, fuel rows, close-to-tray and persistence: "<<(ok?"PASS":"FAIL")<<"\n";
+    report<<"Overlay pages, independent options, class view switch, fuel rows, close-to-tray and persistence: "<<(ok?"PASS":"FAIL")<<"\n";
     app.rows=9; app.standings={}; app.fuelRows.fill(true); app.fuelDisplay.fill(true); app.startWithWindows=app.startMinimized=false;
     {
         const auto savedSession=app.session; const auto savedFrame=app.frame; const bool savedPreview=app.preview;
@@ -623,33 +575,26 @@ int RunDiagnostics() {
     bool orderOk=true;
     for(int kind=0;kind<2;++kind) {
         const auto original=app.columnOrder[kind]; const auto other=app.columnOrder[1-kind];
-        OpenOverlaySettings(kind); SendMessageW(app.overlaySettings,WM_COMMAND,445,0);
-        HWND orderWindow=columnOrderWindow;
-        orderOk=orderWindow && SendDlgItemMessageW(orderWindow,450,LB_GETCOUNT,0,0)==static_cast<LRESULT>(original.size()) && orderOk;
-        SendDlgItemMessageW(orderWindow,450,LB_SETCURSEL,0,0); SendMessageW(orderWindow,WM_COMMAND,451,0);
-        orderOk=app.columnOrder[kind]==original && orderOk;
-        SendMessageW(orderWindow,WM_COMMAND,452,0);
+        orderOk=!MoveInOrder(app.columnOrder[kind],original.front(),-1) && app.columnOrder[kind]==original && orderOk;
+        orderOk=MoveInOrder(app.columnOrder[kind],original.front(),1) && orderOk;
         orderOk=app.columnOrder[kind][0]==original[1] && app.columnOrder[1-kind]==other && orderOk;
-        SendDlgItemMessageW(orderWindow,450,LB_SETCURSEL,static_cast<WPARAM>(original.size()-1),0);
-        for(size_t i=1;i<original.size();++i) SendMessageW(orderWindow,WM_COMMAND,451,0);
+        app.columnOrder[kind]=original;
+        for(size_t i=1;i<original.size();++i) MoveInOrder(app.columnOrder[kind],original.back(),-1);
         const auto changed=app.columnOrder[kind]; Load(); orderOk=app.columnOrder[kind]==changed && changed.front()==original.back() && orderOk;
-        ok=Export(orderWindow,L"build\\qa\\column-order-"+std::to_wstring(kind)+L".bmp") && ok;
+        OpenOverlay(kind); ok=Export(app.main,L"build\\qa\\column-order-"+std::to_wstring(kind)+L".bmp") && ok;
         UpdateOverlays(); ok=Export(app.overlays[kind].window,L"build\\qa\\reordered-"+std::to_wstring(kind)+L".bmp") && ok;
-        SendMessageW(orderWindow,WM_CLOSE,0,0); orderOk=!columnOrderWindow && IsWindowEnabled(app.overlaySettings) && orderOk;
-        SendMessageW(app.overlaySettings,WM_CLOSE,0,0); app.columnOrder[kind]=original; Save(); UpdateOverlays();
+        app.columnOrder[kind]=original; SettingChanged();
     }
+    ShowPage(Page::Overlays);
     ok=orderOk && ok; report<<"Independent column ordering, move boundaries, hidden-column positions and persistence: "<<(orderOk?"PASS":"FAIL")<<"\n";
     bool cornersOk=true;
     for(int kind=0;kind<OverlayCount;++kind) {
         auto& overlay=app.overlays[kind]; const auto original=overlay.place;
         overlay.place.growLeft=overlay.place.growUp=false; overlay.place.scale=100;
         SetOverlayOrigin(overlay,monitor.rcWork.left+300,monitor.rcWork.top+250); Fit(overlay);
-        OpenOverlaySettings(kind);
-        cornersOk=app.overlaySettings && SendDlgItemMessageW(app.overlaySettings,440,CB_GETCOUNT,0,0)==4 && cornersOk;
         for(int corner=0;corner<4;++corner) {
             RECT before{},grown{},shrunk{}; GetWindowRect(overlay.window,&before);
-            SendDlgItemMessageW(app.overlaySettings,440,CB_SETCURSEL,corner,0);
-            SendMessageW(app.overlaySettings,WM_COMMAND,MAKEWPARAM(440,CBN_SELCHANGE),0);
+            SetOverlayCorner(kind,corner);
             GetWindowRect(overlay.window,&shrunk);
             cornersOk=EqualRect(&before,&shrunk) && cornersOk;
             overlay.place.scale=130; Fit(overlay); GetWindowRect(overlay.window,&grown);
@@ -658,8 +603,7 @@ int RunDiagnostics() {
             overlay.place.scale=100; Fit(overlay); GetWindowRect(overlay.window,&shrunk);
             cornersOk=EqualRect(&before,&shrunk) && cornersOk;
         }
-        ok=Export(app.overlaySettings,L"build\\qa\\fixed-corner-"+std::to_wstring(kind)+L".bmp") && ok;
-        SendMessageW(app.overlaySettings,WM_CLOSE,0,0);
+        ok=Export(app.overlays[kind].window,L"build\\qa\\fixed-corner-"+std::to_wstring(kind)+L".bmp") && ok;
         const int anchorX=overlay.place.x,anchorY=overlay.place.y; Save();
         overlay.place.growLeft=overlay.place.growUp=false; overlay.place.x=overlay.place.y=0; Load();
         cornersOk=overlay.place.growLeft && overlay.place.growUp && overlay.place.x==anchorX && overlay.place.y==anchorY && cornersOk;
@@ -682,9 +626,9 @@ int RunDiagnostics() {
     SendMessageW(app.main,WM_CLOSE,0,0);
     trayFallbackOk=!IsWindow(app.main) && trayFallbackOk;
     report<<"Missing tray icon keeps minimize accessible and closes the app on exit: "<<(trayFallbackOk?"PASS":"FAIL")<<"\n";
-    ok=trayFallbackOk && ok;
+    ok=trayFallbackOk && listOk && updateOk && ok;
     if(IsWindow(app.main)) DestroyWindow(app.main);
-    DeleteObject(app.font); DeleteObject(app.heading); DeleteObject(app.brush); return ok?0:2;
+    DeleteObject(app.brush); return ok?0:2;
 }
 // Main-thread cost of one connected refresh with a 60-car multiclass race and every overlay visible.
 int RunTickBenchmark() {

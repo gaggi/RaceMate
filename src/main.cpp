@@ -6,6 +6,15 @@
 #include <shlobj.h>
 #include <objidl.h>
 #include <gdiplus.h>
+#include "ui/BackgroundTask.h"
+#include "ui/NavBar.h"
+#include "ui/PageWindow.h"
+#include "ui/RowEditors.h"
+#include "ui/RowList.h"
+#include "ui/ScrollHost.h"
+#include "ui/SegmentedControl.h"
+#include "ui/StatusPanel.h"
+#include "update/UpdateChecker.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -17,24 +26,12 @@ namespace {
 using namespace rm;
 constexpr COLORREF Background=RGB(246,247,249), Text=RGB(40,47,58);
 constexpr UINT TrayMessage=WM_APP+1;
-constexpr int MainHeight=714;
 enum OverlayKind { RelativeKind, StandingsKind, FuelKind, PitLimiterKind, WeatherKind };
 constexpr int OverlayCount=WeatherKind+1;
 constexpr bool IsTable(int kind) { return kind==RelativeKind || kind==StandingsKind; }
 const wchar_t* Titles[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pit Limiter",L"Weather"};
 const wchar_t* Sections[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pitlimiter",L"Weather"};
 constexpr POINT DefaultPositions[]={{40,120},{480,120},{40,470},{40,720},{40,820}};
-// Control identifiers. The diagnostics address several of them by value.
-enum ControlId {
-    PreviewId=110, EditId, HideId, ResetId, ExitId, RaceControlId,
-    OverlayEnableId=200, OverlayScaleId=210, OverlayOpacityId=220, RefreshRateId=231, OverlaySettingsId=240,
-    StartWithWindowsId=250, StartMinimizedId, ShowTitleBarId, HotkeyFieldId, HotkeyClearId=HotkeyFieldId+3,
-    RowsId=400, ClassViewId, LeadersId, AheadId, BehindId, OwnClassId, GapDecimalsId, HidePitId, IntervalId, LiveGapsId,
-    FuelRowId=410, DriverColumnId=430, LapsColumnId=436, GainedColumnId, UntimedOrderId, CornerId=440,
-    OrderButtonId=445, FooterButtonId, ShortViewId, HeaderButtonId=ShortViewId+2, OrderListId, MoveUpId, MoveDownId,
-    FuelDisplayId=460, ExcludeYellowId=475, SlotEnabledId=480, SlotMetricId,
-    WeatherDisplayId=490, StatusFlagId=497, ShowDriverId=510, NameFormatId, ShowStatusId, ColumnHeadingsId=514
-};
 // Relative and Standings columns. The values are stored in ColumnOrder.
 enum Column {
     PositionColumn, NumberColumn, DriverColumn, GapColumn, IntervalColumn, BestColumn, LastColumn,
@@ -137,8 +134,8 @@ const wchar_t* HotkeyKeys[]={L"Move",L"Hide",L"Settings"};
 constexpr WORD HotkeyAllModifiers=(HOTKEYF_CONTROL|HOTKEYF_ALT|HOTKEYF_SHIFT)<<8;
 constexpr WORD DefaultHotkeys[]={HotkeyAllModifiers|'E',HotkeyAllModifiers|'H',HotkeyAllModifiers|'S'};
 struct App {
-    HINSTANCE instance=nullptr; HWND main=nullptr,status=nullptr;
-    HFONT font=nullptr,heading=nullptr; HBRUSH brush=nullptr;
+    HINSTANCE instance=nullptr; HWND main=nullptr; HBRUSH brush=nullptr;
+    RECT windowRect{}; bool windowMaximized=false;
     std::array<Overlay,OverlayCount> overlays;
     Frame frame; Session session; Telemetry telemetry; FuelCalculator fuel;
     EventRecorder events; PitHistory pitHistory; PitLimiterVisibility pitVisibility;
@@ -162,15 +159,13 @@ struct App {
     std::vector<int> weatherOrder=DefaultWeatherOrder;
     std::array<bool,WeatherCardCount+1> weatherDisplay{};
     bool preview=false, edit=false, hidden=false, diagnostics=false;
-    bool startWithWindows=false, startMinimized=false, showTitleBar=false;
-    HWND overlaySettings=nullptr; int settingsKind=-1;
+    bool startWithWindows=false, startMinimized=false, showTitleBar=false, checkUpdates=true;
     bool settingsError=false, trayAvailable=false;
     std::array<WORD,HotkeyCount> hotkeys{}; bool hotkeysEnabled=false; std::wstring hotkeyError;
-    int rate=10,timerMs=0,scroll=0;
+    int rate=10,timerMs=0;
     unsigned modelVersion=0,relativeVersion=~0u,standingsVersion=~0u,planVersion=~0u;
     std::vector<Row> relativeRows; std::vector<StandingsGroup> standingsGroups; std::vector<DrawCommand> sceneBuffer;
-    NOTIFYICONDATAW tray{}; std::vector<HWND> controls;
-    int D(int v) const { return MulDiv(v,GetDpiForWindow(main),96); }
+    NOTIFYICONDATAW tray{};
 } app;
 void OpenRaceControl();
 void UpdateRaceControl(bool force=false);
@@ -189,11 +184,6 @@ std::wstring Format(double x,int decimals=1) {
 std::wstring Lap(double x) {
     if(x<=0 || !std::isfinite(x)) return L"—";
     wchar_t b[64]; swprintf_s(b,L"%d:%06.3f",static_cast<int>(x)/60,std::fmod(x,60)); return b;
-}
-void Label(HDC dc,const std::wstring& s,RECT r,COLORREF c,HFONT font,UINT align=DT_LEFT) {
-    auto old=SelectObject(dc,font); SetTextColor(dc,c); SetBkMode(dc,TRANSPARENT);
-    DrawTextW(dc,s.c_str(),static_cast<int>(s.size()),&r,align|DT_SINGLELINE|DT_VCENTER|DT_END_ELLIPSIS|DT_NOPREFIX);
-    SelectObject(dc,old);
 }
 bool MultiCompoundSession() { return std::any_of(app.session.drivers.begin(),app.session.drivers.end(),HasMultipleDryCompounds); }
 const wchar_t* ColumnTitle(int id) { return Columns[id].title; }
@@ -354,9 +344,12 @@ void Load() {
     app.weatherOrder=ReadOrder(L"Weather",L"ElementOrder",DefaultWeatherOrder);
     for(int i=0;i<=WindDirectionOption;++i) app.weatherDisplay[i]=ReadBool(L"Weather",WeatherElements[i].key,true);
     app.showTitleBar=ReadBool(L"General",L"ShowTitleBar",false);
+    app.checkUpdates=ReadBool(L"General",L"CheckForUpdates",true);
     app.rate=std::clamp(ReadInt(L"General",L"RefreshHz",10),2,20);
     app.startWithWindows=ReadBool(L"General",L"StartWithWindows",false);
     app.startMinimized=ReadBool(L"General",L"StartMinimized",false);
+    app.windowRect={ReadInt(L"General",L"WindowLeft",0),ReadInt(L"General",L"WindowTop",0),ReadInt(L"General",L"WindowRight",0),ReadInt(L"General",L"WindowBottom",0)};
+    app.windowMaximized=ReadBool(L"General",L"WindowMaximized",false);
     for(int i=0;i<HotkeyCount;++i) { const WORD hotkey=static_cast<WORD>(ReadInt(L"Hotkeys",HotkeyKeys[i],DefaultHotkeys[i])); app.hotkeys[i]=LOBYTE(hotkey)?hotkey:0; }
     for(int kind=0;kind<OverlayCount;++kind) {
         auto& p=app.overlays[kind].place; const auto* section=Sections[kind];
@@ -396,7 +389,12 @@ void Save() {
     order(L"Weather",L"ElementOrder",app.weatherOrder);
     for(int i=0;i<=WindDirectionOption;++i) number(L"Weather",WeatherElements[i].key,app.weatherDisplay[i]);
     number(L"General",L"ShowTitleBar",app.showTitleBar); number(L"General",L"RefreshHz",app.rate);
-    number(L"General",L"StartWithWindows",app.startWithWindows); number(L"General",L"StartMinimized",app.startMinimized);
+    number(L"General",L"StartWithWindows",app.startWithWindows); number(L"General",L"StartMinimized",app.startMinimized); number(L"General",L"CheckForUpdates",app.checkUpdates);
+    if(app.windowRect.right>app.windowRect.left) {
+        number(L"General",L"WindowLeft",app.windowRect.left); number(L"General",L"WindowTop",app.windowRect.top);
+        number(L"General",L"WindowRight",app.windowRect.right); number(L"General",L"WindowBottom",app.windowRect.bottom);
+        number(L"General",L"WindowMaximized",app.windowMaximized);
+    }
     for(int i=0;i<HotkeyCount;++i) number(L"Hotkeys",HotkeyKeys[i],app.hotkeys[i]);
     for(int kind=0;kind<OverlayCount;++kind) {
         const auto& p=app.overlays[kind].place; const auto* section=Sections[kind];
@@ -908,6 +906,11 @@ void PreviewData(double time) {
         app.frame.cars[driver.index].classPosition=driver.index-5;
     }
 }
+void UpdateStatus();
+void RefreshPage();
+void PollUpdates();
+// Posted to the main window when the banner and the current page should show new state.
+constexpr UINT RefreshUiMessage=WM_APP+2;
 void ProcessFrame(bool connected) {
     if(!connected) { app.frame={}; app.events.Update(app.session,app.frame); app.session={}; app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); }
     else { app.pitHistory.Update(app.session,app.frame); app.events.Update(app.session,app.frame); app.fuel.Update(app.session,app.frame,app.excludeYellowFuelLaps); app.predictor.Update(app.session,app.frame); }
@@ -915,19 +918,12 @@ void ProcessFrame(bool connected) {
 void Tick() {
     if(app.preview) PreviewData(GetTickCount64()/1000.0);
     else ProcessFrame(app.telemetry.Read(app.frame,app.session));
-    std::wstring status=app.preview?L"Preview · sample data, no live telemetry":(app.frame.connected?L"Connected · "+Wide(app.session.track):L"Waiting for iRacing …");
-    if(app.edit) status+=L" · Move overlays";
-    if(!app.trayAvailable && !app.diagnostics) status+=L" · No tray icon; closing Settings exits RaceMate";
-    if(!app.hotkeyError.empty()) status+=L" · Shortcut in use: "+app.hotkeyError;
-    wchar_t previous[512]{}; GetWindowTextW(app.status,previous,512);
-    if(status!=previous) SetWindowTextW(app.status,status.c_str());
-    UpdateOverlays(); UpdateRaceControl(); Timer();
+    UpdateStatus(); UpdateOverlays(); UpdateRaceControl(); PollUpdates(); Timer();
 }
-void ShowSettings() { ShowWindow(app.main,SW_RESTORE); SetForegroundWindow(app.main); }
-void TogglePreview() { app.preview=!app.preview; app.frame={}; app.session={}; app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.telemetry.Close(); app.events.Reset();
-    SendMessageW(GetDlgItem(app.main,PreviewId),BM_SETCHECK,app.preview?BST_CHECKED:BST_UNCHECKED,0); Tick(); }
-void ToggleEdit() { app.edit=!app.edit; SendMessageW(GetDlgItem(app.main,EditId),BM_SETCHECK,app.edit?BST_CHECKED:BST_UNCHECKED,0); Tick(); }
-void ToggleHidden() { app.hidden=!app.hidden; SetWindowTextW(GetDlgItem(app.main,HideId),app.hidden?L"Show overlays":L"Hide overlays"); UpdateOverlays(); }
+void ShowSettings() { ShowWindow(app.main,IsIconic(app.main)?SW_RESTORE:SW_SHOW); SetForegroundWindow(app.main); }
+void TogglePreview() { app.preview=!app.preview; app.frame={}; app.session={}; app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.telemetry.Close(); app.events.Reset(); Tick(); RefreshPage(); }
+void ToggleEdit() { app.edit=!app.edit; Tick(); RefreshPage(); }
+void ToggleHidden() { app.hidden=!app.hidden; UpdateOverlays(); RefreshPage(); }
 LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     auto* o=reinterpret_cast<Overlay*>(GetWindowLongPtrW(w,GWLP_USERDATA));
     if(m==WM_NCCREATE) { o=static_cast<Overlay*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams); o->window=w; SetWindowLongPtrW(w,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(o)); }
@@ -950,114 +946,22 @@ LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     }
     return DefWindowProcW(w,m,wp,lp);
 }
-HWND Control(const wchar_t* cls,const wchar_t* text,int id,int x,int y,int w,int h,DWORD style=0) {
-    HWND c=CreateWindowExW(0,cls,text,WS_CHILD|WS_VISIBLE|style,app.D(x),app.D(y),app.D(w),app.D(h),app.main,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),app.instance,nullptr);
-    SendMessageW(c,WM_SETFONT,reinterpret_cast<WPARAM>(app.font),TRUE); app.controls.push_back(c); return c;
-}
-LRESULT CALLBACK GroupProc(HWND w,UINT m,WPARAM wp,LPARAM lp,UINT_PTR id,DWORD_PTR) {
-    if(m==WM_ERASEBKGND) return 1;
-    if(m==WM_PAINT || m==WM_PRINTCLIENT) {
-        PAINTSTRUCT paint{}; HDC dc=m==WM_PAINT?BeginPaint(w,&paint):reinterpret_cast<HDC>(wp);
-        const int saved=SaveDC(dc);
-        for(HWND child:app.controls) {
-            if(child==w) continue;
-            RECT r{}; GetWindowRect(child,&r); MapWindowPoints(nullptr,w,reinterpret_cast<POINT*>(&r),2);
-            ExcludeClipRect(dc,r.left,r.top,r.right,r.bottom);
-        }
-        RECT r{}; GetClientRect(w,&r); FillRect(dc,&r,app.brush);
-        HPEN pen=CreatePen(PS_SOLID,1,RGB(220,222,225));
-        auto oldPen=SelectObject(dc,pen); auto oldBrush=SelectObject(dc,GetStockObject(NULL_BRUSH));
-        Rectangle(dc,0,app.D(9),r.right,r.bottom);
-        wchar_t text[128]{}; GetWindowTextW(w,text,128);
-        auto oldFont=SelectObject(dc,app.font); SIZE size{}; GetTextExtentPoint32W(dc,text,static_cast<int>(wcslen(text)),&size);
-        RECT title{app.D(10),0,app.D(16)+size.cx,app.D(23)}; FillRect(dc,&title,app.brush);
-        Label(dc,text,title,Text,app.font);
-        SelectObject(dc,oldFont); SelectObject(dc,oldPen); SelectObject(dc,oldBrush); DeleteObject(pen);
-        RestoreDC(dc,saved); if(m==WM_PAINT) EndPaint(w,&paint); return 0;
-    }
-    if(m==WM_NCDESTROY) RemoveWindowSubclass(w,GroupProc,id);
-    return DefSubclassProc(w,m,wp,lp);
-}
 // Global shortcuts would swallow the keys being assigned, so release them while a shortcut field has focus.
 LRESULT CALLBACK HotkeyFieldProc(HWND w,UINT m,WPARAM wp,LPARAM lp,UINT_PTR id,DWORD_PTR) {
     if(m==WM_SETFOCUS && app.hotkeysEnabled) UnregisterHotkeys();
-    if(m==WM_KILLFOCUS) RegisterHotkeys();
+    if(m==WM_KILLFOCUS) { RegisterHotkeys(); PostMessageW(app.main,RefreshUiMessage,0,0); }
     if(m==WM_NCDESTROY) RemoveWindowSubclass(w,HotkeyFieldProc,id);
     return DefSubclassProc(w,m,wp,lp);
 }
-void Check(const wchar_t* text,int id,int x,int y,int w,bool checked) {
-    auto c=Control(L"BUTTON",text,id,x,y,w,24,BS_AUTOCHECKBOX|WS_TABSTOP); SendMessageW(c,BM_SETCHECK,checked?BST_CHECKED:BST_UNCHECKED,0);
-}
-void Combo(int id,int x,int y,int width,const std::vector<std::wstring>& items,int selected) {
-    auto c=Control(L"COMBOBOX",L"",id,x,y,width,260,CBS_DROPDOWNLIST|WS_VSCROLL|WS_TABSTOP);
-    for(const auto& item:items) SendMessageW(c,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(item.c_str()));
-    SendMessageW(c,CB_SETCURSEL,selected,0);
-}
-#include "SettingsScroll.inc"
 #include "Settings.inc"
 #include "RaceControl.inc"
-void CreateControls() {
-    app.font=CreateFontW(-app.D(13),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
-    app.heading=CreateFontW(-app.D(22),0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
-    auto title=Control(L"STATIC",L"RaceMate",0,24,15,360,32); SendMessageW(title,WM_SETFONT,reinterpret_cast<WPARAM>(app.heading),TRUE);
-    Control(L"STATIC",L"Native iRacing Overlays · Version 0.4.37",0,25,49,660,22);
-    app.status=Control(L"STATIC",L"Waiting for iRacing …",0,25,80,690,25);
-    HWND group=Control(L"BUTTON",L"Overlays",0,20,116,720,256,BS_GROUPBOX|WS_CLIPSIBLINGS);
-    SetWindowSubclass(group,GroupProc,1,0);
-    Control(L"STATIC",L"Display",0,38,141,260,24); Control(L"STATIC",L"Scale",0,312,141,130,24); Control(L"STATIC",L"Opacity",0,456,141,130,24);
-    for(int i=0;i<OverlayCount;++i) {
-        Check(Titles[i],OverlayEnableId+i,38,174+i*36,256,app.overlays[i].place.enabled);
-        std::vector<std::wstring> scales,opacity; for(int n=50;n<=150;n+=10) scales.push_back(std::to_wstring(n)+L" %");
-        for(int n=40;n<=100;n+=10) opacity.push_back(std::to_wstring(n)+L" %");
-        Combo(OverlayScaleId+i,312,174+i*36,126,scales,(app.overlays[i].place.scale-50)/10);
-        Combo(OverlayOpacityId+i,456,174+i*36,126,opacity,(app.overlays[i].place.opacity-40)/10);
-        Control(L"BUTTON",L"Settings",OverlaySettingsId+i,610,171+i*36,106,28,WS_TABSTOP);
-    }
-    group=Control(L"BUTTON",L"General",0,20,386,720,170,BS_GROUPBOX|WS_CLIPSIBLINGS);
-    SetWindowSubclass(group,GroupProc,1,0);
-    Control(L"STATIC",L"Refresh rate",0,38,415,116,24);
-    Combo(RefreshRateId,167,415,112,{L"2 Hz",L"5 Hz",L"10 Hz",L"20 Hz"},app.rate==2?0:(app.rate==5?1:(app.rate==20?3:2)));
-    Check(L"Start with Windows",StartWithWindowsId,38,459,300,app.startWithWindows);
-    Check(L"Start Minimized",StartMinimizedId,380,459,330,app.startMinimized);
-    Check(L"Show Title Bar",ShowTitleBarId,38,490,300,app.showTitleBar);
-    const wchar_t* hotkeyLabels[]={L"Move",L"Hide",L"Settings"};
-    for(int i=0;i<HotkeyCount;++i) {
-        const int x=38+i*232;
-        Control(L"STATIC",hotkeyLabels[i],0,x,525,52,24);
-        HWND field=Control(HOTKEY_CLASSW,L"",HotkeyFieldId+i,x+52,522,142,26,WS_BORDER|WS_TABSTOP);
-        // A shortcut always needs Ctrl or Alt so plain typing is never captured.
-        SendMessageW(field,HKM_SETRULES,HKCOMB_NONE|HKCOMB_S,MAKELPARAM(HOTKEYF_CONTROL|HOTKEYF_ALT,0));
-        SendMessageW(field,HKM_SETHOTKEY,app.hotkeys[i],0); SetWindowSubclass(field,HotkeyFieldProc,1,0);
-        Control(L"BUTTON",L"\u00d7",HotkeyClearId+i,x+196,522,28,26,WS_TABSTOP);
-    }
-    Check(L"Preview with sample data",PreviewId,25,573,300,app.preview);
-    Check(L"Move overlays",EditId,380,573,330,app.edit);
-    Control(L"STATIC",L"Shortcuts work in every application. Click a field and press a new combination; \u00d7 turns it off.",0,25,608,705,24);
-    Control(L"STATIC",L"Closing Settings keeps RaceMate running in the tray.",0,25,633,705,24);
-    Control(L"BUTTON",L"Reset positions",ResetId,25,660,194,30,WS_TABSTOP);
-    Control(L"BUTTON",app.hidden?L"Show overlays":L"Hide overlays",HideId,233,660,187,30,WS_TABSTOP);
-    Control(L"BUTTON",L"Race Control",RaceControlId,434,660,134,30,WS_TABSTOP);
-    Control(L"BUTTON",L"Exit",ExitId,582,660,134,30,WS_TABSTOP);
-}
-void ConfigureScroll() {
-    if(!app.main) return;
-    RECT r{}; GetClientRect(app.main,&r);
-    SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE|SIF_POS};
-    info.nMin=0; info.nMax=app.D(MainHeight)-1; info.nPage=r.bottom; info.nPos=app.scroll;
-    SetScrollInfo(app.main,SB_VERT,&info,TRUE);
-}
-void ScrollTo(int position) {
-    RECT client{}; GetClientRect(app.main,&client);
-    position=std::clamp(position,0,std::max(0,app.D(MainHeight)-static_cast<int>(client.bottom)));
-    const int change=app.scroll-position;
-    if(!change) return;
-    app.scroll=position;
-    for(HWND child:app.controls) {
-        RECT r{}; GetWindowRect(child,&r); MapWindowPoints(nullptr,app.main,reinterpret_cast<POINT*>(&r),2);
-        SetWindowPos(child,nullptr,r.left,r.top+change,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
-    }
-    ConfigureScroll(); InvalidateRect(app.main,nullptr,TRUE);
-}
+#include "MainWindow.inc"
+#include "Updates.inc"
+#include "OverlaysPage.inc"
+#include "TablePage.inc"
+#include "ElementsPage.inc"
+#include "RaceControlPage.inc"
+#include "GeneralPage.inc"
 void TrayMenu() {
     HMENU menu=CreatePopupMenu();
     AppendMenuW(menu,MF_STRING,1,L"Settings");
@@ -1082,71 +986,41 @@ LRESULT CALLBACK MainProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     case WM_TIMER: if(wp==2) DestroyWindow(w); else Tick(); return 0;
     case WM_CLOSE:
         if(!app.trayAvailable && !app.diagnostics) { DestroyWindow(w); return 0; }
-        if(app.overlaySettings) SendMessageW(app.overlaySettings,WM_CLOSE,0,0);
         ShowWindow(w,SW_HIDE); return 0;
     case WM_SIZE:
         if(wp==SIZE_MINIMIZED) { if(app.trayAvailable || app.diagnostics) ShowWindow(w,SW_HIDE); }
-        else if(app.main) { ScrollTo(app.scroll); ConfigureScroll(); }
+        else { LayoutMain(); if(wp==SIZE_MAXIMIZED) { RememberWindowPlacement(); Save(); } }
         return 0;
-    case WM_MOUSEWHEEL: ScrollTo(app.scroll-GET_WHEEL_DELTA_WPARAM(wp)*app.D(48)/WHEEL_DELTA); return 0;
-    case WM_VSCROLL: {
-        SCROLLINFO info{sizeof(info),SIF_ALL}; GetScrollInfo(w,SB_VERT,&info);
-        int target=app.scroll;
-        switch(LOWORD(wp)) {
-        case SB_LINEUP: target-=app.D(24); break;
-        case SB_LINEDOWN: target+=app.D(24); break;
-        case SB_PAGEUP: target-=info.nPage; break;
-        case SB_PAGEDOWN: target+=info.nPage; break;
-        case SB_THUMBTRACK: target=info.nTrackPos; break;
-        case SB_TOP: target=0; break;
-        case SB_BOTTOM: target=info.nMax; break;
-        }
-        ScrollTo(target); return 0;
+    case WM_EXITSIZEMOVE: RememberWindowPlacement(); Save(); return 0;
+    case WM_GETMINMAXINFO: {
+        const UINT dpi=GetDpiForWindow(w); RECT minimum{0,0,MulDiv(900,dpi,96),MulDiv(600,dpi,96)};
+        AdjustWindowRectExForDpi(&minimum,WS_OVERLAPPEDWINDOW,FALSE,WS_EX_CONTROLPARENT,dpi);
+        reinterpret_cast<MINMAXINFO*>(lp)->ptMinTrackSize={minimum.right-minimum.left,minimum.bottom-minimum.top}; return 0;
     }
     case TrayMessage: if(lp==WM_LBUTTONDBLCLK || lp==WM_LBUTTONUP) ShowSettings(); else if(lp==WM_RBUTTONUP || lp==WM_CONTEXTMENU) TrayMenu(); return 0;
     case WM_HOTKEY: if(wp==1) ToggleEdit(); if(wp==2) ToggleHidden(); if(wp==3) ShowSettings(); return 0;
-    case WM_COMMAND: {
-        const int id=LOWORD(wp),notification=HIWORD(wp);
-        if(id==PreviewId) TogglePreview(); else if(id==EditId) ToggleEdit(); else if(id==HideId) ToggleHidden();
-        else if(id==RaceControlId) OpenRaceControl();
-        else if(id==ExitId) DestroyWindow(w);
-        else if(id>=OverlaySettingsId && id<OverlaySettingsId+OverlayCount) OpenOverlaySettings(id-OverlaySettingsId);
-        else if((id==StartWithWindowsId || id==StartMinimizedId) && notification==BN_CLICKED) {
-            const bool checked=SendDlgItemMessageW(w,id,BM_GETCHECK,0,0)==BST_CHECKED;
-            if(id==StartWithWindowsId) {
-                if(RegisterStartup(checked)) app.startWithWindows=checked;
-                else { SendDlgItemMessageW(w,id,BM_SETCHECK,app.startWithWindows?BST_CHECKED:BST_UNCHECKED,0); MessageBoxW(w,L"Could not update Windows startup. The previous setting was kept.",L"RaceMate",MB_OK|MB_ICONERROR); }
-            } else app.startMinimized=checked;
-            Save();
+    case RefreshUiMessage: UpdateStatus(); RefreshPage(); return 0;
+    case WM_COMMAND:
+        switch(LOWORD(wp)) {
+        case NavOverlaysId: ShowPage(Page::Overlays); break;
+        case NavSettingsId: ShowPage(Page::Settings); break;
+        case NavRaceControlId: ShowPage(Page::RaceControl); break;
+        case StatusButtonId: StatusButton(); break;
+        case BackId: ShowPage(Page::Overlays); break;
         }
-        else if(id>=HotkeyFieldId && id<HotkeyFieldId+HotkeyCount && notification==EN_CHANGE) {
-            // Modifier-only intermediate states have no key yet; registration follows when the field loses focus.
-            const WORD hotkey=static_cast<WORD>(SendDlgItemMessageW(w,id,HKM_GETHOTKEY,0,0));
-            if(LOBYTE(hotkey)) { app.hotkeys[id-HotkeyFieldId]=hotkey; Save(); }
-        }
-        else if(id>=HotkeyClearId && id<HotkeyClearId+HotkeyCount && notification==BN_CLICKED) {
-            app.hotkeys[id-HotkeyClearId]=0; SendDlgItemMessageW(w,HotkeyFieldId+id-HotkeyClearId,HKM_SETHOTKEY,0,0); RegisterHotkeys(); Save();
-        }
-        else if(id==ShowTitleBarId && notification==BN_CLICKED) { app.showTitleBar=SendDlgItemMessageW(w,id,BM_GETCHECK,0,0)==BST_CHECKED; app.tableHeaders.fill(app.showTitleBar); for(auto& overlay:app.overlays) Fit(overlay); Save(); UpdateOverlays(); }
-        else if(id==ResetId) { for(auto& o:app.overlays) { SetOverlayOrigin(o,DefaultPositions[o.kind].x,DefaultPositions[o.kind].y); Fit(o,true); } Save(); }
-        else if(id>=OverlayEnableId && id<OverlayEnableId+OverlayCount && notification==BN_CLICKED) { app.overlays[id-OverlayEnableId].place.enabled=SendMessageW(GetDlgItem(w,id),BM_GETCHECK,0,0)==BST_CHECKED; Save(); }
-        else if(id>=OverlayScaleId && id<OverlayScaleId+OverlayCount && notification==CBN_SELCHANGE) { auto& o=app.overlays[id-OverlayScaleId]; o.place.scale=50+10*static_cast<int>(SendMessageW(GetDlgItem(w,id),CB_GETCURSEL,0,0)); Fit(o); Save(); }
-        else if(id>=OverlayOpacityId && id<OverlayOpacityId+OverlayCount && notification==CBN_SELCHANGE) { auto& o=app.overlays[id-OverlayOpacityId]; o.place.opacity=40+10*static_cast<int>(SendMessageW(GetDlgItem(w,id),CB_GETCURSEL,0,0)); Fit(o); Save(); }
-        else if(id==RefreshRateId && notification==CBN_SELCHANGE) { const int rates[]={2,5,10,20}; int index=static_cast<int>(SendMessageW(GetDlgItem(w,id),CB_GETCURSEL,0,0)); if(index>=0 && index<4) app.rate=rates[index]; Timer(); Save(); }
-        UpdateOverlays(); return 0;
+        return 0;
+    case WM_CTLCOLORSTATIC: {
+        const HDC dc=reinterpret_cast<HDC>(wp);
+        SetBkColor(dc,Background); SetTextColor(dc,reinterpret_cast<HWND>(lp)==ui.hint?RGB(110,112,118):Text); return reinterpret_cast<LRESULT>(app.brush);
     }
-    case WM_CTLCOLORSTATIC: case WM_CTLCOLORBTN:
-        SetBkColor(reinterpret_cast<HDC>(wp),Background); SetTextColor(reinterpret_cast<HDC>(wp),Text); return reinterpret_cast<LRESULT>(app.brush);
     case WM_ERASEBKGND: { RECT r{}; GetClientRect(w,&r); FillRect(reinterpret_cast<HDC>(wp),&r,app.brush); return 1; }
     case WM_DPICHANGED: {
         const auto* r=reinterpret_cast<RECT*>(lp); SetWindowPos(w,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER|SWP_NOACTIVATE);
-        for(HWND c:app.controls) DestroyWindow(c); app.controls.clear(); DeleteObject(app.font); DeleteObject(app.heading); app.scroll=0; CreateControls(); ConfigureScroll();
-        SendMessageW(GetDlgItem(w,PreviewId),BM_SETCHECK,app.preview?BST_CHECKED:BST_UNCHECKED,0);
-        SendMessageW(GetDlgItem(w,EditId),BM_SETCHECK,app.edit?BST_CHECKED:BST_UNCHECKED,0); Tick(); return 0;
+        ApplyUiDpi(); return 0;
     }
     case WM_DESTROY:
+        if(!app.diagnostics) { RememberWindowPlacement(); Save(); }
         CloseRaceControl();
-        if(app.overlaySettings) SendMessageW(app.overlaySettings,WM_CLOSE,0,0);
         KillTimer(w,1); Shell_NotifyIconW(NIM_DELETE,&app.tray);
         UnregisterHotkeys(); app.hotkeysEnabled=false;
         for(auto& o:app.overlays) if(o.window) DestroyWindow(o.window);
@@ -1199,13 +1073,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
     INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_STANDARD_CLASSES|ICC_LISTVIEW_CLASSES|ICC_HOTKEY_CLASS}; InitCommonControlsEx(&controls);
     app.brush=CreateSolidBrush(Background);
     WNDCLASSEXW cls{sizeof(cls)}; cls.lpfnWndProc=MainProc; cls.hInstance=instance; cls.hCursor=LoadCursorW(nullptr,IDC_ARROW); cls.hIcon=LoadIconW(instance,MAKEINTRESOURCEW(101)); cls.hbrBackground=app.brush; cls.lpszClassName=L"RaceMate.Settings"; RegisterClassExW(&cls);
-    constexpr DWORD style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_CLIPCHILDREN|WS_VSCROLL;
-    const UINT dpi=GetDpiForSystem(); RECT size{0,0,MulDiv(760,dpi,96),MulDiv(MainHeight,dpi,96)}; AdjustWindowRectExForDpi(&size,style,FALSE,0,dpi);
-    MONITORINFO monitor{sizeof(monitor)}; GetMonitorInfoW(MonitorFromPoint({0,0},MONITOR_DEFAULTTOPRIMARY),&monitor);
-    const int windowHeight=std::min(static_cast<int>(size.bottom-size.top),static_cast<int>(monitor.rcWork.bottom-monitor.rcWork.top)-20);
-    app.main=CreateWindowExW(WS_EX_CONTROLPARENT,cls.lpszClassName,L"RaceMate – Settings",style,CW_USEDEFAULT,CW_USEDEFAULT,size.right-size.left,windowHeight,nullptr,nullptr,instance,nullptr);
+    constexpr DWORD style=WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN;
+    const UINT dpi=GetDpiForSystem(); RECT size{0,0,MulDiv(1000,dpi,96),MulDiv(720,dpi,96)}; AdjustWindowRectExForDpi(&size,style,FALSE,WS_EX_CONTROLPARENT,dpi);
+    app.main=CreateWindowExW(WS_EX_CONTROLPARENT,cls.lpszClassName,L"RaceMate",style,CW_USEDEFAULT,CW_USEDEFAULT,size.right-size.left,size.bottom-size.top,nullptr,nullptr,instance,nullptr);
     if(!app.main) { DeleteObject(app.brush); if(mutex) CloseHandle(mutex); return 1; }
-    CreateControls(); ConfigureScroll();
+    CreateMainUi();
     cls.lpfnWndProc=OverlayProc; cls.hbrBackground=nullptr; cls.lpszClassName=L"RaceMate.Overlay"; RegisterClassExW(&cls);
     for(int i=0;i<OverlayCount;++i) {
         auto& o=app.overlays[i]; o.kind=i;
@@ -1219,15 +1091,15 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
         app.hidden=true; Tick(); SetTimer(app.main,2,10000,nullptr);
         MSG message{};
         while(GetMessageW(&message,nullptr,0,0)>0) { TranslateMessage(&message); DispatchMessageW(&message); }
-        DeleteObject(app.font); DeleteObject(app.heading); DeleteObject(app.brush); return 0;
+        DeleteObject(app.brush); return 0;
     }
-    app.tray.cbSize=sizeof(app.tray); app.tray.hWnd=app.main; app.tray.uID=1; app.tray.uFlags=NIF_MESSAGE|NIF_ICON|NIF_TIP; app.tray.uCallbackMessage=TrayMessage; app.tray.hIcon=cls.hIcon; wcscpy_s(app.tray.szTip,L"RaceMate · iRacing Overlays");
+    app.tray.cbSize=sizeof(app.tray); app.tray.hWnd=app.main; app.tray.uID=1; app.tray.uFlags=NIF_MESSAGE|NIF_ICON|NIF_TIP; app.tray.uCallbackMessage=TrayMessage; app.tray.hIcon=cls.hIcon; wcscpy_s(app.tray.szTip,L"RaceMate");
     app.trayAvailable=Shell_NotifyIconW(NIM_ADD,&app.tray)!=FALSE;
-    if(!app.trayAvailable) SetWindowTextW(app.status,L"Tray unavailable; closing Settings will exit RaceMate.");
     if(app.startWithWindows && !RegisterStartup(true)) MessageBoxW(app.main,L"Could not refresh the Windows startup path. Select Start with Windows again to retry.",L"RaceMate",MB_OK|MB_ICONWARNING);
     app.hotkeysEnabled=true; RegisterHotkeys();
-    Tick(); ShowWindow(app.main,StartupShowCommand(app.trayAvailable,show)); UpdateWindow(app.main);
-    if(!app.hotkeyError.empty()) MessageBoxW(app.main,(L"Another application already uses the shortcut for: "+app.hotkeyError+L". Choose a different combination in Settings.").c_str(),L"RaceMate",MB_OK|MB_ICONINFORMATION);
-    MSG message{}; while(GetMessageW(&message,nullptr,0,0)>0) if(!(raceFieldsWindow && IsDialogMessageW(raceFieldsWindow,&message)) && !(footerSettingsWindow && IsDialogMessageW(footerSettingsWindow,&message)) && !(columnOrderWindow && IsDialogMessageW(columnOrderWindow,&message)) && !(app.overlaySettings && IsDialogMessageW(app.overlaySettings,&message)) && !IsDialogMessageW(app.main,&message)) { TranslateMessage(&message); DispatchMessageW(&message); }
-    DeleteObject(app.font); DeleteObject(app.heading); DeleteObject(app.brush); if(mutex) CloseHandle(mutex); return 0;
+    Tick(); RestoreWindowPlacement(StartupShowCommand(app.trayAvailable,show)); UpdateWindow(app.main);
+    if(!app.hotkeyError.empty()) ShowPage(Page::Settings);
+    if(app.checkUpdates) StartUpdateCheck(false);
+    MSG message{}; while(GetMessageW(&message,nullptr,0,0)>0) if(!IsDialogMessageW(app.main,&message)) { TranslateMessage(&message); DispatchMessageW(&message); }
+    DeleteObject(app.brush); if(mutex) CloseHandle(mutex); return 0;
 }

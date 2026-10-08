@@ -1,17 +1,17 @@
-# RaceMate 0.4.37
+# RaceMate 0.1.0
 
 Lightweight native overlays for iRacing on Windows 10/11. C++20, Win32 and GDI: one executable with a statically linked runtime, no browser engine, no network access, read-only access to iRacing's shared memory.
 
 ## Getting started
 
-1. Start `dist/x64/RaceMate-0.4.37.exe`. Run iRacing in borderless windowed mode.
-2. Enable **Preview with sample data** to see every overlay.
-3. Enable **Move overlays** and drag each overlay where you want it.
-4. Disable Move and Preview. RaceMate connects to iRacing on its own.
+1. Start `dist/x64/RaceMate-0.1.0-windows-x64.exe`. Run iRacing in borderless windowed mode.
+2. Click **Preview** in the banner at the top to see every overlay with sample data.
+3. Turn on **Move overlays** (Overlays page) and drag each overlay where you want it, then click **Done**.
+4. Stop the preview. RaceMate connects to iRacing on its own; the banner shows the track and session.
 
-Settings are saved automatically to `%LOCALAPPDATA%\RaceMate\settings.ini`. Closing Settings keeps RaceMate in the tray; **Exit** quits it. Without a tray icon, closing Settings exits.
+The window has three pages in its sidebar: **Overlays** (switch each overlay on or off, its size, opacity and fixed corner, and a page per overlay for what it shows), **Race Control** and **Settings**. Changes are saved immediately to `%LOCALAPPDATA%\RaceMate\settings.ini`; the window remembers its size and position. Closing it keeps RaceMate in the tray; **Quit RaceMate** on the Settings page or **Exit** in the tray menu quits. Without a tray icon, closing the window exits.
 
-**Start with Windows** adds RaceMate to the current user's Run key (no administrator rights needed). **Start Minimized** starts in the tray. Keep the executable in a fixed location when using Start with Windows.
+**Start with Windows** adds RaceMate to the current user's Run key (no administrator rights needed). **Start minimized** starts in the tray. Keep the executable in a fixed location when using Start with Windows.
 
 | Default shortcut | Action |
 | --- | --- |
@@ -19,13 +19,13 @@ Settings are saved automatically to `%LOCALAPPDATA%\RaceMate\settings.ini`. Clos
 | Ctrl + Alt + Shift + H | Hide/show all overlays |
 | Ctrl + Alt + Shift + S | Open Settings |
 
-Shortcuts are global and configurable under **General**: click a field and press a combination with Ctrl or Alt; **×** turns a shortcut off. The status line names shortcuts another application already owns.
+Shortcuts are global and configurable on the **Settings** page: expand a shortcut, click the field and press a combination with Ctrl or Alt; **Turn off** removes it. The banner names shortcuts another program already owns.
 
 Overlays stay visible during spotting, replays and paused playback, and follow the camera car when you are not driving. They hide when iRacing disconnects, unless Preview is on. Outside Move mode they pass mouse clicks through and never take focus.
 
 ## Overlays
 
-Every overlay has its own Settings window with scale, opacity and a **Fixed Corner**. The fixed corner stays in place when the overlay grows or shrinks (more rows, extra columns, header or footer).
+On the Overlays page, each overlay's row expands to its size, opacity and **fixed corner**. The fixed corner stays in place when the overlay grows or shrinks (more rows, extra columns, header or footer). **Settings** in the row opens the overlay's own page.
 
 ### Relative
 
@@ -51,7 +51,7 @@ Both overlays offer the same options, configured separately.
 
 - **STATUS** shows one value, by priority: PIT > TOW > BLACK/DQ > REPAIR > SLOW > OUT. OUT lasts from an observed pit exit to the next line crossing. TOW uses the SDK for your car and is inferred for others from a direct return to the pit stall.
 - Optional: license/safety rating, iRating (both with a short view), tires, last pit lap, pit lane time and **PIT STOP** (estimated stationary time in the stall, marked ≈).
-- **Column Order** moves any column; the order is saved per overlay.
+- Every column is a row on the page: optional columns have a switch, all can move up and down, and the order is saved per overlay.
 - Header and footer each show up to three metrics: track, incidents, temperatures, session clocks, lap and finish forecasts, session type, wetness, wind, class SOF or overlay name. Forecasts are marked `~`, missing data `—`.
 
 ### Fuel Calculator
@@ -74,9 +74,15 @@ Track and air temperature, wind speed with a direction ring relative to your car
 
 ## Race Control
 
-A normal resizable window (main menu or tray) with full standings and an event feed: offtracks, incidents, possible crashes, pit entries and stops, black flags and estimated overtakes. Up to 2,000 events are kept for the current session.
+A normal resizable window (Race Control page or tray menu) with full standings and an event feed: offtracks, incidents, possible crashes, pit entries and stops, black flags and estimated overtakes. Up to 2,000 events are kept for the current session.
 
-Double-click a driver to switch the camera to that car. **-5s** / **-10s** beside an event jump the replay to shortly before it; **Go Live** returns to live. Camera and replay controls work only when you are out of the car. Right-click a table header to choose columns; click a header to sort.
+- The banner at the top shows whether you are watching live or a replay (with the replay clock); **Go live** returns to live.
+- **All / Incidents / Pit / Passes** filters the event feed. **Events of this car** (or **F**) shows only the selected driver's events; the pill next to the filter clears it.
+- **Replay from** under the event feed sets what a double-click (or **Enter**) does: **Live** puts the camera on that car live; **5 s** (default) or **10 s** replays from that long before the event. On a driver in the standings (or **Watch**) it replays the last 5 / 10 s of that car from the moment on screen.
+- **Only this car** above the event feed limits it to the selected event's car. The camera button chooses the camera group used for all of this.
+- The standings show a class stripe, a status pill (Pit, Out, Tow, Repair, Black, DQ, Inactive …) and your incident count.
+- **Keep on top** keeps the window above iRacing while you use the sim. This works only when iRacing runs in borderless windowed mode, not in exclusive fullscreen.
+- Camera and replay controls work only when you are out of the car. Choose the columns on the Race Control page (right-click a table heading gets you there); click a heading to sort.
 
 ## Resource use
 

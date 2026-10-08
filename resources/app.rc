@@ -1,18 +1,20 @@
 #include <windows.h>
 101 ICON "rm64.ico"
 1 RT_MANIFEST "app.manifest"
+// The version comes from project() in CMakeLists.txt.
 1 VERSIONINFO
- FILEVERSION 0,4,37,0
- PRODUCTVERSION 0,4,37,0
+ FILEVERSION RACEMATE_VERSION_MAJOR,RACEMATE_VERSION_MINOR,RACEMATE_VERSION_PATCH,0
+ PRODUCTVERSION RACEMATE_VERSION_MAJOR,RACEMATE_VERSION_MINOR,RACEMATE_VERSION_PATCH,0
  FILETYPE VFT_APP
 BEGIN
  BLOCK "StringFileInfo"
  BEGIN
   BLOCK "040904b0"
   BEGIN
-   VALUE "FileDescription", "RaceMate - native iRacing overlays\0"
+   VALUE "FileDescription", "RaceMate\0"
    VALUE "ProductName", "RaceMate\0"
-   VALUE "FileVersion", "0.4.37\0"
+   VALUE "FileVersion", RACEMATE_VERSION
+   VALUE "ProductVersion", RACEMATE_VERSION
   END
  END
  BLOCK "VarFileInfo"

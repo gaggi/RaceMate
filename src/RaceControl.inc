@@ -1,27 +1,53 @@
-// Native, resizable race control window. Event recording runs independently of visibility.
+// Race Control window: live/replay banner, event feed and full standings. The replay bar
+// sets what a double-click on an event or a driver does: watch live, or replay 5 / 10 s back. Event recording runs independently of the window.
 struct RaceControlWindow {
-    HWND window=nullptr, standings=nullptr, feed=nullptr, status=nullptr, filter=nullptr, camera=nullptr, carFilter=nullptr;
-    HFONT font=nullptr;
+    HWND window=nullptr, standings=nullptr, feed=nullptr, status=nullptr;
+    HFONT font=nullptr, heading=nullptr;
+    StatusPanel banner; SegmentedControl filter, replay;
     std::vector<Row> rows; std::vector<RaceEvent> events;
     std::vector<int> columns, feedColumns;
-    std::array<bool,18> fields{}; std::array<bool,7> eventFields{};
+    std::array<bool,19> fields{}; std::array<bool,7> eventFields{};
     int sortColumn=-1, eventSortColumn=2; bool sortDescending=false, eventSortDescending=true;
-    std::wstring carFilterSignature; std::string carFilterSession;
+    // Event filter: 0 all, 1 incidents (offtracks, incidents, crashes), 2 pit, 3 passes; car -1 for all cars.
+    int category=0, car=-1; uint64_t selectedEvent=0;
+    // What a double-click does: 0 watch live, 1 replay from 5 s before, 2 from 10 s before.
+    int replayMode=1; bool onTop=false;
     std::vector<CameraGroup> cameras; std::wstring cameraName;
     std::wstring signature, message;
     ULONGLONG updated=0;
     std::string pendingNumber; int pendingGroup=1;
 } raceControl;
+enum RaceControlId {
+    RaceStandingsId=810, RaceFeedId=811, RaceMessageId=816, RaceGoLiveId=820, RaceFilterId=821, RaceCarPillId=822, RaceCountId=823,
+    RaceCameraId=824, RaceOnTopId=825, RaceReplayLabelId=829, RaceReplayId=830, RaceOnlyCarId=833, RaceSelectedId=834, RaceWatchId=840, RaceCarEventsId=841
+};
+constexpr int RaceReplayLeads[]={0,5,10};
 const wchar_t* EventName(EventType type) {
     switch(type) {
     case EventType::Offtrack:return L"Offtrack";
     case EventType::Incident:return L"Incident";
-    case EventType::Crash:return L"Possible crash";
+    case EventType::Crash:return L"Crash";
     case EventType::PitEntry:return L"Pit entry";
     case EventType::PitStop:return L"Pit stop";
-    case EventType::Overtake:return L"Overtake (estimated)";
+    case EventType::Overtake:return L"Pass";
     }
     return L"Event";
+}
+int EventCategory(EventType type) {
+    switch(type) {
+    case EventType::Offtrack: case EventType::Incident: case EventType::Crash: return 1;
+    case EventType::PitEntry: case EventType::PitStop: return 2;
+    default: return 3;
+    }
+}
+struct PillColors { COLORREF fill, text; };
+PillColors EventColors(EventType type) {
+    switch(type) {
+    case EventType::Crash: return {RGB(252,235,235),RGB(121,31,31)};
+    case EventType::Offtrack: case EventType::Incident: return {RGB(250,238,218),RGB(133,79,11)};
+    case EventType::Overtake: return {RGB(230,241,251),RGB(12,68,124)};
+    default: return {RGB(241,239,232),RGB(95,94,90)};
+    }
 }
 std::wstring EventClock(double time) {
     const int seconds=static_cast<int>(std::max(0.0,time)); wchar_t value[64];
@@ -31,8 +57,13 @@ bool SendSimMessage(const SimMessage& message) {
     if(app.preview || app.diagnostics) return true;
     return SendIRacingMessage(message);
 }
+// Static texts repaint on every SetWindowText; the window refreshes twice a second.
+void SetRaceText(HWND item,const std::wstring& text) {
+    wchar_t current[256]{}; GetWindowTextW(item,current,static_cast<int>(std::size(current)));
+    if(text!=current) SetWindowTextW(item,text.c_str());
+}
 void RaceControlStatus(const std::wstring& message) {
-    raceControl.message=message; if(raceControl.status) SetWindowTextW(raceControl.status,message.c_str());
+    raceControl.message=message; if(raceControl.status) SetRaceText(raceControl.status,message);
 }
 bool CanControlSim() {
     if(app.preview || app.diagnostics) { RaceControlStatus(L"Preview: camera / replay action simulated."); return true; }
@@ -40,27 +71,52 @@ bool CanControlSim() {
     if(app.frame.onTrack) { RaceControlStatus(L"Leave the car to control the spectator camera or replay."); return false; }
     return true;
 }
+HWND RaceItem(int id) { return GetDlgItem(raceControl.window,id); }
+// iRacing reports a playing replay while you watch live from outside the car too; same test as the event recorder.
+bool ReviewingReplay(const Frame& f) {
+    return f.replay && f.replayTime>=0 && (f.replaySession!=f.session || std::abs(f.time-f.replayTime)>2);
+}
+void UpdateCameraButton() {
+    if(!raceControl.window) return;
+    const std::wstring text=L"Camera: "+(raceControl.cameraName.empty()?std::wstring(L"\u2014"):raceControl.cameraName)+L"  \u25BE";
+    SetWindowTextW(RaceItem(RaceCameraId),text.c_str());
+    EnableWindow(RaceItem(RaceCameraId),!raceControl.cameras.empty());
+}
 void UpdateRaceCameras() {
     std::vector<CameraGroup> groups;
     for(const auto& group:app.session.cameras) if(!group.scenic && !group.name.empty()) groups.push_back(group);
     bool same=groups.size()==raceControl.cameras.size();
     if(same) for(size_t i=0;i<groups.size();++i) if(groups[i].name!=raceControl.cameras[i].name || groups[i].number!=raceControl.cameras[i].number) same=false;
     if(same) return;
-    raceControl.cameras=std::move(groups); SendMessageW(raceControl.camera,CB_RESETCONTENT,0,0);
-    int selected=-1, fallback=-1;
+    raceControl.cameras=std::move(groups);
+    // Keep the remembered camera when the session offers it, else prefer Far Chase.
+    const bool known=std::any_of(raceControl.cameras.begin(),raceControl.cameras.end(),[](const CameraGroup& g){return Wide(g.name)==raceControl.cameraName;});
+    if(!known && !raceControl.cameras.empty()) {
+        const auto chase=std::find_if(raceControl.cameras.begin(),raceControl.cameras.end(),[](const CameraGroup& g){return g.name=="Far Chase";});
+        raceControl.cameraName=Wide((chase!=raceControl.cameras.end()?*chase:raceControl.cameras.front()).name);
+    }
+    UpdateCameraButton();
+}
+// index into the session's non-scenic cameras; remembered by name across sessions.
+void SetRaceCamera(int index) {
+    if(index<0 || index>=static_cast<int>(raceControl.cameras.size())) return;
+    raceControl.cameraName=Wide(raceControl.cameras[index].name);
+    WritePrivateProfileStringW(L"RaceControl",L"Camera",raceControl.cameraName.c_str(),app.config.c_str());
+    UpdateCameraButton();
+}
+void ChooseRaceCamera() {
+    HMENU menu=CreatePopupMenu();
     for(int i=0;i<static_cast<int>(raceControl.cameras.size());++i) {
         const auto name=Wide(raceControl.cameras[i].name);
-        SendMessageW(raceControl.camera,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(name.c_str()));
-        if(name==raceControl.cameraName) selected=i;
-        if(name==L"Far Chase") fallback=i;
+        AppendMenuW(menu,MF_STRING|(name==raceControl.cameraName?MF_CHECKED:0),i+1,name.c_str());
     }
-    if(selected<0) selected=fallback>=0?fallback:(raceControl.cameras.empty()?-1:0);
-    SendMessageW(raceControl.camera,CB_SETCURSEL,selected,0);
-    EnableWindow(raceControl.camera,!raceControl.cameras.empty());
+    RECT button{}; GetWindowRect(RaceItem(RaceCameraId),&button);
+    const int choice=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,button.left,button.bottom,0,raceControl.window,nullptr);
+    DestroyMenu(menu);
+    if(choice>0) SetRaceCamera(choice-1);
 }
 int RaceCameraGroup() {
-    const int index=static_cast<int>(SendMessageW(raceControl.camera,CB_GETCURSEL,0,0));
-    if(index>=0 && index<static_cast<int>(raceControl.cameras.size())) return raceControl.cameras[index].number;
+    for(const auto& group:raceControl.cameras) if(Wide(group.name)==raceControl.cameraName) return group.number;
     RaceControlStatus(L"Waiting for iRacing camera groups. Choose a camera before jumping."); return -1;
 }
 void FocusRaceCar(const std::string& number) {
@@ -70,58 +126,139 @@ void FocusRaceCar(const std::string& number) {
     if(SendSimMessage(CameraMessage(number,group))) RaceControlStatus(app.preview || app.diagnostics?L"Preview: camera action simulated.":L"Camera requested for #"+Wide(number));
     else RaceControlStatus(L"Could not send the camera command to iRacing.");
 }
-void ReplayRaceEvent(int selected,int lead) {
-    if(selected<0 || selected>=static_cast<int>(raceControl.events.size())) { RaceControlStatus(L"Click -5s or -10s beside an event."); return; }
-    if(!CanControlSim()) return;
-    const auto& event=raceControl.events[selected];
-    if(CameraNumber(event.number)<0 || event.session<0) { RaceControlStatus(L"No replay target is available for this event."); return; }
+// Pauses, sends the jump, then switches the camera once iRacing has moved there.
+void SendRaceJump(const std::string& number,const SimMessage& jump,const std::wstring& done) {
+    if(CameraNumber(number)<0) { RaceControlStatus(L"This car has no usable camera number."); return; }
     const int group=RaceCameraGroup(); if(group<0) return;
-    // Keep all 32 timestamp bits: the SDK packs them directly into LPARAM.
-    const bool success=SendSimMessage({3,0,0}) && SendSimMessage(ReplayMessage(event.session,event.time,lead));
-    if(!success) { RaceControlStatus(L"Could not send the replay command to iRacing."); return; }
-    raceControl.pendingNumber=event.number; raceControl.pendingGroup=group;
+    if(!SendSimMessage({3,0,0}) || !SendSimMessage(jump)) { RaceControlStatus(L"Could not send the replay command to iRacing."); return; }
+    raceControl.pendingNumber=number; raceControl.pendingGroup=group;
     SetTimer(raceControl.window,1,250,nullptr);
-    RaceControlStatus(app.preview || app.diagnostics?L"Preview: replay action simulated.":L"Replay requested: #"+Wide(event.number)+L" at "+EventClock(std::max(0.0,event.time-lead))+L". Footage must be in iRacing's replay buffer.");
+    RaceControlStatus(app.preview || app.diagnostics?L"Preview: replay action simulated.":done);
 }
-void RaceControlFont() {
+// Live: camera on the car, leaving the replay first if needed.
+void WatchRaceCarLive(const std::string& number) {
+    if(!CanControlSim()) return;
+    if(!ReviewingReplay(app.frame)) { FocusRaceCar(number); return; }
+    SendRaceJump(number,{5,1,0},L"Live view requested for #"+Wide(number));
+}
+void ReplayRaceEvent(int selected,int lead) {
+    if(selected<0 || selected>=static_cast<int>(raceControl.events.size())) { RaceControlStatus(L"Choose an event to replay."); return; }
+    const auto& event=raceControl.events[selected];
+    if(lead<=0) { WatchRaceCarLive(event.number); return; }
+    if(!CanControlSim()) return;
+    if(event.session<0) { RaceControlStatus(L"No replay target is available for this event."); return; }
+    // Keep all 32 timestamp bits: the SDK packs them directly into LPARAM.
+    SendRaceJump(event.number,ReplayMessage(event.session,event.time,lead),
+        L"Replay requested: #"+Wide(event.number)+L" at "+EventClock(std::max(0.0,event.time-lead))+L". Footage must be in iRacing's replay buffer.");
+}
+// From the moment on screen: the replay position while reviewing, else the live session time.
+void ReplayRaceCar(const std::string& number,int lead) {
+    if(lead<=0) { WatchRaceCarLive(number); return; }
+    if(!CanControlSim()) return;
+    const auto& f=app.frame;
+    const bool review=ReviewingReplay(f); const int session=review?f.replaySession:f.session; const double time=review?f.replayTime:f.time;
+    SendRaceJump(number,ReplayMessage(std::max(0,session),time,lead),L"Replay requested: #"+Wide(number)+L", "+std::to_wstring(lead)+L" s back.");
+}
+int RaceReplayLead() { return RaceReplayLeads[std::clamp(raceControl.replayMode,0,2)]; }
+void SetRaceReplayMode(int mode) {
+    raceControl.replayMode=std::clamp(mode,0,2); raceControl.replay.SetSelected(raceControl.replayMode);
+    WritePrivateProfileStringW(L"RaceControl",L"ReplayFrom",std::to_wstring(raceControl.replayMode).c_str(),app.config.c_str());
+}
+int SelectedEventIndex() {
+    for(int i=0;i<static_cast<int>(raceControl.events.size());++i) if(raceControl.events[i].id==raceControl.selectedEvent) return i;
+    return -1;
+}
+int SelectedRowIndex() { return raceControl.standings?ListView_GetNextItem(raceControl.standings,-1,LVNI_SELECTED):-1; }
+void ActOnSelectedEvent() { ReplayRaceEvent(SelectedEventIndex(),RaceReplayLead()); }
+void ActOnSelectedDriver() { if(const int row=SelectedRowIndex(); row>=0 && row<static_cast<int>(raceControl.rows.size())) ReplayRaceCar(raceControl.rows[row].driver.number,RaceReplayLead()); }
+void ApplyRaceOnTop() {
     if(!raceControl.window) return;
-    const int dpi=GetDpiForWindow(raceControl.window);
-    HFONT font=CreateFontW(-MulDiv(13,dpi,96),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
-    if(!font) return;
-    for(HWND child=GetWindow(raceControl.window,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)) SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);
-    if(raceControl.font) DeleteObject(raceControl.font); raceControl.font=font;
-    const int widths[]={48,48,78,142,42,155,310};
-    if(raceControl.feed) for(int i=0;i<static_cast<int>(raceControl.feedColumns.size());++i) ListView_SetColumnWidth(raceControl.feed,i,MulDiv(widths[raceControl.feedColumns[i]],dpi,96));
+    SetWindowPos(raceControl.window,raceControl.onTop?HWND_TOPMOST:HWND_NOTOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+    SendMessageW(RaceItem(RaceOnTopId),BM_SETCHECK,raceControl.onTop?BST_CHECKED:BST_UNCHECKED,0);
 }
+void SetRaceOnTop(bool on) {
+    raceControl.onTop=on;
+    WritePrivateProfileStringW(L"RaceControl",L"AlwaysOnTop",on?L"1":L"0",app.config.c_str());
+    ApplyRaceOnTop(); RefreshPage();
+}
+void UpdateRaceControl(bool force);
+void SetRaceEventFilter(int category) { raceControl.category=std::clamp(category,0,3); raceControl.filter.SetSelected(raceControl.category); UpdateRaceControl(true); }
+void SetRaceCarFilter(int car) { raceControl.car=car; UpdateRaceControl(true); }
+void RaceControlFonts() {
+    const int dpi=GetDpiForWindow(raceControl.window);
+    if(raceControl.font) DeleteObject(raceControl.font);
+    if(raceControl.heading) DeleteObject(raceControl.heading);
+    raceControl.font=CreateFontW(-MulDiv(9,dpi,72),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
+    raceControl.heading=CreateFontW(-MulDiv(10,dpi,72),0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
+}
+void ApplyRaceControlFonts() {
+    for(HWND child=GetWindow(raceControl.window,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)) SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(raceControl.font),TRUE);
+    raceControl.banner.SetFonts(raceControl.heading,raceControl.font);
+}
+// Sizes in DIPs.
 void LayoutRaceControl() {
     if(!raceControl.window) return;
-    RECT r{}; GetClientRect(raceControl.window,&r); const int dpi=GetDpiForWindow(raceControl.window);
+    RECT client{}; GetClientRect(raceControl.window,&client); const int dpi=GetDpiForWindow(raceControl.window);
     auto d=[&](int n){return MulDiv(n,dpi,96);};
-    const int margin=d(12),left=(r.right-3*margin)/2,right=r.right-left-3*margin;
-    auto place=[&](int id,int x,int y,int w,int h){SetWindowPos(GetDlgItem(raceControl.window,id),nullptr,x,y,std::max(1,w),std::max(1,h),SWP_NOZORDER|SWP_NOACTIVATE);};
-    place(800,margin,d(14),left,d(24)); place(801,2*margin+left,d(14),right,d(24));
-    place(810,margin,d(44),left,r.bottom-d(124)); place(811,2*margin+left,d(84),right,r.bottom-d(164));
-    const int filterWidth=std::max(d(100),(right-d(8))/2);
-    place(812,2*margin+left,d(44),filterWidth,d(240)); place(819,2*margin+left+filterWidth+d(8),d(44),right-filterWidth-d(8),d(320));
-    place(817,margin,r.bottom-d(64),d(60),d(24)); place(818,margin+d(65),r.bottom-d(68),d(260),d(250));
-    place(815,margin+d(335),r.bottom-d(68),d(110),d(28));
-    place(816,margin,r.bottom-d(34),r.right-2*margin,d(24));
+    auto place=[&](HWND window,int x,int y,int w,int h){ if(window) SetWindowPos(window,nullptr,x,y,std::max(1,w),std::max(1,h),SWP_NOZORDER|SWP_NOACTIVATE); };
+    const int margin=d(12), width=client.right, height=client.bottom;
+    place(raceControl.banner.Handle(),margin,margin,width-2*margin,d(56));
+    const int toolbar=d(80);
+    const int segmented=raceControl.filter.IdealWidth();
+    place(raceControl.filter.Handle(),margin,toolbar,segmented,d(30));
+    const int left=(width-3*margin)*56/100, right=width-3*margin-left;
+    int x=margin+segmented+d(10);
+    if(IsWindowVisible(RaceItem(RaceCarPillId))) { place(RaceItem(RaceCarPillId),x,toolbar,d(190),d(30)); x+=d(200); }
+    const int onlyCar=margin+left-d(118);
+    place(RaceItem(RaceCountId),x,toolbar,std::max(d(40),onlyCar-d(8)-x),d(30));
+    place(RaceItem(RaceOnlyCarId),onlyCar,toolbar,d(118),d(30));
+    place(RaceItem(RaceOnTopId),width-margin-d(118),toolbar,d(118),d(30));
+    place(RaceItem(RaceCameraId),width-margin-d(118)-d(8)-d(200),toolbar,d(200),d(30));
+    const int top=d(118), bar=d(32), message=d(22);
+    const int listHeight=height-top-bar-d(8)-message-margin;
+    place(raceControl.feed,margin,top,left,listHeight);
+    place(raceControl.standings,2*margin+left,top,right,listHeight);
+    const int barY=top+listHeight+d(6);
+    int bx=margin;
+    place(RaceItem(RaceReplayLabelId),bx,barY,d(76),d(28)); bx+=d(78);
+    const int replay=raceControl.replay.IdealWidth();
+    place(raceControl.replay.Handle(),bx,barY,replay,d(28)); bx+=replay+d(12);
+    place(RaceItem(RaceSelectedId),bx,barY,margin+left-bx,d(28));
+    place(RaceItem(RaceWatchId),2*margin+left,barY,d(80),d(28));
+    place(RaceItem(RaceCarEventsId),2*margin+left+d(88),barY,d(140),d(28));
+    place(raceControl.status,margin,height-margin-message,width-2*margin,message);
 }
 bool RaceCarInactive(const Row& row) { return row.car.surface<0 && !row.car.pit; }
-std::wstring RaceCarStatus(const Row& row) {
-    if(!app.frame.connected) return L"Unknown";
-    if(row.car.towing) return L"Towing";
-    if(row.car.surface==1) return L"Pit stall";
-    if(row.car.pit) return L"Pit lane";
-    if(row.car.surface==2) return L"Pit approach";
-    if(row.car.surface==0) return L"Off track";
-    if(row.car.outLap) return L"Outlap";
-    if(row.car.surface==3) return L"On track";
-    return L"Inactive";
+// One status per car: flags first, then where the car is. Empty while it simply drives.
+struct RaceStatus { std::wstring text; int tone=0; }; // tone: 1 red, 2 amber, 3 gray
+RaceStatus RaceCarStatus(const Row& row) {
+    if(!app.frame.connected) return {};
+    const unsigned flags=row.car.sessionFlags;
+    if(flags&SessionFlag::Disqualify) return {L"DQ",1};
+    if(flags&SessionFlag::Black) return {L"Black",1};
+    if(flags&SessionFlag::Repair) return {L"Repair",2};
+    if(flags&SessionFlag::Furled) return {L"Slow",2};
+    if(row.car.towing) return {L"Tow",2};
+    if(row.car.surface==1) return {L"Stall",3};
+    if(row.car.pit) return {L"Pit",3};
+    if(row.car.surface==2) return {L"Pit in",3};
+    if(row.car.surface==0) return {L"Off track",2};
+    if(row.car.outLap) return {L"Out",3};
+    if(row.car.surface==3) return {};
+    return {L"Inactive",3};
+}
+// Incident points: always known for your own car, for others only when the server shares them.
+int RaceIncidents(const Row& row) {
+    if(row.driver.index==app.frame.player && app.frame.incidentsKnown) return app.frame.incidents;
+    return row.driver.incidentCount;
+}
+bool RaceIncidentsHigh(int incidents) {
+    const int limit=app.session.incidentLimit;
+    return incidents>=0 && (limit>0?incidents*2>=limit:incidents>=10);
 }
 std::wstring RaceStandingCell(const Row& row,int column) {
     switch(column) {
-    case 0: { const int p=app.standings.separateClasses?row.car.classPosition:row.car.position; return p>0?std::to_wstring(p):L"—"; }
+    case 0: { const int p=app.standings.separateClasses?row.car.classPosition:row.car.position; return p>0?std::to_wstring(p):L"\u2014"; }
     case 1:return Wide(row.driver.number);
     case 2:return Wide(row.driver.name);
     case 3:return Wide(row.driver.className);
@@ -129,18 +266,44 @@ std::wstring RaceStandingCell(const Row& row,int column) {
     case 5:return Interval(row);
     case 6:return Lap(row.car.best);
     case 7:return Lap(row.car.last);
-    case 8:return RaceCarStatus(row);
-    case 15: { const auto flags=Wide(DriverFlags(row.car.sessionFlags)); return flags.empty()?L"—":flags; }
+    case 8:return RaceCarStatus(row).text;
+    case 15: { const auto flags=Wide(DriverFlags(row.car.sessionFlags)); return flags.empty()?L"\u2014":flags; }
     case 16:return CompletedLaps(row);
-    case 17: { const int gained=PositionsGained(app.session,row,app.standings.separateClasses); return gained==-MaxCars?L"—":(gained>0?L"+":L"")+std::to_wstring(gained); }
+    case 17: { const int gained=PositionsGained(app.session,row,app.standings.separateClasses); return gained==-MaxCars?L"\u2014":(gained>0?L"+":L"")+std::to_wstring(gained); }
+    case 18: { const int incidents=RaceIncidents(row); return incidents>=0?std::to_wstring(incidents):L"\u2014"; }
     default:return DriverValue(row,column-9);
     }
 }
 #include "RaceControlFields.inc"
+std::wstring RaceCarName(int car) {
+    for(const auto& d:app.session.drivers) if(d.index==car) return L"#"+Wide(d.number)+L" "+Wide(d.name);
+    for(const auto& e:app.events.Events()) if(e.car==car) return L"#"+Wide(e.number)+L" "+Wide(e.driver);
+    return L"Car";
+}
+void UpdateRaceBanner() {
+    using Tone=StatusPanel::Tone;
+    const auto& f=app.frame;
+    std::wstring detail=Wide(app.session.type);
+    auto add=[&](const std::wstring& part) { if(!part.empty() && part!=L"\u2014") detail+=(detail.empty()?L"":L"  \u00B7  ")+part; };
+    if(app.preview) { raceControl.banner.SetState(Tone::Busy,L"Preview",L"Sample data; camera and replay actions are simulated.",L"Go live",true); return; }
+    if(!f.connected) { raceControl.banner.SetState(Tone::Neutral,L"Waiting for iRacing",L"Recorded events stay available for this session.",L"Go live",false); return; }
+    add(FooterValue(TimeRemainingMetric)); add(FooterValue(CurrentLapMetric));
+    if(ReviewingReplay(f)) raceControl.banner.SetState(Tone::Busy,L"Replay  \u00B7  "+EventClock(f.replayTime),detail,L"Go live",true);
+    else raceControl.banner.SetState(Tone::Active,L"Live",detail,L"Go live",!f.onTrack);
+}
+void UpdateRaceSelection() {
+    const int index=SelectedEventIndex();
+    std::wstring text;
+    if(index>=0) { const auto& e=raceControl.events[index]; text=std::wstring(EventName(e.type))+L"  \u00B7  #"+Wide(e.number)+L" "+Wide(e.driver)+L"  \u00B7  "+EventClock(e.time); }
+    SetRaceText(RaceItem(RaceSelectedId),text);
+    EnableWindow(RaceItem(RaceOnlyCarId),index>=0);
+    const int row=SelectedRowIndex();
+    EnableWindow(RaceItem(RaceWatchId),row>=0); EnableWindow(RaceItem(RaceCarEventsId),row>=0);
+}
 void UpdateRaceControl(bool force) {
     if(!raceControl.window || (!force && (!IsWindowVisible(raceControl.window) || IsIconic(raceControl.window)))) return;
     const auto now=GetTickCount64(); if(!force && now-raceControl.updated<500) return; raceControl.updated=now;
-    UpdateRaceCameras();
+    UpdateRaceCameras(); UpdateRaceBanner();
     auto options=app.standings; options.leaders=MaxCars; options.ahead=options.behind=0;
     std::vector<Row> rows; for(const auto& group:SelectStandings(app.session,app.frame,options)) rows.insert(rows.end(),group.rows.begin(),group.rows.end());
     const int reference=ReferenceCar(app.frame);
@@ -148,39 +311,42 @@ void UpdateRaceControl(bool force) {
     for(const auto& driver:app.session.drivers) {
         if(driver.index<0 || driver.index>=MaxCars || (options.ownClass && (driver.classId!=referenceClass))) continue;
         if(std::none_of(rows.begin(),rows.end(),[&](const auto& row){return row.driver.index==driver.index;})) {
-            Row row{driver,app.frame.cars[driver.index]}; row.player=driver.index==ReferenceCar(app.frame); rows.push_back(row);
+            Row row{driver,app.frame.cars[driver.index]}; row.player=driver.index==reference; rows.push_back(row);
         }
     }
-    UpdateRaceCarFilter();
-    const int carIndex=RaceFilterCar();
     SortRaceRows(rows);
-    std::vector<RaceEvent> events;
-    const int filter=static_cast<int>(SendMessageW(raceControl.filter,CB_GETCURSEL,0,0));
-    const auto& recorded=app.events.Events();
+    std::vector<RaceEvent> all;
     if(app.preview) {
         const EventType types[]={EventType::Offtrack,EventType::Incident,EventType::Crash,EventType::PitEntry,EventType::PitStop,EventType::Overtake};
-        for(int i=5;i>=0;--i) if(filter<=0 || filter==i+1) {
+        for(int i=5;i>=0;--i) {
             const auto& driver=app.session.drivers[i]; RaceEvent e;
             e.id=i+1; e.type=types[i]; e.session=0; e.car=driver.index; e.time=600+i*42; e.number=driver.number; e.driver=driver.name;
-            e.estimated=i==2 || i==5; e.detail=i==2?"New repair flag; possible crash":(i==4?"Pit lane visit: 42 s":(i==5?"Passed #12 Luca Weber":"Observed during this session")); if(carIndex<0 || e.car==carIndex) events.push_back(e);
+            e.estimated=i==2 || i==5; e.detail=i==2?"New repair flag; possible crash":(i==4?"Pit lane visit: 42 s":(i==5?"Passed #12 Luca Weber":"Observed during this session"));
+            all.push_back(e);
         }
-    } else for(auto it=recorded.rbegin();it!=recorded.rend();++it) if((filter<=0 || static_cast<int>(it->type)+1==filter) && (carIndex<0 || it->car==carIndex)) events.push_back(*it);
+    } else { const auto& recorded=app.events.Events(); all.assign(recorded.rbegin(),recorded.rend()); }
+    std::vector<RaceEvent> events;
+    for(const auto& e:all) if((raceControl.category==0 || EventCategory(e.type)==raceControl.category) && (raceControl.car<0 || e.car==raceControl.car)) events.push_back(e);
     SortRaceEvents(events);
-    std::vector<int> columns; for(int id:{0,1,2,8,15,3,4,5,6,7,16,17,9,10,11,12,13,14}) if(raceControl.fields[id]) columns.push_back(id);
-    std::vector<int> feedColumns; for(int id=0;id<7;++id) if(raceControl.eventFields[id]) feedColumns.push_back(id);
-    std::wstring signature=std::to_wstring(carIndex)+L":"+std::to_wstring(raceControl.sortColumn)+std::to_wstring(raceControl.sortDescending)+std::to_wstring(raceControl.eventSortColumn)+std::to_wstring(raceControl.eventSortDescending)+std::to_wstring(filter)+std::to_wstring(app.standings.separateClasses)+std::to_wstring(app.frame.connected)+std::to_wstring(app.frame.onTrack);
+    std::vector<int> columns; for(int id:RaceFieldOrder) if(raceControl.fields[id]) columns.push_back(id);
+    std::vector<int> feedColumns; for(int id=FirstEventField;id<RaceEventFieldCount;++id) if(raceControl.eventFields[id]) feedColumns.push_back(id);
+    const std::wstring count=std::to_wstring(events.size())+L" of "+std::to_wstring(all.size())+L" events";
+    SetRaceText(RaceItem(RaceCountId),count);
+    const bool pill=raceControl.car>=0;
+    if(pill!=(IsWindowVisible(RaceItem(RaceCarPillId))!=FALSE)) { ShowWindow(RaceItem(RaceCarPillId),pill?SW_SHOW:SW_HIDE); LayoutRaceControl(); }
+    if(pill) SetRaceText(RaceItem(RaceCarPillId),RaceCarName(raceControl.car)+L"  \u00D7");
+    std::wstring signature=std::to_wstring(raceControl.car)+L":"+std::to_wstring(raceControl.category)+L":"+std::to_wstring(raceControl.sortColumn)+std::to_wstring(raceControl.sortDescending)+std::to_wstring(raceControl.eventSortColumn)+std::to_wstring(raceControl.eventSortDescending)+std::to_wstring(app.standings.separateClasses)+std::to_wstring(app.frame.connected)+std::to_wstring(app.frame.onTrack);
     for(int col:columns) signature+=L"|"+std::to_wstring(col); for(int col:feedColumns) signature+=L"E"+std::to_wstring(col);
     for(const auto& row:rows) { signature+=std::to_wstring(row.driver.index); for(int col:columns) signature+=L"|"+RaceStandingCell(row,col); }
-    for(const auto& event:events) signature+=L"|"+std::to_wstring(event.id)+Wide(event.driver);
+    for(const auto& event:events) signature+=L"|"+std::to_wstring(event.id);
     if(!force && signature==raceControl.signature) return;
     raceControl.signature=std::move(signature);
-    const int oldRow=ListView_GetNextItem(raceControl.standings,-1,LVNI_SELECTED),oldEvent=ListView_GetNextItem(raceControl.feed,-1,LVNI_SELECTED);
+    const int oldRow=SelectedRowIndex();
     const int selectedCar=oldRow>=0 && oldRow<static_cast<int>(raceControl.rows.size())?raceControl.rows[oldRow].driver.index:-1;
-    const uint64_t selectedEvent=oldEvent>=0 && oldEvent<static_cast<int>(raceControl.events.size())?raceControl.events[oldEvent].id:0;
     SendMessageW(raceControl.standings,WM_SETREDRAW,FALSE,0); SendMessageW(raceControl.feed,WM_SETREDRAW,FALSE,0);
+    const int dpi=GetDpiForWindow(raceControl.window);
     if(columns!=raceControl.columns || force) {
         while(ListView_DeleteColumn(raceControl.standings,0)) {}
-        const int dpi=GetDpiForWindow(raceControl.window);
         for(int i=0;i<static_cast<int>(columns.size());++i) {
             const int c=columns[i]; LVCOLUMNW col{}; col.mask=LVCF_TEXT|LVCF_WIDTH|LVCF_FMT;
             col.pszText=const_cast<wchar_t*>(RaceFieldTitle(c)); col.cx=MulDiv(RaceFieldWidth(c),dpi,96); col.fmt=c==2 || c==3 || c==8 || c==15?LVCFMT_LEFT:LVCFMT_RIGHT;
@@ -190,8 +356,10 @@ void UpdateRaceControl(bool force) {
     }
     if(feedColumns!=raceControl.feedColumns || force) {
         while(ListView_DeleteColumn(raceControl.feed,0)) {}
-        const int dpi=GetDpiForWindow(raceControl.window);
-        for(int i=0;i<static_cast<int>(feedColumns.size());++i) { const int c=feedColumns[i]; LVCOLUMNW col{}; col.mask=LVCF_TEXT|LVCF_WIDTH; col.pszText=const_cast<wchar_t*>(RaceEventTitles[c]); col.cx=MulDiv(RaceEventWidths[c],dpi,96); ListView_InsertColumn(raceControl.feed,i,&col); }
+        for(int i=0;i<static_cast<int>(feedColumns.size());++i) {
+            const int c=feedColumns[i]; LVCOLUMNW col{}; col.mask=LVCF_TEXT|LVCF_WIDTH|LVCF_FMT; col.fmt=c==4?LVCFMT_RIGHT:LVCFMT_LEFT;
+            col.pszText=const_cast<wchar_t*>(RaceEventTitles[c]); col.cx=MulDiv(RaceEventWidths[c],dpi,96); ListView_InsertColumn(raceControl.feed,i,&col);
+        }
         raceControl.feedColumns=feedColumns;
     }
     UpdateRaceSortIndicators();
@@ -200,125 +368,213 @@ void UpdateRaceControl(bool force) {
     ListView_SetItemCountEx(raceControl.feed,static_cast<int>(raceControl.events.size()),LVSICF_NOSCROLL);
     ListView_SetItemState(raceControl.standings,-1,0,LVIS_SELECTED); ListView_SetItemState(raceControl.feed,-1,0,LVIS_SELECTED);
     for(int i=0;i<static_cast<int>(raceControl.rows.size());++i) if(raceControl.rows[i].driver.index==selectedCar) ListView_SetItemState(raceControl.standings,i,LVIS_SELECTED,LVIS_SELECTED);
-    for(int i=0;i<static_cast<int>(raceControl.events.size());++i) if(raceControl.events[i].id==selectedEvent) ListView_SetItemState(raceControl.feed,i,LVIS_SELECTED,LVIS_SELECTED);
+    if(const int index=SelectedEventIndex(); index>=0) ListView_SetItemState(raceControl.feed,index,LVIS_SELECTED,LVIS_SELECTED);
     SendMessageW(raceControl.standings,WM_SETREDRAW,TRUE,0); SendMessageW(raceControl.feed,WM_SETREDRAW,TRUE,0);
     InvalidateRect(raceControl.standings,nullptr,FALSE); InvalidateRect(raceControl.feed,nullptr,FALSE);
-    if(raceControl.message.empty()) RaceControlStatus(app.preview?L"Preview. Double-click a driver; click -5s or -10s beside an event. Actions are simulated.":(app.frame.connected?L"Double-click a driver to switch camera. Click -5s or -10s beside an event. * = estimated event.":L"Waiting for iRacing. Recorded events remain available for this session."));
+    UpdateRaceSelection();
+    if(raceControl.message.empty()) RaceControlStatus(L"Choose Live, 5 s or 10 s, then double-click (or Enter) an event or a driver. F shows one car's events.");
+}
+// Owner-drawn cells: class strip, status and event pills. Everything else uses the list's own text drawing.
+void DrawRacePill(HDC dc,RECT cell,const std::wstring& text,PillColors colors,HFONT font,bool center) {
+    if(text.empty()) return;
+    const auto old=SelectObject(dc,font); SIZE size{}; GetTextExtentPoint32W(dc,text.c_str(),static_cast<int>(text.size()),&size);
+    const int dpi=GetDpiForWindow(raceControl.window), pad=MulDiv(7,dpi,96), height=MulDiv(18,dpi,96);
+    const int width=std::min<int>(size.cx+2*pad,cell.right-cell.left-MulDiv(8,dpi,96));
+    const int left=center?(cell.left+cell.right-width)/2:cell.left+MulDiv(5,dpi,96), top=(cell.top+cell.bottom-height)/2;
+    HBRUSH brush=CreateSolidBrush(colors.fill); HPEN pen=CreatePen(PS_SOLID,1,colors.fill);
+    const auto oldBrush=SelectObject(dc,brush); const auto oldPen=SelectObject(dc,pen);
+    RoundRect(dc,left,top,left+width,top+height,height,height);
+    SelectObject(dc,oldBrush); SelectObject(dc,oldPen); DeleteObject(brush); DeleteObject(pen);
+    RECT label{left+pad,top,left+width-pad,top+height};
+    SetBkMode(dc,TRANSPARENT); SetTextColor(dc,colors.text);
+    DrawTextW(dc,text.c_str(),static_cast<int>(text.size()),&label,DT_SINGLELINE|DT_VCENTER|DT_CENTER|DT_END_ELLIPSIS|DT_NOPREFIX);
+    SelectObject(dc,old);
+}
+COLORREF RaceRowBackground(HWND list,size_t index,const Row* row) {
+    if(ListView_GetItemState(list,static_cast<int>(index),LVIS_SELECTED)) return RGB(230,241,251);
+    if(row && row->player) return RGB(250,244,228);
+    return index%2?Background:RGB(255,255,255);
+}
+LRESULT RaceCustomDraw(NMLVCUSTOMDRAW& draw) {
+    const HWND list=draw.nmcd.hdr.hwndFrom; const bool feed=list==raceControl.feed;
+    if(draw.nmcd.dwDrawStage==CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
+    const size_t index=draw.nmcd.dwItemSpec;
+    if(feed?index>=raceControl.events.size():index>=raceControl.rows.size()) return CDRF_DODEFAULT;
+    const Row* row=feed?nullptr:&raceControl.rows[index];
+    if(draw.nmcd.dwDrawStage==CDDS_ITEMPREPAINT) {
+        // Draw the selection as a light tint instead of the system highlight.
+        draw.nmcd.uItemState&=~(CDIS_SELECTED|CDIS_FOCUS);
+        draw.clrTextBk=RaceRowBackground(list,index,row); draw.clrText=Text;
+        return CDRF_NOTIFYSUBITEMDRAW;
+    }
+    if(draw.nmcd.dwDrawStage!=(CDDS_ITEMPREPAINT|CDDS_SUBITEM)) return CDRF_DODEFAULT;
+    const auto& columns=feed?raceControl.feedColumns:raceControl.columns;
+    if(draw.iSubItem<0 || draw.iSubItem>=static_cast<int>(columns.size())) return CDRF_DODEFAULT;
+    const int column=columns[draw.iSubItem];
+    draw.clrTextBk=RaceRowBackground(list,index,row);
+    RECT cell{}; ListView_GetSubItemRect(list,static_cast<int>(index),draw.iSubItem,LVIR_BOUNDS,&cell);
+    if(draw.iSubItem==0) cell.right=cell.left+ListView_GetColumnWidth(list,0);
+    const HDC dc=draw.nmcd.hdc; const int dpi=GetDpiForWindow(raceControl.window);
+    auto fillCell=[&]{ SetDCBrushColor(dc,draw.clrTextBk); FillRect(dc,&cell,static_cast<HBRUSH>(GetStockObject(DC_BRUSH))); };
+    if(feed) {
+        draw.clrText=Text;
+        if(column!=3) return CDRF_NEWFONT;
+        const auto& e=raceControl.events[index];
+        fillCell(); DrawRacePill(dc,cell,std::wstring(EventName(e.type))+(e.estimated?L"?":L""),EventColors(e.type),raceControl.font,false);
+        return CDRF_SKIPDEFAULT;
+    }
+    const bool inactive=RaceCarInactive(*row) || !app.frame.connected;
+    draw.clrText=inactive?RGB(145,150,157):(row->player?RGB(140,96,0):Text);
+    if(column==9) { const unsigned c=row->driver.licenseColor; draw.clrText=RGB((c>>16)&255,(c>>8)&255,c&255); }
+    if(column==11) draw.clrText=TireTextColor(*row);
+    if(column==15 && row->car.sessionFlags) draw.clrText=(row->car.sessionFlags&(SessionFlag::Black|SessionFlag::Disqualify))?RGB(180,40,35):RGB(155,90,15);
+    if(column==RaceIncidentsField && RaceIncidentsHigh(RaceIncidents(*row))) draw.clrText=RGB(163,45,45);
+    if(GetRValue(draw.clrText)+GetGValue(draw.clrText)+GetBValue(draw.clrText)>500) draw.clrText=RGB(GetRValue(draw.clrText)/2,GetGValue(draw.clrText)/2,GetBValue(draw.clrText)/2);
+    if(draw.iSubItem==0) {
+        // Class color strip on the left edge of each row.
+        fillCell();
+        const unsigned c=row->driver.classColor; RECT strip{cell.left,cell.top+1,cell.left+MulDiv(4,dpi,96),cell.bottom-1};
+        SetDCBrushColor(dc,RGB((c>>16)&255,(c>>8)&255,c&255)); FillRect(dc,&strip,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+        RECT text=cell; text.left=strip.right+MulDiv(4,dpi,96); text.right-=MulDiv(6,dpi,96);
+        const auto value=RaceStandingCell(*row,column);
+        const auto old=SelectObject(dc,raceControl.font); SetBkMode(dc,TRANSPARENT); SetTextColor(dc,draw.clrText);
+        DrawTextW(dc,value.c_str(),static_cast<int>(value.size()),&text,DT_SINGLELINE|DT_VCENTER|DT_NOPREFIX|DT_END_ELLIPSIS|(column==2 || column==3 || column==8 || column==15?DT_LEFT:DT_RIGHT));
+        SelectObject(dc,old); return CDRF_SKIPDEFAULT;
+    }
+    if(column==8) {
+        const auto status=RaceCarStatus(*row);
+        const PillColors colors[]={{0,0},{RGB(252,235,235),RGB(121,31,31)},{RGB(250,238,218),RGB(133,79,11)},{RGB(241,239,232),RGB(95,94,90)}};
+        fillCell(); DrawRacePill(dc,cell,status.text,colors[status.tone],raceControl.font,false);
+        return CDRF_SKIPDEFAULT;
+    }
+    return CDRF_NEWFONT;
 }
 LRESULT CALLBACK RaceControlProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     switch(m) {
-    case WM_SIZE: LayoutRaceControl(); if(wp!=SIZE_MINIMIZED) UpdateRaceControl(true); return 0;
-    case WM_GETMINMAXINFO: { auto* size=reinterpret_cast<MINMAXINFO*>(lp); const int dpi=GetDpiForWindow(w); size->ptMinTrackSize={MulDiv(780,dpi,96),MulDiv(420,dpi,96)}; return 0; }
-    case WM_COMMAND:
-        if(LOWORD(wp)==818 && HIWORD(wp)==CBN_SELCHANGE) {
-            const int index=static_cast<int>(SendMessageW(raceControl.camera,CB_GETCURSEL,0,0));
-            if(index>=0 && index<static_cast<int>(raceControl.cameras.size())) {
-                raceControl.cameraName=Wide(raceControl.cameras[index].name);
-                WritePrivateProfileStringW(L"RaceControl",L"Camera",raceControl.cameraName.c_str(),app.config.c_str());
-            }
-        }
-        else if((LOWORD(wp)==812 || LOWORD(wp)==819) && HIWORD(wp)==CBN_SELCHANGE) UpdateRaceControl(true);
-        else if(LOWORD(wp)==815 && CanControlSim()) {
+    case WM_SIZE:
+        LayoutRaceControl(); if(wp!=SIZE_MINIMIZED) UpdateRaceControl(true);
+        // Moved controls leave their old pixels behind otherwise.
+        RedrawWindow(w,nullptr,nullptr,RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN);
+        return 0;
+    case WM_GETMINMAXINFO: { auto* size=reinterpret_cast<MINMAXINFO*>(lp); const int dpi=GetDpiForWindow(w); size->ptMinTrackSize={MulDiv(900,dpi,96),MulDiv(520,dpi,96)}; return 0; }
+    case WM_COMMAND: {
+        const int id=LOWORD(wp),code=HIWORD(wp);
+        if(id==RaceFilterId && code==SegmentedControl::kChanged) SetRaceEventFilter(raceControl.filter.Selected());
+        else if(id==RaceCarPillId) SetRaceCarFilter(-1);
+        else if(id==RaceCameraId) ChooseRaceCamera();
+        else if(id==RaceOnTopId) SetRaceOnTop(SendMessageW(RaceItem(RaceOnTopId),BM_GETCHECK,0,0)==BST_CHECKED);
+        else if(id==RaceReplayId && code==SegmentedControl::kChanged) SetRaceReplayMode(raceControl.replay.Selected());
+        else if(id==RaceOnlyCarId) { if(const int index=SelectedEventIndex(); index>=0) SetRaceCarFilter(raceControl.events[index].car); }
+        else if(id==RaceWatchId) ActOnSelectedDriver();
+        else if(id==RaceCarEventsId) { if(const int row=SelectedRowIndex(); row>=0 && row<static_cast<int>(raceControl.rows.size())) SetRaceCarFilter(raceControl.rows[row].driver.index); }
+        else if(id==RaceGoLiveId && CanControlSim()) {
             KillTimer(w,1); raceControl.pendingNumber.clear(); SendSimMessage({5,1,0}); SendSimMessage({3,1,0}); RaceControlStatus(app.preview?L"Preview: live action simulated.":L"Live replay view requested.");
         }
         return 0;
+    }
     case WM_TIMER:
         if(wp==1) { KillTimer(w,1); if(CanControlSim() && !raceControl.pendingNumber.empty()) { SendSimMessage(CameraMessage(raceControl.pendingNumber,raceControl.pendingGroup)); SendSimMessage({3,1,0}); } raceControl.pendingNumber.clear(); }
         return 0;
     case WM_NOTIFY: {
         const auto* header=reinterpret_cast<NMHDR*>(lp);
-        if(header->code==LVN_COLUMNCLICK) {
-            const auto* click=reinterpret_cast<NMLISTVIEW*>(lp); const bool feed=header->hwndFrom==raceControl.feed;
+        const bool feed=header->hwndFrom==raceControl.feed, standings=header->hwndFrom==raceControl.standings;
+        if(!feed && !standings) return 0;
+        switch(header->code) {
+        case LVN_COLUMNCLICK: {
+            const auto* click=reinterpret_cast<NMLISTVIEW*>(lp);
             const auto& columns=feed?raceControl.feedColumns:raceControl.columns;
-            if(click->iSubItem>=0 && click->iSubItem<static_cast<int>(columns.size())) {
-                const int col=columns[click->iSubItem]; if(!feed || col>=2) SetRaceSort(feed,col);
-            }
+            if(click->iSubItem>=0 && click->iSubItem<static_cast<int>(columns.size())) SetRaceSort(feed,columns[click->iSubItem]);
             return 0;
         }
-        if(header->code==LVN_GETDISPINFOW) {
+        case LVN_GETDISPINFOW: {
             auto* info=reinterpret_cast<NMLVDISPINFOW*>(lp); std::wstring text;
             const int index=info->item.iItem; int column=info->item.iSubItem;
-            if(header->hwndFrom==raceControl.standings && index>=0 && index<static_cast<int>(raceControl.rows.size()) && column<static_cast<int>(raceControl.columns.size())) text=RaceStandingCell(raceControl.rows[index],raceControl.columns[column]);
-            if(header->hwndFrom==raceControl.feed && index>=0 && index<static_cast<int>(raceControl.events.size())) {
-                column=column>=0 && column<static_cast<int>(raceControl.feedColumns.size())?raceControl.feedColumns[column]:-1;
+            if(standings && index>=0 && index<static_cast<int>(raceControl.rows.size()) && column<static_cast<int>(raceControl.columns.size())) text=RaceStandingCell(raceControl.rows[index],raceControl.columns[column]);
+            if(feed && index>=0 && index<static_cast<int>(raceControl.events.size()) && column<static_cast<int>(raceControl.feedColumns.size())) {
                 const auto& e=raceControl.events[index];
-                if(column==0) text=L"-5s"; if(column==1) text=L"-10s"; if(column==2) text=EventClock(e.time); if(column==3) text=std::wstring(EventName(e.type))+(e.estimated?L" *":L""); if(column==4) text=Wide(e.number); if(column==5) text=Wide(e.driver); if(column==6) text=Wide(e.detail);
+                switch(raceControl.feedColumns[column]) {
+                case 2: text=EventClock(e.time); break;
+                case 3: text=std::wstring(EventName(e.type))+(e.estimated?L"?":L""); break;
+                case 4: text=Wide(e.number); break;
+                case 5: text=Wide(e.driver); break;
+                case 6: text=Wide(e.detail); break;
+                }
             }
-            if(info->item.mask&LVIF_TEXT) lstrcpynW(info->item.pszText,text.c_str(),info->item.cchTextMax); return 0;
-        }
-        if(header->code==NM_DBLCLK && header->hwndFrom==raceControl.standings) {
-            const auto* click=reinterpret_cast<NMITEMACTIVATE*>(lp);
-            if(click->iItem>=0 && click->iItem<static_cast<int>(raceControl.rows.size())) FocusRaceCar(raceControl.rows[click->iItem].driver.number);
+            if(info->item.mask&LVIF_TEXT) lstrcpynW(info->item.pszText,text.c_str(),info->item.cchTextMax);
             return 0;
         }
-        if(header->code==NM_CLICK && header->hwndFrom==raceControl.feed) {
-            const auto* click=reinterpret_cast<NMITEMACTIVATE*>(lp);
-            const int col=click->iSubItem>=0 && click->iSubItem<static_cast<int>(raceControl.feedColumns.size())?raceControl.feedColumns[click->iSubItem]:-1;
-            if(col==0 || col==1) ReplayRaceEvent(click->iItem,col==0?5:10);
+        case LVN_ITEMCHANGED: {
+            const auto* change=reinterpret_cast<NMLISTVIEW*>(lp);
+            if(feed && (change->uNewState&LVIS_SELECTED) && change->iItem>=0 && change->iItem<static_cast<int>(raceControl.events.size())) raceControl.selectedEvent=raceControl.events[change->iItem].id;
+            UpdateRaceSelection(); return 0;
+        }
+        case NM_DBLCLK: case NM_RETURN: {
+            if(feed) ActOnSelectedEvent(); else ActOnSelectedDriver();
             return 0;
         }
-        if(header->code==NM_CUSTOMDRAW) {
-            auto* draw=reinterpret_cast<NMLVCUSTOMDRAW*>(lp);
-            if(draw->nmcd.dwDrawStage==CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
-            if(draw->nmcd.dwDrawStage==CDDS_ITEMPREPAINT) {
-                draw->clrText=Text; draw->clrTextBk=draw->nmcd.dwItemSpec%2?Background:RGB(255,255,255);
-                return CDRF_NOTIFYSUBITEMDRAW;
-            }
-            if(draw->nmcd.dwDrawStage==(CDDS_ITEMPREPAINT|CDDS_SUBITEM) && header->hwndFrom==raceControl.feed && draw->iSubItem>=0 && draw->iSubItem<static_cast<int>(raceControl.feedColumns.size()) && raceControl.feedColumns[draw->iSubItem]<2) {
-                RECT rect{}; ListView_GetSubItemRect(raceControl.feed,static_cast<int>(draw->nmcd.dwItemSpec),draw->iSubItem,LVIR_BOUNDS,&rect);
-                if(draw->iSubItem==0) rect.right=rect.left+ListView_GetColumnWidth(raceControl.feed,0);
-                InflateRect(&rect,-2,-1); DrawFrameControl(draw->nmcd.hdc,&rect,DFC_BUTTON,DFCS_BUTTONPUSH);
-                SetBkMode(draw->nmcd.hdc,TRANSPARENT); SetTextColor(draw->nmcd.hdc,Text);
-                DrawTextW(draw->nmcd.hdc,raceControl.feedColumns[draw->iSubItem]==0?L"-5s":L"-10s",-1,&rect,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-                return CDRF_SKIPDEFAULT;
-            }
-            if(draw->nmcd.dwDrawStage==(CDDS_ITEMPREPAINT|CDDS_SUBITEM) && header->hwndFrom==raceControl.standings && draw->nmcd.dwItemSpec<raceControl.rows.size() && draw->iSubItem>=0 && draw->iSubItem<static_cast<int>(raceControl.columns.size())) {
-                const auto& row=raceControl.rows[draw->nmcd.dwItemSpec]; const int c=raceControl.columns[draw->iSubItem];
-                draw->clrText=row.player?RGB(140,96,0):Text;
-                if(c==1 || c==3) { const unsigned color=row.driver.classColor; draw->clrText=RGB((color>>16)&255,(color>>8)&255,color&255); }
-                if(c==9) { const unsigned color=row.driver.licenseColor; draw->clrText=RGB((color>>16)&255,(color>>8)&255,color&255); }
-                if(c==11) draw->clrText=TireTextColor(row);
-                if(c==15 && row.car.sessionFlags) draw->clrText=(row.car.sessionFlags&(SessionFlag::Black|SessionFlag::Disqualify))?RGB(180,40,35):RGB(155,90,15);
-                if(GetRValue(draw->clrText)+GetGValue(draw->clrText)+GetBValue(draw->clrText)>500) draw->clrText=RGB(GetRValue(draw->clrText)/2,GetGValue(draw->clrText)/2,GetBValue(draw->clrText)/2);
-                if(RaceCarInactive(row) || !app.frame.connected) draw->clrText=RGB(145,150,157);
-                return CDRF_NEWFONT;
-            }
-            return CDRF_DODEFAULT;
+        case LVN_KEYDOWN: {
+            const WORD key=reinterpret_cast<NMLVKEYDOWN*>(lp)->wVKey;
+            if(key==VK_ESCAPE) SetRaceCarFilter(-1);
+            else if(key=='F' && standings) { if(const int row=SelectedRowIndex(); row>=0 && row<static_cast<int>(raceControl.rows.size())) SetRaceCarFilter(raceControl.rows[row].driver.index); }
+            else if(key=='F' && feed) { if(const int index=SelectedEventIndex(); index>=0) SetRaceCarFilter(raceControl.events[index].car); }
+            return 0;
+        }
+        case NM_CUSTOMDRAW: return RaceCustomDraw(*reinterpret_cast<NMLVCUSTOMDRAW*>(lp));
         }
         return 0;
     }
-    case WM_CLOSE: ShowWindow(w,SW_HIDE); return 0;
-    case WM_DPICHANGED: { RaceControlFont(); const auto* rect=reinterpret_cast<RECT*>(lp); SetWindowPos(w,nullptr,rect->left,rect->top,rect->right-rect->left,rect->bottom-rect->top,SWP_NOZORDER); LayoutRaceControl(); UpdateRaceControl(true); return 0; }
-    case WM_CTLCOLORSTATIC: SetBkColor(reinterpret_cast<HDC>(wp),Background); SetTextColor(reinterpret_cast<HDC>(wp),Text); return reinterpret_cast<LRESULT>(app.brush);
-    case WM_DESTROY: if(raceFieldsWindow) DestroyWindow(raceFieldsWindow); KillTimer(w,1); if(raceControl.font) DeleteObject(raceControl.font); raceControl={}; return 0;
+    case WM_CLOSE: ShowWindow(w,SW_HIDE); RefreshPage(); return 0; // Updates the page's Open pill.
+    case WM_DPICHANGED: {
+        RaceControlFonts(); ApplyRaceControlFonts();
+        const auto* rect=reinterpret_cast<RECT*>(lp); SetWindowPos(w,nullptr,rect->left,rect->top,rect->right-rect->left,rect->bottom-rect->top,SWP_NOZORDER);
+        LayoutRaceControl(); UpdateRaceControl(true); return 0;
+    }
+    case WM_CTLCOLORSTATIC: SetBkColor(reinterpret_cast<HDC>(wp),Background); SetTextColor(reinterpret_cast<HDC>(wp),reinterpret_cast<HWND>(lp)==raceControl.status?RGB(110,112,118):Text); return reinterpret_cast<LRESULT>(app.brush);
+    case WM_DESTROY:
+        KillTimer(w,1); if(raceControl.font) DeleteObject(raceControl.font); if(raceControl.heading) DeleteObject(raceControl.heading);
+        // The controls own windows; reset the plain data and leave the control objects to their windows.
+        raceControl.window=raceControl.standings=raceControl.feed=raceControl.status=nullptr; raceControl.font=raceControl.heading=nullptr;
+        raceControl.rows.clear(); raceControl.events.clear(); raceControl.columns.clear(); raceControl.feedColumns.clear(); raceControl.cameras.clear();
+        raceControl.signature.clear(); raceControl.message.clear(); raceControl.pendingNumber.clear(); raceControl.car=-1; raceControl.selectedEvent=0;
+        return 0;
     }
     return DefWindowProcW(w,m,wp,lp);
 }
 void OpenRaceControl() {
-    if(raceControl.window) { ShowWindow(raceControl.window,SW_RESTORE); UpdateRaceControl(true); SetForegroundWindow(raceControl.window); return; }
-    WNDCLASSEXW cls{sizeof(cls)}; cls.lpfnWndProc=RaceControlProc; cls.hInstance=app.instance; cls.hCursor=LoadCursorW(nullptr,IDC_ARROW); cls.hbrBackground=app.brush;
+    if(raceControl.window) { ShowWindow(raceControl.window,SW_RESTORE); UpdateRaceControl(true); SetForegroundWindow(raceControl.window); RefreshPage(); return; }
+    WNDCLASSEXW cls{sizeof(cls)}; cls.lpfnWndProc=RaceControlProc; cls.hInstance=app.instance; cls.hCursor=LoadCursorW(nullptr,IDC_ARROW); cls.hbrBackground=app.brush; cls.style=CS_HREDRAW|CS_VREDRAW;
     cls.hIcon=LoadIconW(app.instance,MAKEINTRESOURCEW(101)); cls.lpszClassName=L"RaceMate.RaceControl"; RegisterClassExW(&cls);
     const int dpi=GetDpiForWindow(app.main); auto d=[&](int n){return MulDiv(n,dpi,96);};
-    raceControl.window=CreateWindowExW(0,cls.lpszClassName,L"RaceMate - Race Control",WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,d(1240),d(650),nullptr,nullptr,app.instance,nullptr);
+    raceControl.window=CreateWindowExW(WS_EX_CONTROLPARENT,cls.lpszClassName,L"RaceMate - Race Control",WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,d(1240),d(680),nullptr,nullptr,app.instance,nullptr);
     if(!raceControl.window) return;
-    raceControl.font=CreateFontW(-d(13),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
+    RaceControlFonts();
     auto create=[&](const wchar_t* type,const wchar_t* title,int id,DWORD style) {
         HWND child=CreateWindowExW(0,type,title,WS_CHILD|WS_VISIBLE|style,0,0,0,0,raceControl.window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),app.instance,nullptr);
         SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(raceControl.font),TRUE); return child;
     };
-    create(L"STATIC",L"Standings - double-click a driver to follow",800,0); create(L"STATIC",L"Events - click -5s or -10s to replay",801,0);
-    raceControl.standings=create(WC_LISTVIEWW,L"",810,LVS_REPORT|LVS_OWNERDATA|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_TABSTOP|WS_BORDER);
-    raceControl.feed=create(WC_LISTVIEWW,L"",811,LVS_REPORT|LVS_OWNERDATA|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_TABSTOP|WS_BORDER);
+    raceControl.banner.Create(app.instance,raceControl.window,RaceGoLiveId,raceControl.heading,raceControl.font);
+    raceControl.filter.Create(app.instance,raceControl.window,RaceFilterId,raceControl.font,{L"All",L"Incidents",L"Pit",L"Passes"});
+    raceControl.filter.SetSelected(raceControl.category);
+    create(L"BUTTON",L"",RaceCarPillId,WS_TABSTOP); ShowWindow(RaceItem(RaceCarPillId),SW_HIDE);
+    create(L"STATIC",L"",RaceCountId,SS_CENTERIMAGE);
+    create(L"BUTTON",L"Camera",RaceCameraId,WS_TABSTOP);
+    create(L"BUTTON",L"Keep on top",RaceOnTopId,WS_TABSTOP|BS_AUTOCHECKBOX|BS_PUSHLIKE);
+    raceControl.feed=create(WC_LISTVIEWW,L"",RaceFeedId,LVS_REPORT|LVS_OWNERDATA|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_TABSTOP|WS_BORDER);
+    raceControl.standings=create(WC_LISTVIEWW,L"",RaceStandingsId,LVS_REPORT|LVS_OWNERDATA|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_TABSTOP|WS_BORDER);
     for(HWND list:{raceControl.standings,raceControl.feed}) { ListView_SetExtendedListViewStyle(list,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER); ListView_SetBkColor(list,RGB(255,255,255)); ListView_SetTextBkColor(list,RGB(255,255,255)); ListView_SetTextColor(list,Text); }
-    LoadRaceFields();
+    create(L"STATIC",L"Replay from",RaceReplayLabelId,SS_CENTERIMAGE);
+    raceControl.replay.Create(app.instance,raceControl.window,RaceReplayId,raceControl.font,{L"Live",L"5 s",L"10 s"});
+    create(L"BUTTON",L"Only this car",RaceOnlyCarId,WS_TABSTOP);
+    create(L"STATIC",L"",RaceSelectedId,SS_CENTERIMAGE|SS_ENDELLIPSIS);
+    create(L"BUTTON",L"Watch",RaceWatchId,WS_TABSTOP);
+    create(L"BUTTON",L"Events of this car",RaceCarEventsId,WS_TABSTOP);
+    raceControl.status=create(L"STATIC",L"",RaceMessageId,SS_CENTERIMAGE|SS_ENDELLIPSIS);
+    LoadRaceFields(); raceControl.replay.SetSelected(raceControl.replayMode);
     for(HWND list:{raceControl.standings,raceControl.feed}) SetWindowSubclass(ListView_GetHeader(list),RaceHeaderProc,1,reinterpret_cast<DWORD_PTR>(list));
-    raceControl.filter=create(L"COMBOBOX",L"",812,CBS_DROPDOWNLIST|WS_TABSTOP|WS_VSCROLL);
-    for(const auto* item:{L"All events",L"Offtracks",L"Incidents",L"Possible crashes",L"Pit entries",L"Pit stops",L"Overtakes"}) SendMessageW(raceControl.filter,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(item));
-    SendMessageW(raceControl.filter,CB_SETCURSEL,0,0);
-    raceControl.carFilter=create(L"COMBOBOX",L"",819,CBS_DROPDOWNLIST|WS_TABSTOP|WS_VSCROLL);
-    create(L"STATIC",L"Camera",817,0); raceControl.camera=create(L"COMBOBOX",L"",818,CBS_DROPDOWNLIST|WS_TABSTOP|WS_VSCROLL);
-    wchar_t cameraName[256]{}; GetPrivateProfileStringW(L"RaceControl",L"Camera",L"Far Chase",cameraName,256,app.config.c_str()); raceControl.cameraName=cameraName; create(L"BUTTON",L"Go Live",815,WS_TABSTOP); raceControl.status=create(L"STATIC",L"",816,0);
-    LayoutRaceControl(); UpdateRaceControl(true); ShowWindow(raceControl.window,app.diagnostics?SW_SHOWNOACTIVATE:SW_SHOWNORMAL);
+    wchar_t cameraName[256]{}; GetPrivateProfileStringW(L"RaceControl",L"Camera",L"Far Chase",cameraName,256,app.config.c_str()); raceControl.cameraName=cameraName;
+    UiTheme::Apply(raceControl.window);
+    UpdateCameraButton(); ApplyRaceOnTop();
+    LayoutRaceControl(); UpdateRaceControl(true); ShowWindow(raceControl.window,app.diagnostics?SW_SHOWNOACTIVATE:SW_SHOWNORMAL); RefreshPage();
     if(!app.diagnostics) SetForegroundWindow(raceControl.window);
 }
-void CloseRaceControl() { if(raceControl.window) DestroyWindow(raceControl.window); }
+void CloseRaceControl() { if(raceControl.window) DestroyWindow(raceControl.window); RefreshPage(); }
