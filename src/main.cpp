@@ -964,7 +964,7 @@ LRESULT CALLBACK HotkeyFieldProc(HWND w,UINT m,WPARAM wp,LPARAM lp,UINT_PTR id,D
 #include "GeneralPage.inc"
 void TrayMenu() {
     HMENU menu=CreatePopupMenu();
-    AppendMenuW(menu,MF_STRING,1,L"Settings");
+    AppendMenuW(menu,MF_STRING,1,L"Open"); SetMenuDefaultItem(menu,1,FALSE); // Bold, like TPMate.
     AppendMenuW(menu,MF_STRING|(app.edit?MF_CHECKED:0),2,L"Move overlays");
     AppendMenuW(menu,MF_STRING,3,app.hidden?L"Show overlays":L"Hide overlays");
     AppendMenuW(menu,MF_STRING|(app.preview?MF_CHECKED:0),4,L"Preview");
