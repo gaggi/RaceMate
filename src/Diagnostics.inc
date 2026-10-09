@@ -34,6 +34,13 @@ int RunDiagnostics() {
     MONITORINFO monitor{sizeof(monitor)};
     GetMonitorInfoW(MonitorFromPoint({0,0},MONITOR_DEFAULTTOPRIMARY),&monitor);
     std::ofstream report("build/qa/controls.txt");
+    // The page as built at startup, before anything refreshes it: one row per overlay, each with its own title.
+    bool startupOk=false;
+    if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) {
+        std::vector<std::wstring> titles; for(const auto& row:reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA))->Rows()) if(!row.header) titles.push_back(row.title);
+        startupOk=titles.size()>=OverlayCount; for(int kind=0;kind<OverlayCount && startupOk;++kind) startupOk=titles[kind]==Titles[kind];
+    }
+    report<<"Overlays page at startup lists every overlay by its own name: "<<(startupOk?"PASS":"FAIL")<<"\n";
     app.preview=true; app.edit=false; PreviewData(0); UpdateStatus(); RefreshPage();
     SetWindowPos(app.main,nullptr,-30000,-30000,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
     ShowWindow(app.main,SW_SHOWNOACTIVATE); UpdateWindow(app.main);
@@ -636,7 +643,7 @@ int RunDiagnostics() {
     SendMessageW(app.main,WM_CLOSE,0,0);
     trayFallbackOk=!IsWindow(app.main) && trayFallbackOk;
     report<<"Missing tray icon keeps minimize accessible and closes the app on exit: "<<(trayFallbackOk?"PASS":"FAIL")<<"\n";
-    ok=trayFallbackOk && listOk && updateOk && ok;
+    ok=trayFallbackOk && listOk && updateOk && startupOk && ok;
     if(IsWindow(app.main)) DestroyWindow(app.main);
     DeleteObject(app.brush); return ok?0:2;
 }

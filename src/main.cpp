@@ -1077,10 +1077,12 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
     const UINT dpi=GetDpiForSystem(); RECT size{0,0,MulDiv(1000,dpi,96),MulDiv(720,dpi,96)}; AdjustWindowRectExForDpi(&size,style,FALSE,WS_EX_CONTROLPARENT,dpi);
     app.main=CreateWindowExW(WS_EX_CONTROLPARENT,cls.lpszClassName,L"RaceMate",style,CW_USEDEFAULT,CW_USEDEFAULT,size.right-size.left,size.bottom-size.top,nullptr,nullptr,instance,nullptr);
     if(!app.main) { DeleteObject(app.brush); if(mutex) CloseHandle(mutex); return 1; }
+    // The Overlays page reads each overlay's kind as soon as CreateMainUi builds it.
+    for(int i=0;i<OverlayCount;++i) app.overlays[i].kind=i;
     CreateMainUi();
     cls.lpfnWndProc=OverlayProc; cls.hbrBackground=nullptr; cls.lpszClassName=L"RaceMate.Overlay"; RegisterClassExW(&cls);
     for(int i=0;i<OverlayCount;++i) {
-        auto& o=app.overlays[i]; o.kind=i;
+        auto& o=app.overlays[i];
         CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_LAYERED|WS_EX_TRANSPARENT,cls.lpszClassName,Titles[i],WS_POPUP,o.place.x,o.place.y,365,200,nullptr,nullptr,instance,&o); Fit(o,true);
     }
 #ifdef RACEMATE_DIAGNOSTICS
