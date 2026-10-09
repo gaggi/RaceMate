@@ -1,9 +1,9 @@
-// Settings page: startup, how overlays update, keyboard shortcuts, updates and quitting.
+// Settings page: startup, how overlays update, keyboard shortcuts and updates.
 class GeneralPage : public PageWindow {
 public:
     GeneralPage() : PageWindow(ui.heading,ui.text) {}
 private:
-    enum class Key { None, StartWithWindows, StartMinimized, RefreshRate, TitleBar, Hotkey, CheckUpdates, Version, Quit };
+    enum class Key { None, StartWithWindows, StartMinimized, RefreshRate, TitleBar, Hotkey, CheckUpdates, Version };
     static constexpr int ListId=100, HotkeyId=200, HotkeyOffId=201;
     static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E';
     static constexpr int Rates[]={2,5,10,20};
@@ -41,9 +41,6 @@ private:
         header(L"Updates");
         toggle(Key::CheckUpdates,L"Check for updates on startup",L"Shows a newer release here and in the sidebar; never opens a window.",app.checkUpdates);
         push(UpdateVersionRow(),Key::Version);
-        header(L"RaceMate");
-        RowList::Row quit; quit.title=L"Quit RaceMate"; quit.detail=L"Closing this window keeps RaceMate running in the tray."; quit.button=L"Quit";
-        push(std::move(quit),Key::Quit);
         list_.SetRows(std::move(rows));
     }
     int ExpandedRow() const {
@@ -103,7 +100,6 @@ private:
             if(code==RowList::kIconButton) UpdateChecker::OpenReleasePage(updates.release.releasePageUrl);
             else if(code==RowList::kButton) UpdateVersionButton();
             break;
-        case Key::Quit: if(pressed) DestroyWindow(app.main); break;
         default: break;
         }
         return true;

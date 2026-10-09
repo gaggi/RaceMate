@@ -9,7 +9,7 @@ Lightweight native overlays for iRacing on Windows 10/11. C++20, Win32 and GDI: 
 3. Turn on **Move overlays** (Overlays page) and drag each overlay where you want it, then click **Done**.
 4. Stop the preview. RaceMate connects to iRacing on its own; the banner shows the track and session.
 
-The window has three pages in its sidebar: **Overlays** (switch each overlay on or off, its size, opacity and fixed corner, and a page per overlay for what it shows), **Race Control** and **Settings**. Changes are saved immediately to `%LOCALAPPDATA%\RaceMate\settings.ini`; the window remembers its size and position. Closing it keeps RaceMate in the tray; **Quit RaceMate** on the Settings page or **Exit** in the tray menu quits. Without a tray icon, closing the window exits.
+The window has three pages in its sidebar: **Overlays** (switch each overlay on or off, its size, opacity and fixed corner, and a page per overlay for what it shows), **Race Control** and **Settings**. Changes are saved immediately to `%LOCALAPPDATA%\RaceMate\settings.ini`; the window remembers its size and position. Closing it keeps RaceMate in the tray; **Exit** in the tray menu quits. Without a tray icon, closing the window exits.
 
 **Start with Windows** adds RaceMate to the current user's Run key (no administrator rights needed). **Start minimized** starts in the tray. Keep the executable in a fixed location when using Start with Windows.
 

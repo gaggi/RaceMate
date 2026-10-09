@@ -424,10 +424,15 @@ UpdateCheckResult UpdateChecker::CheckForUpdate()
         return result;
     }
 
+    if (statusCode == 404)
+    {
+        result.state = UpdateCheckState::UpToDate;
+        result.message = L"No published release is available yet.";
+        return result;
+    }
     if (statusCode != 200)
     {
-        result.message = statusCode == 404 ? std::wstring(L"No RaceMate release has been published on GitHub yet.")
-            : L"GitHub returned HTTP " + std::to_wstring(statusCode) + L" while checking for updates.";
+        result.message = L"GitHub returned HTTP " + std::to_wstring(statusCode) + L" while checking for updates.";
         return result;
     }
 
