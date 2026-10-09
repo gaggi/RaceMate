@@ -57,9 +57,11 @@ private:
             list_.SetRows(std::move(rows)); return;
         }
         header(kind_==WeatherKind?L"Cards  \u00B7  top to bottom":L"Elements  \u00B7  top to bottom");
+        // Same button, same column: {expand, down, up} on rows that expand, {0, down, up} on the
+        // others when any row of the card expands (see "Controls line up in columns").
+        const bool anyExpandable=std::any_of(Order().begin(),Order().end(),[&](int id){ return Expandable(id); });
         for(int id:Order()) {
             RowList::Row row;
-            // Icon buttons are laid out right to left: the expand arrow stays rightmost.
             row.iconButtons={DownGlyph,UpGlyph};
             if(kind_==FuelKind && id==ConsumptionTableElement) { row.title=L"Consumption table"; row.detail=TableDetail(); row.muted=!FuelElementVisible(id); }
             else {
@@ -72,7 +74,7 @@ private:
             if(Expandable(id)) {
                 const bool open=expanded_==id;
                 row.iconButtons.insert(row.iconButtons.begin(),open?CollapseGlyph:ExpandGlyph); row.expandHeight=open?(kind_==FuelKind?112:48):0;
-            }
+            } else if(anyExpandable) row.iconButtons.insert(row.iconButtons.begin(),0);
             push(std::move(row),Key::Element,id);
         }
         if(kind_==FuelKind) {

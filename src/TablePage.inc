@@ -89,6 +89,8 @@ private:
         }
         header(L"Columns  \u00B7  left to right");
         const auto& order=app.columnOrder[kind_];
+        // Same button, same column: {expand, down, up} or {0, down, up} (see "Controls line up in columns").
+        const bool anyOptions=std::any_of(order.begin(),order.end(),[&](int id){ return HasOptions(id); });
         for(size_t i=0;i<order.size();++i) {
             const int id=order[i];
             RowList::Row row; row.title=ColumnTexts[id].name; row.detail=ColumnDetail(id);
@@ -97,6 +99,7 @@ private:
             row.muted=!ColumnVisible(kind_,id);
             row.iconButtons={DownGlyph,UpGlyph};
             if(HasOptions(id)) expandable(row,Key::Column,id,48);
+            else if(anyOptions) row.iconButtons.insert(row.iconButtons.begin(),0);
             push(std::move(row),Key::Column,id);
         }
         header(L"Header and footer");
