@@ -1,0 +1,83 @@
+name: Release
+
+# Pushing a tag such as v0.2.0 builds RaceMate for x64 and x86, runs the tests and
+# publishes a GitHub release. The in-app update check picks the asset ending in
+# windows-x64.exe / windows-x86.exe from the latest release.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-2022
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Check that the tag matches the version in CMakeLists.txt
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $match = Select-String -Path CMakeLists.txt -Pattern 'project\(RaceMate VERSION ([0-9.]+)'
+          if (-not $match) { throw "project(RaceMate VERSION ...) was not found in CMakeLists.txt." }
+          $source = $match.Matches[0].Groups[1].Value
+          if ($source -ne $version) {
+            throw "Tag ${{ github.ref_name }} does not match version $source in CMakeLists.txt. Update project() before tagging."
+          }
+          Write-Host "Tag and CMakeLists.txt agree on version $version."
+
+      # build.ps1 builds, runs the tests and copies the exe to dist/<architecture>;
+      # it stops on the first failure, so nothing is published unless the tests pass.
+      - name: Build, test and package x64
+        shell: pwsh
+        run: .\build.ps1 -Architecture x64
+
+      - name: Build, test and package x86
+        shell: pwsh
+        run: .\build.ps1 -Architecture Win32
+
+      - name: Package release assets
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.TrimStart('v')
+          $assetRoot = Join-Path $env:RUNNER_TEMP "racemate-release"
+          $assets = @()
+          foreach ($target in @(@{ Folder = 'x64'; Platform = 'x64' }, @{ Folder = 'Win32'; Platform = 'x86' })) {
+            $built = "dist/$($target.Folder)/RaceMate-$version-windows-$($target.Platform).exe"
+            if (-not (Test-Path -LiteralPath $built)) { throw "$built was not built." }
+            $name = "RaceMate-$tag-windows-$($target.Platform)"
+            $exePath = Join-Path $env:GITHUB_WORKSPACE "$name.exe"
+            $zipPath = Join-Path $env:GITHUB_WORKSPACE "$name.zip"
+            $hashPath = Join-Path $env:GITHUB_WORKSPACE "$name.sha256"
+            $packageDir = Join-Path $assetRoot $name
+            New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
+            Copy-Item -LiteralPath $built -Destination $exePath
+            Copy-Item -LiteralPath $built -Destination (Join-Path $packageDir 'RaceMate.exe')
+            Copy-Item -LiteralPath README.md -Destination $packageDir
+            Compress-Archive -Path (Join-Path $packageDir '*') -DestinationPath $zipPath -Force
+            $hash = (Get-FileHash -Algorithm SHA256 $zipPath).Hash.ToLowerInvariant()
+            Set-Content -Path $hashPath -NoNewline -Value "$hash  $(Split-Path -Leaf $zipPath)"
+            $assets += $exePath, $zipPath, $hashPath
+          }
+          "RELEASE_ASSETS=$($assets -join ';')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Create or update GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $assets = $env:RELEASE_ASSETS -split ';'
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $assets --clobber
+          }
+          else {
+            gh release create $tag $assets --verify-tag --generate-notes
+          }

@@ -113,6 +113,17 @@ Diagnostics and benchmarks use `build\qa\settings.ini` and leave personal settin
 .\build\x64\Release\RaceMateTests.exe --live-summary            # lap-time coverage of a running session
 ```
 
+## Releases
+
+Raise the version in `project(RaceMate VERSION ...)` in `CMakeLists.txt`, commit, then push a matching tag:
+
+```powershell
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The release workflow (`.github/workflows/release.yml`) checks that the tag matches the version, builds x64 and x86, runs the tests and publishes a GitHub release with the exe, a zip and its SHA-256 for each. RaceMate's update check offers that release in Settings.
+
 ## References
 
 - [iRacing shared-memory protocol](https://github.com/vipoo/irsdk/blob/master/irsdk_defines.h)
