@@ -19,7 +19,7 @@ The window has three pages in its sidebar: **Overlays** (switch each overlay on 
 | Ctrl + Alt + Shift + H | Hide/show all overlays |
 | Ctrl + Alt + Shift + S | Open Settings |
 
-Shortcuts are global and configurable on the **Settings** page: expand a shortcut, click the field and press a combination with Ctrl or Alt; **Turn off** removes it. The banner names shortcuts another program already owns.
+Shortcuts are global and configurable on the **Settings** page: expand a shortcut, click the field and press a combination with Ctrl or Alt; **Reset** restores the default. The banner names shortcuts another program already owns.
 
 Overlays stay visible during spotting, replays and paused playback, and follow the camera car when you are not driving. They hide when iRacing disconnects, unless Preview is on. Outside Move mode they pass mouse clicks through and never take focus.
 

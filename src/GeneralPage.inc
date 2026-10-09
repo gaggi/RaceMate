@@ -4,7 +4,7 @@ public:
     GeneralPage() : PageWindow(ui.heading,ui.text) {}
 private:
     enum class Key { None, StartWithWindows, StartMinimized, RefreshRate, TitleBar, Hotkey, CheckUpdates, Version };
-    static constexpr int ListId=100, HotkeyId=200, HotkeyOffId=201;
+    static constexpr int ListId=100, HotkeyId=200, HotkeyResetId=201;
     static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E';
     static constexpr int Rates[]={2,5,10,20};
 
@@ -55,7 +55,7 @@ private:
         // A shortcut always needs Ctrl or Alt so plain typing is never captured.
         SendMessageW(field,HKM_SETRULES,HKCOMB_NONE|HKCOMB_S,MAKELPARAM(HOTKEYF_CONTROL|HOTKEYF_ALT,0));
         SendMessageW(field,HKM_SETHOTKEY,app.hotkeys[expanded_],0); SetWindowSubclass(field,HotkeyFieldProc,1,0);
-        editors_.Button(HotkeyOffId,L"Turn off",212,9,90);
+        editors_.Button(HotkeyResetId,L"Reset",212,9,90);
         editors_.Label(L"Click the field and press a combination with Ctrl or Alt.",316,10,0);
         editors_.Position();
     }
@@ -78,8 +78,9 @@ private:
             if(code==EN_CHANGE && expanded_>=0 && LOBYTE(hotkey)) { app.hotkeys[expanded_]=hotkey; Save(); Refresh(); }
             return true;
         }
-        if(id==HotkeyOffId) {
-            if(code==BN_CLICKED && expanded_>=0) { app.hotkeys[expanded_]=0; SendMessageW(editors_.Get(HotkeyId),HKM_SETHOTKEY,0,0); RegisterHotkeys(); Save(); Refresh(); UpdateStatus(); }
+        if(id==HotkeyResetId) {
+            // Back to the default shortcut.
+            if(code==BN_CLICKED && expanded_>=0) { app.hotkeys[expanded_]=DefaultHotkeys[expanded_]; SendMessageW(editors_.Get(HotkeyId),HKM_SETHOTKEY,app.hotkeys[expanded_],0); RegisterHotkeys(); Save(); Refresh(); UpdateStatus(); }
             return true;
         }
         if(id!=ListId) return false;
