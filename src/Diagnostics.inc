@@ -60,6 +60,16 @@ int RunDiagnostics() {
     report<<"Main window DPI changes keep the current page: "<<(viewportOk?"PASS":"FAIL")<<"\n";
     ok=viewportOk && ok;
     {
+        // Save() writes only changed keys; after Load() or without a file it writes all again.
+        Save(); const unsigned before=app.settingsWrites; Save();
+        bool saveOk=app.settingsWrites==before;
+        app.showTitleBar=!app.showTitleBar; Save(); saveOk=app.settingsWrites==before+1 && saveOk;
+        const bool title=app.showTitleBar; Load(); saveOk=app.showTitleBar==title && saveOk;
+        app.showTitleBar=!app.showTitleBar; Save(); Load(); saveOk=app.showTitleBar!=title && saveOk;
+        const unsigned full=app.settingsWrites; Save(); saveOk=app.settingsWrites-full>100 && saveOk;
+        report<<"Settings save only changed keys and survive a reload: "<<(saveOk?"PASS":"FAIL")<<"\n"; ok=saveOk && ok;
+    }
+    {
         const bool savedFilter=app.excludeYellowFuelLaps;
         WritePrivateProfileStringW(L"Fuel Calculator",L"ExcludeYellowLaps",nullptr,app.config.c_str());
         Load();

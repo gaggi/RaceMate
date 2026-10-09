@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <map>
 #ifdef RACEMATE_DIAGNOSTICS
 #include <fstream>
 #endif
@@ -161,6 +162,8 @@ struct App {
     bool preview=false, edit=false, hidden=false, diagnostics=false;
     bool startWithWindows=false, startMinimized=false, showTitleBar=false, checkUpdates=true;
     bool settingsError=false, trayAvailable=false;
+    // Values Save() last wrote, keyed "section\nkey"; Save() only writes what differs.
+    std::map<std::wstring,std::wstring> savedSettings; unsigned settingsWrites=0;
     std::array<WORD,HotkeyCount> hotkeys{}; bool hotkeysEnabled=false; std::wstring hotkeyError;
     int rate=10,timerMs=0;
     unsigned modelVersion=0,relativeVersion=~0u,standingsVersion=~0u,planVersion=~0u;
@@ -307,6 +310,7 @@ Slots ReadSlots(const wchar_t* section,const wchar_t* const keys[],const Slots& 
 }
 int NormalizeScale(int scale) { return ((std::clamp(scale,50,150)+5)/10)*10; }
 void Load() {
+    app.savedSettings.clear(); // The next Save() writes everything once.
     for(int kind:{RelativeKind,StandingsKind}) {
         const auto* section=Sections[kind];
         app.columnOrder[kind]=ReadOrder(section,L"ColumnOrder",DefaultColumns[kind]);
@@ -358,9 +362,18 @@ void Load() {
         p.enabled=ReadBool(section,L"Enabled",true); p.growLeft=ReadBool(section,L"GrowLeft",false); p.growUp=ReadBool(section,L"GrowUp",false);
     }
 }
+// Each WritePrivateProfileString call rewrites the file; all keys take about 100 ms, so
+// only keys whose value changed since the last write go out. A missing file gets all.
 void Save() {
     bool success=true;
-    auto write=[&](const wchar_t* section,const wchar_t* key,const std::wstring& value) { success=WritePrivateProfileStringW(section,key,value.c_str(),app.config.c_str()) && success; };
+    if(GetFileAttributesW(app.config.c_str())==INVALID_FILE_ATTRIBUTES) app.savedSettings.clear();
+    auto write=[&](const wchar_t* section,const wchar_t* key,const std::wstring& value) {
+        const auto id=std::wstring(section)+L"\n"+key;
+        if(const auto saved=app.savedSettings.find(id); saved!=app.savedSettings.end() && saved->second==value) return;
+        ++app.settingsWrites;
+        if(WritePrivateProfileStringW(section,key,value.c_str(),app.config.c_str())) app.savedSettings[id]=value;
+        else success=false;
+    };
     auto number=[&](const wchar_t* section,const wchar_t* key,int value) { write(section,key,std::to_wstring(value)); };
     auto order=[&](const wchar_t* section,const wchar_t* key,const std::vector<int>& ids) {
         std::wstring text; for(int id:ids) { if(!text.empty()) text+=L","; text+=std::to_wstring(id); } write(section,key,text);
