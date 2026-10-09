@@ -666,6 +666,11 @@ int main(int argc,char** argv) {
   std::cout<<"Session: "<<session.type<<"; drivers: "<<session.drivers.size()<<"; standings rows: "<<rows.size()
    <<"; live bests: "<<liveBest<<"; historical bests: "<<historicalBest<<"; historical lasts: "<<historicalLast
    <<"; missing merged bests: "<<missingBest<<'\n';
+  // What View() decides from; compare in the car, spectating live, a playing and a paused replay.
+  const char* views[]={"in car","live","replay"};
+  std::cout<<"View: "<<views[static_cast<int>(View(frame))]<<"; IsOnTrack: "<<frame.onTrack<<"; IsReplayPlaying: "<<frame.replay
+   <<"; ReplayFrameNumEnd: "<<frame.replayFramesBehind<<"; SessionTime: "<<frame.time<<"; ReplaySessionTime: "<<frame.replayTime
+   <<"; SessionNum: "<<frame.session<<"; ReplaySessionNum: "<<frame.replaySession<<'\n';
   return 0;
  }
  try { ReviewRegressionTests(); WindTests(); ParserTests(); ResultsTests(); RowTests(); RelativeCenterTests(); StandingsSelectionTests(); EarlyAndLiveGapTests(); UntimedPracticeTests(); MissingDriverDataTests(); LivePositionAndPitVisibilityTests(); FuelMetricsTests(); FirstRaceLapFuelTests(); FuelTests(); PredictionTests(); RaceControlTests(); TelemetryTests(); std::cout<<"PASS: review regressions, parser, historical results, relative, standings, fuel metrics, finish projection, leader changes, pit learning, confidence, replay and shared memory\n"; }

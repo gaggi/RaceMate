@@ -37,7 +37,7 @@ constexpr const char* VarNames[] = {
     "PlayerCarMyIncidentCount","AirTemp","TrackTempCrew","TrackTemp","WindDir","YawNorth","SessionTimeOfDay","WindVel","TrackWetness",
     "CarIdxPosition","CarIdxClassPosition","CarIdxLap","CarIdxTrackSurface","CarIdxSessionFlags","CarIdxTireCompound",
     "CarIdxLapCompleted","CarIdxLapDistPct","CarIdxEstTime","CarIdxF2Time","CarIdxBestLapTime","CarIdxLastLapTime","CarIdxOnPitRoad",
-    "PlayerCarIsTowing","PlayerCarTowTime","Speed","PlayerTrackSurface"};
+    "PlayerCarIsTowing","PlayerCarTowTime","Speed","PlayerTrackSurface","ReplayFrameNumEnd"};
 static_assert(std::size(VarNames) == Telemetry::VarCount);
 }
 bool Telemetry::BuildVariables(const MemoryHeader& h) {
@@ -99,6 +99,7 @@ bool Telemetry::Read(Frame& f, Session& s) {
     next.onTrack=Value(IsOnTrack,0)!=0;
     next.pit=Value(OnPitRoad,0)!=0; next.inStall=Value(PlayerCarInPitStall,0)!=0;
     next.replay=Value(IsReplayPlaying,0)!=0;
+    next.replayFramesBehind=Has(ReplayFrameNumEnd)?static_cast<int>(Value(ReplayFrameNumEnd,-1)):-1;
     next.limiterKnown=Has(EngineWarnings);
     next.limiter=(static_cast<unsigned>(Value(EngineWarnings,0))&EngineWarning::PitSpeedLimiter)!=0;
     next.fuel=Value(FuelLevel,-1); next.fuelKnown=next.fuel>=0;

@@ -405,6 +405,9 @@ int RunDiagnostics() {
         // Watching live from outside the car is not a replay; behind live or another session is.
         Frame f; f.replay=true; f.session=f.replaySession=2; f.time=100; f.replayTime=99.5; ok=!ReviewingReplay(f) && ok;
         f.replayTime=90; ok=ReviewingReplay(f) && ok; f.replaySession=1; f.replayTime=99.5; ok=ReviewingReplay(f) && ok;
+        // A paused replay may clear IsReplayPlaying; in the car is never a replay.
+        f.replay=false; f.replaySession=2; f.replayTime=90; ok=ReviewingReplay(f) && ok;
+        f.onTrack=true; f.replayTime=-1; ok=!ReviewingReplay(f) && ok;
     }
     // A DPI change swaps fonts; the segmented controls must follow instead of keeping a deleted one.
     RaceControlFonts(); ApplyRaceControlFonts();

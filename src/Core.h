@@ -61,6 +61,8 @@ struct Frame {
     bool limiterKnown = false, limiter = false, fuelKnown = false, timeLeftKnown = false;
     int player = -1, camera = -1, session = -1, lapCompleted = -1, incidents = 0, state = 0;
     int cameraGroup = 1, replaySession = -1;
+    // ReplayFrameNumEnd: frames (60 per second) behind the live point; -1 when not reported.
+    int replayFramesBehind = -1;
     double replayTime = -1;
     unsigned flags = 0;
     double time = 0, timeLeft = -1, lapsLeft = -1, fuel = 0, lapPct = 0, lastLap = -1, bestLap = -1;
@@ -87,6 +89,11 @@ private:
     std::string key_; int session_=-1; double time_=-1;
 };
 int ReferenceCar(const Frame&);
+// What the user is watching. IsReplayPlaying alone cannot tell: it is also set while
+// spectating live, and a paused replay may clear it. Race Control, the event recorder
+// and the race forecast all decide with this.
+enum class ViewMode { InCar, Live, Replay };
+ViewMode View(const Frame&);
 struct Row {
     Driver driver;
     Car car;

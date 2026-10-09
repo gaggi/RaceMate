@@ -72,10 +72,7 @@ bool CanControlSim() {
     return true;
 }
 HWND RaceItem(int id) { return GetDlgItem(raceControl.window,id); }
-// iRacing reports a playing replay while you watch live from outside the car too; same test as the event recorder.
-bool ReviewingReplay(const Frame& f) {
-    return f.replay && f.replayTime>=0 && (f.replaySession!=f.session || std::abs(f.time-f.replayTime)>2);
-}
+bool ReviewingReplay(const Frame& f) { return View(f)==ViewMode::Replay; }
 void UpdateCameraButton() {
     if(!raceControl.window) return;
     const std::wstring text=L"Camera: "+(raceControl.cameraName.empty()?std::wstring(L"\u2014"):raceControl.cameraName)+L"  \u25BE";

@@ -191,6 +191,16 @@ void LimitAndStateTests() {
     Near(calculator.Predict(s,f).finish.leaderFinishIn,2,"expired timer still waits for leader line crossing");
     f=RacingFrame(); f.state=3; Require(calculator.Predict(s,f).status==PredictionStatus::Gridding,"no pre-race forecast");
     f.state=4; f.replay=true; Require(calculator.Predict(s,f).status==PredictionStatus::Replay,"no replay race prediction");
+    {
+        // Spectating live sets IsReplayPlaying too; only footage behind live stops the forecast.
+        auto live=f; live.onTrack=false; live.replaySession=live.session; live.replayTime=live.time;
+        Require(calculator.Predict(s,live).status!=PredictionStatus::Replay,"spectating live keeps the forecast");
+        live.replayFramesBehind=1; Require(calculator.Predict(s,live).status!=PredictionStatus::Replay,"live point by frame count");
+        auto review=live; review.replayFramesBehind=-1; review.replayTime=live.time-30;
+        Require(calculator.Predict(s,review).status==PredictionStatus::Replay,"old footage stops the forecast");
+        review.replay=false; Require(calculator.Predict(s,review).status==PredictionStatus::Replay,"paused replay is still a replay");
+        review.replayFramesBehind=600; review.replayTime=live.time; Require(calculator.Predict(s,review).status==PredictionStatus::Replay,"frames behind live win over times");
+    }
     f.replay=false; f.cars[0].surface=-1; Require(calculator.Predict(s,f).status==PredictionStatus::MissingLeader,"missing leader position cannot silently use another car");
     f=RacingFrame(); f.cars[1].surface=-1;
     p=calculator.Predict(s,f); Require(p.finish.valid && p.finish.ownDistance<0 && p.status==PredictionStatus::MissingPace,"leader forecast remains visible when own car unavailable");

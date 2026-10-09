@@ -110,7 +110,7 @@ Diagnostics and benchmarks use `build\qa\settings.ini` and leave personal settin
 .\build\x64\Release\RaceMateDiagnostics.exe --benchmark-tick    # refresh cost, written to build\qa\benchmark.txt
 .\build\x64\Release\RaceMateTests.exe --benchmark-telemetry
 .\build\x64\Release\RaceMateTests.exe --benchmark-prediction
-.\build\x64\Release\RaceMateTests.exe --live-summary            # lap-time coverage of a running session
+.\build\x64\Release\RaceMateTests.exe --live-summary            # lap-time coverage and live/replay state of a running session
 ```
 
 ## Releases

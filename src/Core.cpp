@@ -222,6 +222,13 @@ int PositionsGained(const Session& s,const Row& row,bool ownClass) {
     const int current=ownClass?row.car.classPosition:row.car.position;
     return current>0?start-current:-MaxCars;
 }
+ViewMode View(const Frame& f) {
+    if(f.onTrack && !f.replay) return ViewMode::InCar;
+    // More than 2 s behind live, or another session, is old footage.
+    if(f.replayFramesBehind>=0) return f.replayFramesBehind>120?ViewMode::Replay:ViewMode::Live;
+    if(f.replayTime>=0) return f.replaySession!=f.session || std::abs(f.time-f.replayTime)>2?ViewMode::Replay:ViewMode::Live;
+    return f.replay?ViewMode::Replay:ViewMode::Live;
+}
 int ReferenceCar(const Frame& f) {
     if((!f.onTrack || f.replay) && f.camera>=0 && f.camera<MaxCars) return f.camera;
     return f.player;

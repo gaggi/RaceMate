@@ -85,7 +85,7 @@ void RacePredictor::Update(const Session& s,const Frame& f) {
     if(key_!=s.key || session_!=f.session || f.time<time_-Epsilon) {
         Reset(); key_=s.key; session_=f.session;
     }
-    if(f.replay || s.type!="Race" || (f.state>0 && f.state<4)) {
+    if(View(f)==ViewMode::Replay || s.type!="Race" || (f.state>0 && f.state<4)) {
         for(auto& h:history_) { h.seen=false; h.dirty=true; h.crossTime=-1; h.pitObserved=false; }
         time_=f.time; return;
     }
@@ -134,7 +134,7 @@ void RacePredictor::Update(const Session& s,const Frame& f) {
 RacePrediction RacePredictor::Predict(const Session& s,const Frame& f) const {
     RacePrediction p;
     if(!f.connected) return p;
-    if(f.replay) { p.status=PredictionStatus::Replay; return p; }
+    if(View(f)==ViewMode::Replay) { p.status=PredictionStatus::Replay; return p; }
     if(s.type!="Race") { p.status=PredictionStatus::NotRace; return p; }
     if(f.state>0 && f.state<4) { p.status=PredictionStatus::Gridding; return p; }
     std::vector<Candidate> cars;

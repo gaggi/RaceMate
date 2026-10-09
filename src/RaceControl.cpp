@@ -27,7 +27,7 @@ void EventRecorder::Update(const Session& s,const Frame& f) {
     if(!f.connected) { for(auto& sample:samples_) sample.seen=false; time_=-1; passes_.clear(); return; }
     if(key_!=s.key || session_!=f.session) { Reset(); key_=s.key; session_=f.session; }
     // Reviewing old footage must not add duplicate events or overwrite the live baseline.
-    if(!f.onTrack && f.replayTime>=0 && (f.replaySession!=f.session || std::abs(f.time-f.replayTime)>2)) {
+    if(View(f)==ViewMode::Replay) {
         for(auto& sample:samples_) sample.seen=false; time_=-1; passes_.clear(); return;
     }
     if(f.time<frontier_-1e-7) { for(auto& sample:samples_) sample.seen=false; time_=-1; passes_.clear(); return; }
