@@ -1033,6 +1033,8 @@ LRESULT CALLBACK MainProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
 #endif
 }
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
+    // A copy of RaceMate started by the updater swaps in the new version and exits.
+    if(const int update=UpdateChecker::HandleSelfUpdateCommandLine(); update>=0) return update;
     struct DrawingRuntime {
         ULONG_PTR token=0;
         DrawingRuntime() { Gdiplus::GdiplusStartupInput input; input.SuppressExternalCodecs=TRUE; if(Gdiplus::GdiplusStartup(&token,&input,nullptr)!=Gdiplus::Ok) token=0; }
