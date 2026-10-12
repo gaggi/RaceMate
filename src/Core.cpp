@@ -632,10 +632,12 @@ Session DemoSession() {
 }
 double RelativeWindAngle(const Frame& f) {
     if(!f.connected || !f.onTrack || f.replay || ReferenceCar(f)!=f.player || !std::isfinite(f.windDirection) || !std::isfinite(f.yawNorth) || !std::isfinite(f.windSpeed) || f.windSpeed<=0) return std::numeric_limits<double>::quiet_NaN();
-    // SDK YawNorth and WindDir use opposite heading conventions.
-    // https://sajax.github.io/irsdkdocs/telemetry/yawnorth.html
+    // WindDir (where the wind comes from) and YawNorth (where the car points) share one
+    // convention, so their difference is the source bearing relative to the car.
+    // Cross-checked against iRdashies, which shows WindDir - YawNorth (+ half a turn for
+    // where the wind blows to). https://sajax.github.io/irsdkdocs/telemetry/yawnorth.html
     constexpr double turn=6.283185307179586;
-    double angle=std::fmod(-f.yawNorth-f.windDirection,turn);
+    double angle=std::fmod(f.windDirection-f.yawNorth,turn);
     return angle<0?angle+turn:angle;
 }
 Frame DemoFrame(double time) {

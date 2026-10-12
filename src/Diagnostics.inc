@@ -190,7 +190,7 @@ int RunDiagnostics() {
         bool windOk=OverlayWidth(4)==240 && BaseHeight(4)==WeatherHeight()-(app.showTitleBar?0:32);
         for(int direction=0;direction<5;++direction) {
             const double angle=direction==4?25*pi/180:direction*pi/2;
-            app.frame.yawNorth=.4; app.frame.windDirection=-.4-angle; app.frame.windSpeed=5;
+            app.frame.yawNorth=.4; app.frame.windDirection=.4+angle; app.frame.windSpeed=5;
             UpdateOverlays(); windOk=std::abs(RelativeWindAngle(app.frame)-angle)<.001 && windOk;
             windOk=Export(app.overlays[4].window,L"build\\qa\\wind-"+std::to_wstring(direction)+L".bmp") && windOk;
         }

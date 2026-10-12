@@ -597,8 +597,12 @@ void WindTests() {
  constexpr double pi=3.141592653589793;
  Frame f=DemoFrame(0); f.windSpeed=4; f.yawNorth=0;
  for(double heading:{0.0,.7,-2.8,2*pi+.5}) for(double source:{0.0,pi/2,pi,3*pi/2,.436332313}) {
-  f.yawNorth=heading; f.windDirection=-heading-source+4*pi; Near(RelativeWindAngle(f),source,"wind source angle follows heading continuously and wraps full turns");
+  f.yawNorth=heading; f.windDirection=heading+source+4*pi; Near(RelativeWindAngle(f),source,"wind source angle follows heading continuously and wraps full turns");
  }
+ // Fixed cases: wind from the east while facing north comes from the right; facing east it is a headwind.
+ f.yawNorth=0; f.windDirection=pi/2; Near(RelativeWindAngle(f),pi/2,"east wind facing north comes from the right");
+ f.yawNorth=pi/2; Near(RelativeWindAngle(f),0,"east wind facing east is a headwind");
+ f.yawNorth=pi; Near(RelativeWindAngle(f),3*pi/2,"east wind facing south comes from the left");
  f.windDirection=std::numeric_limits<double>::quiet_NaN(); Require(!std::isfinite(RelativeWindAngle(f)),"missing wind direction has no arrow");
  f.windDirection=0; f.windSpeed=0; Require(!std::isfinite(RelativeWindAngle(f)),"calm wind has no direction");
  f.windSpeed=4; f.onTrack=false; Require(!std::isfinite(RelativeWindAngle(f)),"spotting does not reuse player heading");
