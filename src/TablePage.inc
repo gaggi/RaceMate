@@ -4,7 +4,7 @@ class TablePage : public PageWindow {
 public:
     explicit TablePage(int kind) : PageWindow(ui.heading,ui.text), kind_(kind) {}
 private:
-    enum class Key { None, Rows, GapDecimals, HidePit, StandingsRows, ClassView, OwnClass, LiveGaps, UntimedOrder, Column, Header, Footer, ColumnHeadings };
+    enum class Key { None, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, ClassView, OwnClass, LiveGaps, UntimedOrder, Column, Header, Footer, ColumnHeadings };
     static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, NameFormatEditId=201, FlagEditId=202, ShortViewEditId=205, SlotEditId=206;
     static constexpr UINT_PTR TypingTimer=1;
     static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E', UpGlyph=L'\uE74A', DownGlyph=L'\uE74B';
@@ -70,6 +70,8 @@ private:
             expandable(count,Key::Rows,-1,48); push(std::move(count),Key::Rows);
             RowList::Row decimals; decimals.title=L"Gap decimals"; decimals.detail=std::to_wstring(app.gapDecimals)+L"  \u00B7  "+Format(0,app.gapDecimals)+L" s"; decimals.button=L"Choose...";
             push(std::move(decimals),Key::GapDecimals);
+            RowList::Row signs; signs.title=L"Show + and \u2212 before gaps"; signs.detail=L"Without them, cars above your row are ahead and cars below are behind."; signs.toggle=app.gapSigns[kind_]?1:0;
+            push(std::move(signs),Key::GapSigns);
             RowList::Row pit; pit.title=L"Hide drivers in the pit lane"; pit.detail=L"Your own car always stays."; pit.toggle=app.relativeHidePit?1:0;
             push(std::move(pit),Key::HidePit);
         }
@@ -86,6 +88,8 @@ private:
             push(std::move(own),Key::OwnClass);
             RowList::Row live; live.title=L"Live positions and gaps"; live.detail=L"Estimated from track position between start/finish crossings."; live.toggle=standings.liveGaps?1:0;
             push(std::move(live),Key::LiveGaps);
+            RowList::Row signs; signs.title=L"Show + before gaps and intervals"; signs.detail=L"Both always count behind the leader or the car ahead."; signs.toggle=app.gapSigns[kind_]?1:0;
+            push(std::move(signs),Key::GapSigns);
             RowList::Row untimed; untimed.title=L"Drivers without a lap time"; untimed.button=L"Choose...";
             untimed.detail=standings.fallbackByRating?L"Ordered by iRating, highest first":L"Ordered by car number";
             push(std::move(untimed),Key::UntimedOrder);
@@ -212,6 +216,7 @@ private:
         switch(key) {
         case Key::Rows: if(toggleExpand) Expand(key,-1); break;
         case Key::GapDecimals: if(pressed) ChooseDecimals(); break;
+        case Key::GapSigns: if(code==RowList::kToggled) { SetGapSigns(kind_,on); Refresh(); } break;
         case Key::HidePit: if(code==RowList::kToggled) { app.relativeHidePit=on; Changed(); } break;
         case Key::StandingsRows: if(toggleExpand) Expand(key,-1); break;
         case Key::ClassView:

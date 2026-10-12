@@ -140,6 +140,24 @@ int RunDiagnostics() {
         report<<"Relative best and last lap columns: "<<(lapsOk?"PASS":"FAIL")<<"\n"; ok=lapsOk && ok;
     }
     {
+        // Gap signs: off by default; the row order tells ahead from behind.
+        const auto savedSigns=app.gapSigns; const auto savedOptions=app.standings;
+        app.standings.separateClasses=false;
+        Row ahead; ahead.gap=-7.5; Row behind; behind.gap=2.5;
+        Row standing; standing.car.position=3; standing.gap=2.6; standing.interval=1.2;
+        Row lapped=standing; lapped.lapDifference=1; lapped.intervalLaps=1;
+        bool signsOk=!app.gapSigns[RelativeKind] && !app.gapSigns[StandingsKind];
+        signsOk=Gap(ahead,RelativeKind)==Format(7.5,app.gapDecimals) && Gap(behind,RelativeKind)==Format(2.5,app.gapDecimals) && signsOk;
+        signsOk=Gap(standing,StandingsKind)==L"2.6" && Interval(standing)==L"1.2" && Gap(lapped,StandingsKind)==L"1 L" && Interval(lapped)==L"1 L" && signsOk;
+        SetGapSigns(RelativeKind,true);
+        signsOk=Gap(ahead,RelativeKind)==L"−"+Format(7.5,app.gapDecimals) && Gap(behind,RelativeKind)==L"+"+Format(2.5,app.gapDecimals) && Gap(standing,StandingsKind)==L"2.6" && signsOk;
+        SetGapSigns(StandingsKind,true);
+        signsOk=Gap(standing,StandingsKind)==L"+2.6" && Interval(standing)==L"+1.2" && Gap(lapped,StandingsKind)==L"+1 L" && Interval(lapped)==L"+1 L" && signsOk;
+        Load(); signsOk=app.gapSigns[RelativeKind] && app.gapSigns[StandingsKind] && signsOk;
+        app.gapSigns=savedSigns; app.standings=savedOptions; Save();
+        report<<"Gap signs switch per table, off by default: "<<(signsOk?"PASS":"FAIL")<<"\n"; ok=signsOk && ok;
+    }
+    {
         const auto savedFlags=app.driverFlags; const auto savedFrame=app.frame; bool flagsOk=true;
         app.frame.cars[0].sessionFlags=0x10000u; app.frame.cars[1].sessionFlags=0x80000u; app.frame.cars[2].sessionFlags=0x100000u; app.frame.cars[3].sessionFlags=0x190000u;
         for(int kind=0;kind<2;++kind) {

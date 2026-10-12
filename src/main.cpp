@@ -152,6 +152,8 @@ struct App {
     std::array<Slots,2> headerMetrics{DefaultHeader,DefaultHeader};
     std::array<FooterSettings,2> footers;
     int rows=7, gapDecimals=1; bool relativeHidePit=false, relativeBest=false, relativeLast=false;
+    // + / - before gaps (and intervals in the Standings), per table; off by default: the row order already tells.
+    std::array<bool,2> gapSigns{};
     StandingsOptions standings; bool showInterval=false, standingsLaps=false, standingsGained=false;
     std::vector<int> fuelOrder=DefaultFuelOrder;
     std::array<bool,FuelElementCount> fuelDisplay{};
@@ -319,6 +321,7 @@ void Load() {
         app.columnOrder[kind]=ReadOrder(section,L"ColumnOrder",DefaultColumns[kind]);
         for(int i=0;i<DriverColumnCount;++i) app.driverColumns[kind][i]=ReadBool(section,DriverColumnKeys[i],false);
         app.driverShortView[kind]={ReadBool(section,L"ShortLicenseView",false),ReadBool(section,L"ShortIRatingView",false)};
+        app.gapSigns[kind]=ReadBool(section,L"ShowGapSigns",false);
         app.driverFlags[kind]={ReadBool(section,L"ShowBlackFlag",true),ReadBool(section,L"ShowSlowdown",true),ReadBool(section,L"ShowRequiredRepairs",true)};
         app.showDriver[kind]=ReadBool(section,L"ShowDriver",true);
         app.showStatus[kind]=ReadBool(section,L"ShowStatus",true);
@@ -389,7 +392,7 @@ void Save() {
         number(section,L"ShortLicenseView",app.driverShortView[kind][0]); number(section,L"ShortIRatingView",app.driverShortView[kind][1]);
         number(section,L"ShowBlackFlag",app.driverFlags[kind][0]); number(section,L"ShowSlowdown",app.driverFlags[kind][1]); number(section,L"ShowRequiredRepairs",app.driverFlags[kind][2]);
         number(section,L"ShowDriver",app.showDriver[kind]); number(section,L"ShowStatus",app.showStatus[kind]); number(section,L"DriverNameFormat",app.nameFormat[kind]);
-        number(section,L"ShowColumnHeaders",app.columnHeaders[kind]); number(section,L"ShowHeader",app.tableHeaders[kind]); number(section,L"ShowFooter",app.footers[kind].enabled);
+        number(section,L"ShowColumnHeaders",app.columnHeaders[kind]); number(section,L"ShowGapSigns",app.gapSigns[kind]); number(section,L"ShowHeader",app.tableHeaders[kind]); number(section,L"ShowFooter",app.footers[kind].enabled);
         for(int i=0;i<3;++i) { number(section,HeaderKeys[i],app.headerMetrics[kind][i]); number(section,FooterKeys[i],app.footers[kind].metrics[i]); }
     }
     number(L"Relative",L"Rows",app.rows); number(L"Relative",L"GapDecimals",app.gapDecimals); number(L"Relative",L"HideDriversInPit",app.relativeHidePit);
@@ -494,16 +497,19 @@ std::wstring Gap(const Row& r,int kind) {
     if(kind==RelativeKind) {
         if(r.player) return Format(0,app.gapDecimals);
         if(!std::isfinite(r.gap)) return L"—";
-        return (r.gap>0?L"+":L"−")+Format(std::abs(r.gap),app.gapDecimals);
+        const std::wstring sign=app.gapSigns[RelativeKind]?(r.gap>0?L"+":L"−"):L"";
+        return sign+Format(std::abs(r.gap),app.gapDecimals);
     }
+    const std::wstring plus=app.gapSigns[StandingsKind]?L"+":L"";
     if((app.standings.separateClasses?r.car.classPosition:r.car.position)==1) return app.session.type!="Race" && !(r.car.best>0)?L"—":L"LEADER";
-    if(r.lapDifference>0) return L"+"+std::to_wstring(r.lapDifference)+L" L";
-    return std::isfinite(r.gap)?L"+"+Format(r.gap):L"—";
+    if(r.lapDifference>0) return plus+std::to_wstring(r.lapDifference)+L" L";
+    return std::isfinite(r.gap)?plus+Format(r.gap):L"—";
 }
 std::wstring Interval(const Row& row) {
+    const std::wstring plus=app.gapSigns[StandingsKind]?L"+":L"";
     if((app.standings.separateClasses?row.car.classPosition:row.car.position)==1) return L"—";
-    if(row.intervalLaps>0) return L"+"+std::to_wstring(row.intervalLaps)+L" L";
-    return std::isfinite(row.interval)?L"+"+Format(row.interval):L"—";
+    if(row.intervalLaps>0) return plus+std::to_wstring(row.intervalLaps)+L" L";
+    return std::isfinite(row.interval)?plus+Format(row.interval):L"—";
 }
 // Fuel to add at the next stop: a final stop covers the shortfall, an intermediate stop fills the tank.
 double PlannedStopFuel(const PitWindow& window,const FuelPlan& p) {

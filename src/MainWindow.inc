@@ -168,6 +168,7 @@ bool SetStartWithWindows(bool on) {
 }
 void SetStartMinimized(bool on) { app.startMinimized=on; Save(); }
 void SetCheckUpdates(bool on) { app.checkUpdates=on; Save(); }
+void SetGapSigns(int kind,bool on) { app.gapSigns[kind]=on; SettingChanged(); }
 void SetShowTitleBar(bool on) {
     app.showTitleBar=on; app.tableHeaders.fill(on);
     for(auto& overlay:app.overlays) Fit(overlay);
