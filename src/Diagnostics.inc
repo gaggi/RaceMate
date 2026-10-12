@@ -737,9 +737,12 @@ int RunTickBenchmark() {
     for(double& phase:phases) phase=0;
     for(double& paint:paints) paint=0;
     for(int& change:changes) change=0;
+    PROCESS_MEMORY_COUNTERS memoryBefore{sizeof(memoryBefore)},memoryAfter{sizeof(memoryAfter)};
+    GetProcessMemoryInfo(GetCurrentProcess(),&memoryBefore,sizeof(memoryBefore));
     GetThreadTimes(GetCurrentThread(),&created,&exited,&kernelBefore,&userBefore); QueryPerformanceCounter(&start);
     for(int t=100;t<100+iterations;++t) step(t);
     QueryPerformanceCounter(&end); GetThreadTimes(GetCurrentThread(),&created,&exited,&kernelAfter,&userAfter);
+    GetProcessMemoryInfo(GetCurrentProcess(),&memoryAfter,sizeof(memoryAfter));
     auto ticks=[](FILETIME a,FILETIME b){ return (ULARGE_INTEGER{{b.dwLowDateTime,b.dwHighDateTime}}.QuadPart-ULARGE_INTEGER{{a.dwLowDateTime,a.dwHighDateTime}}.QuadPart)/10.0; };
     const double cpu=(ticks(kernelBefore,kernelAfter)+ticks(userBefore,userAfter))/iterations;
     const double wall=(end.QuadPart-start.QuadPart)*1e6/frequency.QuadPart/iterations;
@@ -747,5 +750,8 @@ int RunTickBenchmark() {
     report<<"60-car race, all overlays visible, "<<iterations<<" refreshes: "<<wall<<" us wall, "<<cpu<<" us CPU per refresh\n";
     report<<"  model "<<phases[0]*1e6/frequency.QuadPart/iterations<<" us, overlay update "<<phases[1]*1e6/frequency.QuadPart/iterations<<" us, paint "<<phases[2]*1e6/frequency.QuadPart/iterations<<" us\n";
     for(const auto& o:app.overlays) report<<"  overlay "<<o.kind<<": "<<changes[o.kind]<<" repaints, "<<paints[o.kind]*1e6/frequency.QuadPart/iterations<<" us per refresh"<<std::endl;
+    // Page faults (almost all soft: memory already in RAM) and the working set it ran in.
+    report<<"  page faults "<<static_cast<double>(memoryAfter.PageFaultCount-memoryBefore.PageFaultCount)/iterations<<" per refresh, working set "
+        <<memoryAfter.WorkingSetSize/1024<<" KB, peak "<<memoryAfter.PeakWorkingSetSize/1024<<" KB"<<std::endl;
     return 0;
 }

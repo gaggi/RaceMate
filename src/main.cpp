@@ -21,6 +21,7 @@
 #include <map>
 #ifdef RACEMATE_DIAGNOSTICS
 #include <fstream>
+#include <psapi.h>
 #endif
 
 namespace {
