@@ -17,7 +17,7 @@
 namespace
 {
 #ifndef RACEMATE_VERSION
-#define RACEMATE_VERSION "0.1.0"
+#define RACEMATE_VERSION "0.1.1"
 #endif
 
 #ifndef RACEMATE_GITHUB_OWNER

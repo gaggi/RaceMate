@@ -1,10 +1,10 @@
-# RaceMate 0.1.0
+# RaceMate 0.1.1
 
 Lightweight native overlays for iRacing on Windows 10/11. C++20, Win32 and GDI: one executable with a statically linked runtime, no browser engine, no network access, read-only access to iRacing's shared memory.
 
 ## Getting started
 
-1. Start `dist/x64/RaceMate-0.1.0-windows-x64.exe`. Run iRacing in borderless windowed mode.
+1. Start `dist/x64/RaceMate-0.1.1-windows-x64.exe`. Run iRacing in borderless windowed mode.
 2. Click **Preview** in the banner at the top to see every overlay with sample data.
 3. Turn on **Move overlays** (Overlays page) and drag each overlay where you want it, then click **Done**.
 4. Stop the preview. RaceMate connects to iRacing on its own; the banner shows the track and session.
