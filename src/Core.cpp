@@ -378,7 +378,7 @@ std::vector<Row> Relative(const Session& s, const Frame& f, int count, bool ownC
     }
     for (const auto& d : s.drivers) {
         if (d.index < 0 || d.index >= MaxCars || (ownClass && d.classId != me->classId)) continue;
-        const auto& c = f.cars[d.index];
+        const auto c = WithResults(s,f,d.index);
         if (!OnCircuit(c) || (hidePit && c.pit && d.index!=reference)) continue;
         double diff = c.pct - mine.pct; diff -= std::floor(diff + 0.5);
         Row row{d,c}; row.player = d.index == reference;

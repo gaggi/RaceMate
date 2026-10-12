@@ -151,6 +151,8 @@ void SetColumnVisible(int kind,int id,bool on) {
     case IntervalColumn: app.showInterval=on; break;
     case LapsColumn: app.standingsLaps=on; break;
     case GainedColumn: app.standingsGained=on; break;
+    case BestColumn: if(kind==RelativeKind) app.relativeBest=on; break;
+    case LastColumn: if(kind==RelativeKind) app.relativeLast=on; break;
     default: if(id>=LicenseColumn && id<=PitStopColumn) app.driverColumns[kind][id-LicenseColumn]=on;
     }
     SettingChanged();

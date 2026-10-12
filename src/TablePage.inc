@@ -11,7 +11,7 @@ private:
     struct ColumnText { const wchar_t* name; const wchar_t* detail; };
     static constexpr ColumnText ColumnTexts[]={
         {L"Position",L"Overall or class position"},{L"Car number",L"On the class color"},{L"Driver",L""},
-        {L"Gap",L""},{L"Interval",L"Gap to the car directly ahead, including hidden rows"},{L"Best lap",L""},{L"Last lap",L""},
+        {L"Gap",L""},{L"Interval",L"Gap to the car directly ahead, including hidden rows"},{L"Best lap",L"Fastest lap of this session"},{L"Last lap",L"Most recent lap"},
         {L"License",L"License class and safety rating"},{L"iRating",L""},{L"Tires",L"Dry / wet, or the compound where a car has several"},
         {L"Last pit lap",L"Lap of the last observed pit entry"},{L"Pit lane time",L"From pit entry to pit exit"},
         {L"Pit stop time",L"Time standing in the pit stall, estimated"},{L"Completed laps",L""},
@@ -28,7 +28,10 @@ private:
     void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
     void OnDestroy() override { if(typing_) ApplyRows(); }
 
-    static bool Optional(int id) { return id==DriverColumn || id==StatusColumn || id==IntervalColumn || id==LapsColumn || id==GainedColumn || id>=LicenseColumn && id<=PitStopColumn; }
+    bool Optional(int id) const {
+        if(id==BestColumn || id==LastColumn) return kind_==RelativeKind;
+        return id==DriverColumn || id==StatusColumn || id==IntervalColumn || id==LapsColumn || id==GainedColumn || id>=LicenseColumn && id<=PitStopColumn;
+    }
     static bool HasOptions(int id) { return id==DriverColumn || id==StatusColumn || id==LicenseColumn || id==IRatingColumn; }
     std::wstring ColumnDetail(int id) const {
         switch(id) {

@@ -124,6 +124,22 @@ int RunDiagnostics() {
         report<<"Table page settings, name formats, single status priority, configurable headers and independent footer persistence: "<<(displayOk?"PASS":"FAIL")<<"\n"; ok=displayOk && ok;
     }
     {
+        // Best and last lap: optional in the Relative (off by default), always in the Standings.
+        bool lapsOk=!ColumnVisible(RelativeKind,BestColumn) && !ColumnVisible(RelativeKind,LastColumn) && ColumnVisible(StandingsKind,BestColumn) && ColumnVisible(StandingsKind,LastColumn);
+        const int width=OverlayWidth(RelativeKind);
+        SetColumnVisible(RelativeKind,BestColumn,true); SetColumnVisible(RelativeKind,LastColumn,true);
+        lapsOk=OverlayWidth(RelativeKind)==width+ColumnWidth(BestColumn,RelativeKind)+ColumnWidth(LastColumn,RelativeKind) && lapsOk;
+        const auto columns=VisibleColumns(RelativeKind);
+        const auto gap=std::find(columns.begin(),columns.end(),GapColumn);
+        lapsOk=gap!=columns.end() && gap+2<columns.end() && gap[1]==BestColumn && gap[2]==LastColumn && lapsOk;
+        UpdateOverlays(); lapsOk=Export(app.overlays[RelativeKind].window,L"build\\qa\\relative-lap-times.bmp") && lapsOk;
+        SetColumnVisible(StandingsKind,BestColumn,false); lapsOk=ColumnVisible(StandingsKind,BestColumn) && lapsOk;
+        Load(); lapsOk=app.relativeBest && app.relativeLast && lapsOk;
+        SetColumnVisible(RelativeKind,BestColumn,false); SetColumnVisible(RelativeKind,LastColumn,false);
+        Load(); lapsOk=!app.relativeBest && !app.relativeLast && OverlayWidth(RelativeKind)==width && lapsOk;
+        report<<"Relative best and last lap columns: "<<(lapsOk?"PASS":"FAIL")<<"\n"; ok=lapsOk && ok;
+    }
+    {
         const auto savedFlags=app.driverFlags; const auto savedFrame=app.frame; bool flagsOk=true;
         app.frame.cars[0].sessionFlags=0x10000u; app.frame.cars[1].sessionFlags=0x80000u; app.frame.cars[2].sessionFlags=0x100000u; app.frame.cars[3].sessionFlags=0x190000u;
         for(int kind=0;kind<2;++kind) {

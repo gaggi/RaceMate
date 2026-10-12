@@ -50,7 +50,7 @@ constexpr ColumnInfo Columns[]={
 static_assert(std::size(Columns)==ColumnCount);
 const wchar_t* DriverColumnKeys[]={L"ShowLicense",L"ShowIRating",L"ShowTires",L"ShowLastPitLap",L"ShowPitTime",L"ShowPitStopTime"};
 const std::vector<int> DefaultColumns[]={
-    {PositionColumn,NumberColumn,DriverColumn,StatusColumn,GapColumn,LicenseColumn,IRatingColumn,TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn},
+    {PositionColumn,NumberColumn,DriverColumn,StatusColumn,GapColumn,BestColumn,LastColumn,LicenseColumn,IRatingColumn,TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn},
     {PositionColumn,GainedColumn,NumberColumn,DriverColumn,StatusColumn,GapColumn,IntervalColumn,BestColumn,LastColumn,LapsColumn,
      LicenseColumn,IRatingColumn,TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn}};
 // Header and footer metrics. The values are stored in the Header*/Footer* keys.
@@ -151,7 +151,7 @@ struct App {
     std::array<int,2> nameFormat{};
     std::array<Slots,2> headerMetrics{DefaultHeader,DefaultHeader};
     std::array<FooterSettings,2> footers;
-    int rows=7, gapDecimals=1; bool relativeHidePit=false;
+    int rows=7, gapDecimals=1; bool relativeHidePit=false, relativeBest=false, relativeLast=false;
     StandingsOptions standings; bool showInterval=false, standingsLaps=false, standingsGained=false;
     std::vector<int> fuelOrder=DefaultFuelOrder;
     std::array<bool,FuelElementCount> fuelDisplay{};
@@ -197,6 +197,9 @@ bool ColumnVisible(int kind,int id) {
     case GainedColumn: return kind==StandingsKind && app.standingsGained;
     case LapsColumn: return kind==StandingsKind && app.standingsLaps;
     case IntervalColumn: return app.showInterval;
+    // Always shown in the Standings, optional in the Relative.
+    case BestColumn: return kind==StandingsKind || app.relativeBest;
+    case LastColumn: return kind==StandingsKind || app.relativeLast;
     default: return id>=LicenseColumn?app.driverColumns[kind][id-LicenseColumn]:true;
     }
 }
@@ -329,6 +332,7 @@ void Load() {
     app.rows=RelativeRowCount(ReadInt(L"Relative",L"Rows",7));
     app.gapDecimals=std::clamp(ReadInt(L"Relative",L"GapDecimals",1),0,3);
     app.relativeHidePit=ReadBool(L"Relative",L"HideDriversInPit",false);
+    app.relativeBest=ReadBool(L"Relative",L"ShowBestLap",false); app.relativeLast=ReadBool(L"Relative",L"ShowLastLap",false);
     auto& standings=app.standings;
     standings.separateClasses=ReadBool(L"Standings",L"SeparateClasses",true);
     standings.ownClass=ReadBool(L"Standings",L"OwnClass",false);
@@ -389,6 +393,7 @@ void Save() {
         for(int i=0;i<3;++i) { number(section,HeaderKeys[i],app.headerMetrics[kind][i]); number(section,FooterKeys[i],app.footers[kind].metrics[i]); }
     }
     number(L"Relative",L"Rows",app.rows); number(L"Relative",L"GapDecimals",app.gapDecimals); number(L"Relative",L"HideDriversInPit",app.relativeHidePit);
+    number(L"Relative",L"ShowBestLap",app.relativeBest); number(L"Relative",L"ShowLastLap",app.relativeLast);
     const auto& standings=app.standings;
     number(L"Standings",L"SeparateClasses",standings.separateClasses); number(L"Standings",L"OwnClass",standings.ownClass);
     number(L"Standings",L"LiveGaps",standings.liveGaps); number(L"Standings",L"FallbackByIRating",standings.fallbackByRating);
