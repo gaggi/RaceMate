@@ -6,6 +6,7 @@
 #include <shlobj.h>
 #include <objidl.h>
 #include <gdiplus.h>
+#include <shlwapi.h>
 #include "ui/BackgroundTask.h"
 #include "ui/NavBar.h"
 #include "ui/PageWindow.h"
@@ -34,84 +35,103 @@ constexpr bool IsTable(int kind) { return kind==RelativeKind || kind==StandingsK
 const wchar_t* Titles[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pit Limiter",L"Weather"};
 const wchar_t* Sections[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pitlimiter",L"Weather"};
 constexpr POINT DefaultPositions[]={{40,120},{480,120},{40,470},{40,720},{40,820}};
+// Refresh rates an overlay can choose, and each overlay's default; telemetry is read at least as often as the fastest.
+constexpr int OverlayRates[]={1,2,5,10,15,20};
+constexpr int DefaultRates[]={10,1,1,10,1};
 // Relative and Standings columns. The values are stored in ColumnOrder.
 enum Column {
     PositionColumn, NumberColumn, DriverColumn, GapColumn, IntervalColumn, BestColumn, LastColumn,
     LicenseColumn, IRatingColumn, TiresColumn, PitLapColumn, PitTimeColumn, PitStopColumn,
-    LapsColumn, GainedColumn, StatusColumn
+    LapsColumn, GainedColumn, StatusColumn, BrandColumn, RatingChangeColumn, StintColumn, StopsColumn
 };
-constexpr int ColumnCount=StatusColumn+1;
-// License..PitStop are the optional driver columns, also used by Race Control.
-constexpr int DriverColumnCount=PitStopColumn-LicenseColumn+1;
-struct ColumnInfo { const wchar_t* title; int width, compactWidth; };
+constexpr int ColumnCount=StopsColumn+1;
+// License..PitStop are the optional driver columns, also used by Race Control; Brand..Stint came later with their own keys.
+constexpr int DriverColumnCount=PitStopColumn-LicenseColumn+1, ExtraColumnCount=StopsColumn-BrandColumn+1;
+// Widths include the 8 px gap to the next column; Status is the badge after the driver's name, not a column.
+struct ColumnInfo { const wchar_t* title; int width, compactWidth; UINT align=DT_RIGHT; };
 constexpr ColumnInfo Columns[]={
-    {L"P",33,36},{L"#",42,42},{L"DRIVER",191,191},{L"GAP",87,76},{L"INT",80,68},{L"BEST",94,88},{L"LAST",93,88},
-    {L"LICENSE",82,68},{L"iRATING",72,60},{L"TIRES",64,56},{L"PIT LAP",70,52},{L"PIT TIME",80,76},{L"PIT STOP",88,76},
-    {L"LAPS",64,52},{L"GAIN",64,50},{L"STATUS",70,64}};
+    {L"P",36,32},{L"#",50,50,DT_CENTER},{L"DRIVER",180,170,DT_LEFT},{L"GAP",70,60},{L"INT",64,56},{L"BEST",80,72},{L"LAST",80,72},
+    {L"LICENSE",70,58,DT_CENTER},{L"iRATING",66,48},{L"TIRES",54,30,DT_CENTER},{L"PIT LAP",64,48},{L"PIT TIME",74,66},{L"PIT STOP",80,72},
+    {L"LAPS",50,42},{L"GAIN",50,42},{L"STATUS",0,0,DT_LEFT},{L"CAR",124,116,DT_LEFT},{L"iR ±",54,46},{L"STINT",58,46,DT_CENTER},{L"STOPS",56,32,DT_CENTER}};
 static_assert(std::size(Columns)==ColumnCount);
 const wchar_t* DriverColumnKeys[]={L"ShowLicense",L"ShowIRating",L"ShowTires",L"ShowLastPitLap",L"ShowPitTime",L"ShowPitStopTime"};
+const wchar_t* ExtraColumnKeys[]={L"ShowCar",L"ShowIRatingChange",L"ShowStint",L"ShowStops"};
+// Saved orders keep their place; columns a file does not list yet go before their default successor.
 const std::vector<int> DefaultColumns[]={
-    {PositionColumn,NumberColumn,DriverColumn,StatusColumn,GapColumn,BestColumn,LastColumn,LicenseColumn,IRatingColumn,TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn},
-    {PositionColumn,GainedColumn,NumberColumn,DriverColumn,StatusColumn,GapColumn,IntervalColumn,BestColumn,LastColumn,LapsColumn,
-     LicenseColumn,IRatingColumn,TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn}};
+    {PositionColumn,NumberColumn,DriverColumn,StatusColumn,BrandColumn,LicenseColumn,IRatingColumn,RatingChangeColumn,StintColumn,StopsColumn,BestColumn,LastColumn,GapColumn,
+     TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn},
+    {PositionColumn,GainedColumn,NumberColumn,DriverColumn,StatusColumn,BrandColumn,GapColumn,IntervalColumn,BestColumn,LastColumn,StintColumn,StopsColumn,LapsColumn,
+     LicenseColumn,IRatingColumn,RatingChangeColumn,TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn}};
 // Header and footer metrics. The values are stored in the Header*/Footer* keys.
 enum Metric {
     NoMetric, TrackMetric, IncidentsMetric, TrackTempMetric, AirTempMetric, TemperaturesMetric, TimeRemainingMetric, TimeElapsedMetric,
     CurrentLapMetric, FinalLapMetric, LapsRemainingMetric, LocalTimeMetric, SimTimeMetric, SessionTypeMetric, WetnessMetric, WindMetric,
-    SofMetric, OverlayNameMetric
+    SofMetric, OverlayNameMetric, PositionMetric, BrakeBiasMetric
 };
-constexpr int MetricCount=OverlayNameMetric+1;
-const wchar_t* MetricTitles[]={L"None",L"Track",L"Incidents",L"Track Temperature",L"Air Temperature",L"Temperatures",L"Session Time Remaining",L"Session Time Elapsed",L"Current Lap",L"Current / Expected Final Lap",L"Estimated Laps Remaining",L"Local Time",L"Sim Time",L"Session Type",L"Track Wetness",L"Wind",L"Class SOF",L"Overlay Name"};
+constexpr int MetricCount=BrakeBiasMetric+1;
+const wchar_t* MetricTitles[]={L"None",L"Track",L"Incidents",L"Track Temperature",L"Air Temperature",L"Temperatures",L"Session Time Remaining",L"Session Time Elapsed",L"Current Lap",L"Current / Expected Final Lap",L"Estimated Laps Remaining",L"Local Time",L"Sim Time",L"Session Type",L"Track Wetness",L"Wind",L"Class SOF",L"Overlay Name",L"Position in Class",L"Brake Bias"};
 static_assert(std::size(MetricTitles)==MetricCount);
-using Slots=std::array<int,3>;
-const wchar_t* HeaderKeys[]={L"HeaderLeft",L"HeaderCenter",L"HeaderRight"};
-const wchar_t* FooterKeys[]={L"FooterLeft",L"FooterCenter",L"FooterRight"};
-constexpr Slots DefaultHeader{OverlayNameMetric,NoMetric,SessionTypeMetric}, DefaultFooter{TrackMetric,NoMetric,IncidentsMetric};
-// Fuel Calculator elements. The values are stored in ElementOrder; the consumption table's display flag toggles its PIT column.
-enum FuelElement {
-    LeaderDistanceElement, FinalLapTimeElement, TimeEmptyElement, FuelAtEndElement, StopsRemainingElement, TankGaugeElement,
-    StintTimelineElement, PitPanelElement, ConsumptionTableElement, RemainingLeaderDistanceElement, RefuelToEndElement,
-    KeyNumbersElement, PitTimelineElement
+// The first slot sits on the left, the others right-aligned in order. Keys keep their earlier names.
+constexpr int SlotCount=4;
+using Slots=std::array<int,SlotCount>;
+const wchar_t* HeaderKeys[]={L"HeaderLeft",L"HeaderCenter",L"HeaderRight",L"HeaderFourth"};
+const wchar_t* FooterKeys[]={L"FooterLeft",L"FooterCenter",L"FooterRight",L"FooterFourth"};
+constexpr Slots DefaultHeader{OverlayNameMetric,SofMetric,IncidentsMetric,TimeRemainingMetric}, DefaultFooter{TemperaturesMetric,NoMetric,WetnessMetric,BrakeBiasMetric};
+// Fuel Calculator modules, top to bottom; each switch is stored under its key.
+enum FuelModule {
+    FuelHeaderModule, TankModule, FiguresModule, HistoryModule, CautionMarks, RefuelCard, WindowCard, TimelineModule,
+    TargetRow, OneLongerRow, TwoLongerRow, OneShorterRow
 };
-constexpr int FuelElementCount=PitTimelineElement+1;
-struct ElementInfo { const wchar_t* key; const wchar_t* title; const wchar_t* option; int height; };
-constexpr ElementInfo FuelElements[]={
-    {L"ShowLeaderDistance",L"Leader Distance",L"Leader distance",29},
-    {L"ShowFinalLapTime",L"Final Lap Time",L"Time left at final lap start",29},
-    {L"ShowTimeEmpty",L"Time Empty",L"Time until empty",27},
-    {L"ShowFuelAtEnd",L"Fuel at End",L"Fuel at finish",27},
-    {L"ShowStopsRemaining",L"Stops Remaining",L"Stops remaining",27},
-    {L"ShowTankGauge",L"Tank Gauge",L"Tank gauge",47},
-    {L"ShowStintTimeline",L"Stint Timeline",L"Stint timeline",30},
-    {L"ShowPitWindowPanel",L"Pit Window Panel",L"Pit window panel",39},
-    {L"ShowPitWindowColumn",L"Consumption Table",L"Pit window column",0},
-    {L"ShowRemainingLeaderDistance",L"Remaining Leader Distance",L"Remaining leader distance",29},
-    {L"ShowRefuelToEnd",L"Refuel to End",L"Refuel to finish",27},
-    {L"ShowKeyNumbers",L"Tank / Range / At Finish",L"Tank, range and fuel at finish",50},
-    {L"ShowPitTimeline",L"Pit Window Timeline",L"Pit window timeline",36}};
-static_assert(std::size(FuelElements)==FuelElementCount);
-const std::vector<int> DefaultFuelOrder{KeyNumbersElement,PitTimelineElement,LeaderDistanceElement,RemainingLeaderDistanceElement,FinalLapTimeElement,TimeEmptyElement,FuelAtEndElement,
-    StopsRemainingElement,RefuelToEndElement,TankGaugeElement,StintTimelineElement,PitPanelElement,ConsumptionTableElement};
-const wchar_t* FuelMetricNames[]={L"Last lap",L"Average 10",L"Average 5",L"Maximum",L"Minimum",L"Average"};
-// Pit window, Time Empty and the stint timeline all use the whole-race average.
-constexpr int RaceAverage=static_cast<int>(FuelMetric::Average);
-// Weather cards. The values are stored in ElementOrder; WindDirectionOption is a switch nested below the wind card.
-enum WeatherElement { TrackTempElement, AirTempElement, WindElement, WetnessElement, UsageElement };
-constexpr int WeatherCardCount=UsageElement+1, WindDirectionOption=WeatherCardCount;
-constexpr ElementInfo WeatherElements[]={
-    {L"ShowTrackTemperature",L"Track Temp",L"Show Track Temperature",36},
-    {L"ShowAirTemperature",L"Air Temp",L"Show Air Temperature",36},
-    {L"ShowWind",L"Wind",L"Show Wind",190},
-    {L"ShowTrackWetness",L"Track Wetness",L"Show Track Wetness",36},
-    {L"ShowTrackUsage",L"Track Usage",L"Show Track Usage",36},
-    {L"ShowWindDirection",L"Wind Direction",L"Show Wind Direction",0}};
-const std::vector<int> DefaultWeatherOrder{TrackTempElement,AirTempElement,WindElement,WetnessElement,UsageElement};
-struct Placement { int x=40,y=120,scale=100,opacity=90; bool enabled=true, growLeft=false, growUp=false; };
-enum FontId : unsigned char { Regular, Bold, Large, Small, Hero, FontCount };
+constexpr int FuelModuleCount=OneShorterRow+1;
+struct ModuleInfo { const wchar_t* key; const wchar_t* title; const wchar_t* detail; bool on; };
+constexpr ModuleInfo FuelModules[]={
+    {L"ShowHeader",L"Header",L"Current and final lap, and how many stops are needed",true},
+    {L"ShowTank",L"Tank",L"Fuel, range in laps and a bar of the fuel to the finish",true},
+    {L"ShowFigures",L"Consumption",L"",true},
+    {L"ShowHistory",L"Last 10 laps",L"Fuel of each lap against the 10-lap average",true},
+    {L"MarkCaution",L"Mark caution laps",L"In the last 10 laps; they never count toward consumption",true},
+    {L"ShowRefuel",L"Refuel to finish",L"Without a safety margin; green when it fits in the tank",true},
+    {L"ShowPitWindow",L"Pit window",L"Earliest and latest lap to stop",true},
+    {L"ShowTimeline",L"Pit window timeline",L"One block per lap of a full tank: window green, current lap yellow",true},
+    {L"ShowTarget",L"Target",L"Most fuel per lap that still reaches the latest stop, or the finish",true},
+    {L"ShowOneLonger",L"One lap longer",L"Most fuel per lap for one lap more",true},
+    {L"ShowTwoLonger",L"Two laps longer",L"Most fuel per lap for two laps more",false},
+    {L"ShowOneShorter",L"One lap shorter",L"Most fuel per lap for one lap less",false}};
+static_assert(std::size(FuelModules)==FuelModuleCount);
+// Consumption figures in display order; app.fuelRows follows this order.
+struct FigureInfo { int metric; const wchar_t* heading; const wchar_t* title; const wchar_t* key; bool on; };
+constexpr FigureInfo FuelFigures[]={
+    {0,L"LAST",L"Last lap",L"ShowLast",true},{6,L"AVG 3",L"Average of 3 laps",L"ShowAverage3",true},
+    {1,L"AVG 10",L"Average of 10 laps",L"ShowAverage10",true},{2,L"AVG 5",L"Average of 5 laps",L"ShowAverage5",false},
+    {5,L"RACE",L"Race average",L"ShowAverage",false},{4,L"MIN",L"Minimum",L"ShowMinimum",true},{3,L"MAX",L"Maximum",L"ShowMaximum",true}};
+static_assert(std::size(FuelFigures)==FuelMetricCount);
+// The average of the last 10 clean laps drives range, pit window, refuel and targets.
+constexpr int FuelBasis=static_cast<int>(FuelMetric::Average10);
+// Weather modules, top to bottom; the last two switch trend arrows and the wind relative to the car.
+enum WeatherModule {
+    WeatherHeaderModule, ConditionModule, RainModule, TemperatureModule, TemperatureHistoryModule, WindModule, DetailsModule, UsageModule,
+    TrendArrows, WindRelative
+};
+constexpr int WeatherModuleCount=WindRelative+1, WeatherPanelCount=UsageModule+1;
+constexpr ModuleInfo WeatherModules[]={
+    {L"ShowHeader",L"Header",L"With DECLARED WET while rain tires are allowed",true},
+    {L"ShowTrackWetness",L"Track condition",L"iRacing's seven levels from dry to extremely wet",true},
+    {L"ShowPrecipitation",L"Precipitation",L"Rain at the start/finish line",true},
+    {L"ShowTemperatures",L"Temperatures",L"Track and air",true},
+    {L"ShowTemperatureHistory",L"Track temperature history",L"The last 20 minutes",true},
+    {L"ShowWind",L"Wind",L"Speed and compass direction around the wind ring",true},
+    {L"ShowDetails",L"Details",L"Humidity, sky and fog",false},
+    {L"ShowTrackUsage",L"Track usage",L"How much rubber is on the track",false},
+    {L"ShowTrends",L"Trend arrows",L"Rising, falling or steady over the last 10 minutes",true},
+    {L"ShowWindDirection",L"Wind relative to the car",L"Arrow on the ring and crosswind text; needs your car's heading, so only while you drive",true}};
+static_assert(std::size(WeatherModules)==WeatherModuleCount);
+const wchar_t* WetnessNames[]={L"—",L"Dry",L"Mostly Dry",L"Very Lightly Wet",L"Lightly Wet",L"Moderately Wet",L"Very Wet",L"Extremely Wet"};
+struct Placement { int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=true, growLeft=false, growUp=false; };
+enum FontId : unsigned char { Regular, Bold, Large, Small, Hero, SmallBold, FontCount };
 struct DrawCommand {
-    enum Type : unsigned char { Fill, Text, DottedLine, WindRing };
+    enum Type : unsigned char { Fill, Text, DottedLine, WindRing, Outline, RoundFill, Ring, Hatch, Sparkline, Logo };
     Type type=Fill; FontId font=Regular; UINT align=DT_LEFT; RECT r{}; COLORREF color=0;
-    std::array<float,5> shape{}; // Wind ring: center x/y, radius, scale, bearing (negative without direction).
+    std::array<float,5> shape{}; // Wind ring: center x/y, radius, scale, bearing (negative without direction). Outline and RoundFill: corner radius. Ring: stroke width. Hatch: background color. Sparkline: stroke width; its text holds the points, 1 + 0..1000 from bottom to top. Logo: atlas cell.
     std::wstring text;
     bool operator==(const DrawCommand& o) const {
         return type==o.type && font==o.font && align==o.align && r.left==o.r.left && r.top==o.r.top && r.right==o.r.right && r.bottom==o.r.bottom
@@ -123,10 +143,17 @@ struct Overlay {
     HDC dc=nullptr; HBITMAP bitmap=nullptr; HGDIOBJ original=nullptr, originalFont=nullptr;
     std::array<HFONT,FontCount> fonts{}; int width=0,height=0,dpi=0;
     std::vector<DrawCommand> scene;
+    ULONGLONG due=0; // Next scheduled refresh, in app.now time.
+    struct Width { FontId font; std::wstring text; int width; };
+    mutable std::vector<Width> widths; // Measured text widths for the current fonts.
+    struct Logo { int index, size; HBITMAP bitmap; };
+    std::vector<Logo> logos; // Car brand logos at this overlay's size, premultiplied for AlphaBlend.
     void Free() {
         if(dc) { SelectObject(dc,originalFont); SelectObject(dc,original); DeleteObject(bitmap); DeleteDC(dc); }
+        for(const auto& logo:logos) DeleteObject(logo.bitmap);
+        logos.clear();
         for(HFONT& font:fonts) if(font) { DeleteObject(font); font=nullptr; }
-        dc=nullptr; bitmap=nullptr; width=height=dpi=0; scene.clear();
+        dc=nullptr; bitmap=nullptr; width=height=dpi=0; scene.clear(); widths.clear();
     }
 };
 struct FooterSettings { bool enabled=true; Slots metrics=DefaultFooter; };
@@ -148,7 +175,11 @@ struct App {
     std::array<std::array<bool,DriverColumnCount>,2> driverColumns{};
     std::array<std::array<bool,2>,2> driverShortView{};
     std::array<std::array<bool,3>,2> driverFlags{{{true,true,true},{true,true,true}}};
-    std::array<bool,2> showDriver{true,true}, showStatus{true,true}, tableHeaders{}, columnHeaders{};
+    std::array<std::array<bool,ExtraColumnCount>,2> extraColumns{};
+    std::array<bool,2> showDriver{true,true}, showStatus{true,true}, tableHeaders{}, columnHeaders{}, classColors{true,true};
+    bool lapColors=true; // Relative only: red for cars a lap ahead, blue a lap behind.
+    bool standingsProgress=true; // Standings: session progress under the header.
+    unsigned classBestVersion=~0u; std::vector<std::pair<int,double>> classBest;
     std::array<int,2> nameFormat{};
     std::array<Slots,2> headerMetrics{DefaultHeader,DefaultHeader};
     std::array<FooterSettings,2> footers;
@@ -156,20 +187,20 @@ struct App {
     // + / - before gaps (and intervals in the Standings), per table; off by default: the row order already tells.
     std::array<bool,2> gapSigns{};
     StandingsOptions standings; bool showInterval=false, standingsLaps=false, standingsGained=false;
-    std::vector<int> fuelOrder=DefaultFuelOrder;
-    std::array<bool,FuelElementCount> fuelDisplay{};
+    std::array<bool,FuelModuleCount> fuelDisplay{};
     std::array<bool,FuelMetricCount> fuelRows{};
-    bool excludeYellowFuelLaps=false;
-    std::vector<int> weatherOrder=DefaultWeatherOrder;
-    std::array<bool,WeatherCardCount+1> weatherDisplay{};
+    bool fuelStrip=false; // Fuel Calculator as one line of key values instead of the panel.
+    std::array<bool,WeatherModuleCount> weatherDisplay{};
+    bool weatherStrip=false; WeatherHistory weatherHistory;
     bool preview=false, edit=false, hidden=false, diagnostics=false;
     bool startWithWindows=false, startMinimized=false, showTitleBar=false, checkUpdates=true;
     bool settingsError=false, trayAvailable=false;
     // Values Save() last wrote, keyed "section\nkey"; Save() only writes what differs.
     std::map<std::wstring,std::wstring> savedSettings; unsigned settingsWrites=0;
     std::array<WORD,HotkeyCount> hotkeys{}; bool hotkeysEnabled=false; std::wstring hotkeyError;
-    int rate=10,timerMs=0;
-    unsigned modelVersion=0,relativeVersion=~0u,standingsVersion=~0u,planVersion=~0u;
+    int rate=10,timerMs=0; ULONGLONG now=0;
+    unsigned modelVersion=0,relativeVersion=~0u,standingsVersion=~0u,planVersion=~0u,ratingVersion=~0u;
+    std::array<int,MaxCars> ratingChanges{};
     std::vector<Row> relativeRows; std::vector<StandingsGroup> standingsGroups; std::vector<DrawCommand> sceneBuffer;
     NOTIFYICONDATAW tray{};
 } app;
@@ -191,27 +222,27 @@ std::wstring Lap(double x) {
     if(x<=0 || !std::isfinite(x)) return L"—";
     wchar_t b[64]; swprintf_s(b,L"%d:%06.3f",static_cast<int>(x)/60,std::fmod(x,60)); return b;
 }
-bool MultiCompoundSession() { return std::any_of(app.session.drivers.begin(),app.session.drivers.end(),HasMultipleDryCompounds); }
 const wchar_t* ColumnTitle(int id) { return Columns[id].title; }
 bool ColumnVisible(int kind,int id) {
     switch(id) {
     case DriverColumn: return app.showDriver[kind];
-    case StatusColumn: return app.showStatus[kind];
+    case StatusColumn: return false; // Drawn as the badge after the name; app.showStatus switches it.
     case GainedColumn: return kind==StandingsKind && app.standingsGained;
     case LapsColumn: return kind==StandingsKind && app.standingsLaps;
     case IntervalColumn: return app.showInterval;
     // Always shown in the Standings, optional in the Relative.
     case BestColumn: return kind==StandingsKind || app.relativeBest;
     case LastColumn: return kind==StandingsKind || app.relativeLast;
-    default: return id>=LicenseColumn?app.driverColumns[kind][id-LicenseColumn]:true;
+    default:
+        if(id>=BrandColumn) return app.extraColumns[kind][id-BrandColumn];
+        return id>=LicenseColumn?app.driverColumns[kind][id-LicenseColumn]:true;
     }
 }
 // Without column headings, columns shrink to fit their values.
 int ColumnWidth(int id,int kind) {
     const bool compact=!app.columnHeaders[kind];
-    if(id==TiresColumn && MultiCompoundSession()) return compact?90:100;
-    if(compact && id==DriverColumn && app.nameFormat[kind]!=0) return 146;
-    if(compact && (id==LicenseColumn || id==IRatingColumn) && app.driverShortView[kind][id-LicenseColumn]) return 56;
+    if(compact && id==DriverColumn && app.nameFormat[kind]!=0) return 150;
+    if(compact && (id==LicenseColumn || id==IRatingColumn) && app.driverShortView[kind][id-LicenseColumn]) return 50;
     return compact?Columns[id].compactWidth:Columns[id].width;
 }
 std::vector<int> VisibleColumns(int kind) { std::vector<int> result; for(int id:app.columnOrder[kind]) if(ColumnVisible(kind,id)) result.push_back(id); return result; }
@@ -220,15 +251,37 @@ int FuelFinishLap() {
     return f.lapCompleted>=0 && std::isfinite(distance) && distance>=0?std::max(f.lapCompleted+1,f.lapCompleted+static_cast<int>(std::ceil(f.lapPct+distance-1e-6))):-1;
 }
 int StintCellCount() {
-    const double average=app.fuelPlan.estimates[RaceAverage].consumption,capacity=app.session.fuelCapacity;
+    const double average=app.fuelPlan.estimates[FuelBasis].consumption,capacity=app.session.fuelCapacity;
     return std::isfinite(average) && average>0 && std::isfinite(capacity) && capacity>0?static_cast<int>(std::clamp(std::ceil(capacity/average),1.0,10000.0)):0;
 }
-int WeatherHeight() { int height=40; for(int i=0;i<WeatherCardCount;++i) if(app.weatherDisplay[i]) height+=WeatherElements[i].height+8; return height; }
-bool FuelElementVisible(int id) { return id!=ConsumptionTableElement?app.fuelDisplay[id]:std::any_of(app.fuelRows.begin(),app.fuelRows.end(),[](bool value){return value;}); }
+// Cells in the weather strip: condition, rain, both temperatures and wind (two cells wide).
+int WeatherStripCount() { const auto& d=app.weatherDisplay; return d[ConditionModule]+d[RainModule]+2*d[TemperatureModule]+2*d[WindModule]; }
+constexpr int WeatherPanelWidth=360, WeatherStripCell=112;
+int WeatherHeight() {
+    if(app.weatherStrip) return 50;
+    const auto& d=app.weatherDisplay; constexpr int heights[]={36,84,36,62,76,108,32,32};
+    int h=0; for(int i=0;i<WeatherPanelCount;++i) if(d[i]) h+=heights[i];
+    return std::max(h,40);
+}
+// Values in the strip layout: tank and range, the 10-lap average, refuel, latest stop and two targets.
+int FuelStripCount() { const auto& d=app.fuelDisplay; return 2*d[TankModule]+d[FiguresModule]+d[RefuelCard]+d[WindowCard]+d[TargetRow]+d[OneLongerRow]; }
+constexpr int FuelPanelWidth=440, FuelStripCell=86;
+int FuelHeight() {
+    if(app.fuelStrip) return 50;
+    const auto& d=app.fuelDisplay; int h=0;
+    if(d[FuelHeaderModule]) h+=36;
+    if(d[TankModule]) h+=112;
+    if(d[FiguresModule] && std::count(app.fuelRows.begin(),app.fuelRows.end(),true)) h+=52;
+    if(d[HistoryModule]) h+=104;
+    if(d[RefuelCard] || d[WindowCard]) h+=92;
+    if(d[TimelineModule]) h+=46;
+    if(const int targets=d[TargetRow]+d[OneLongerRow]+d[TwoLongerRow]+d[OneShorterRow]) h+=16+24*targets;
+    return std::max(h,40);
+}
 int OverlayWidth(int kind) {
-    if(IsTable(kind)) { int width=12; for(int id:VisibleColumns(kind)) width+=ColumnWidth(id,kind); return std::max(120,width); }
-    if(kind==WeatherKind) return 240;
-    if(kind==FuelKind) return std::max(std::any_of(app.fuelDisplay.begin(),app.fuelDisplay.end(),[](bool value){return value;})?465:365,app.fuelDisplay[StintTimelineElement]?64+StintCellCount()*4:0);
+    if(IsTable(kind)) { int width=16; for(int id:VisibleColumns(kind)) width+=ColumnWidth(id,kind); return std::max(120,width); }
+    if(kind==WeatherKind) return app.weatherStrip?std::max(1,WeatherStripCount())*WeatherStripCell:WeatherPanelWidth;
+    if(kind==FuelKind) return app.fuelStrip?std::max(1,FuelStripCount())*FuelStripCell:FuelPanelWidth;
     return 365;
 }
 COLORREF TireTextColor(const Row& row) {
@@ -246,7 +299,8 @@ std::wstring CompletedLaps(const Row& row) {
     if(completed<0 && app.session.number==app.frame.session && index>=0 && index<MaxCars) completed=app.session.results[index].completed;
     return completed>=0?std::to_wstring(completed):L"—";
 }
-bool ShowOverlayHeader(int kind) { return IsTable(kind)?app.tableHeaders[kind]:app.showTitleBar; }
+// Fuel Calculator and Weather draw their own header module instead of the title bar.
+bool ShowOverlayHeader(int kind) { return IsTable(kind)?app.tableHeaders[kind]:kind==PitLimiterKind && app.showTitleBar; }
 int TableRowsTop(int kind) { return 32+(app.columnHeaders[kind]?27:0); }
 std::wstring DriverName(const Row& row,int kind) {
     auto name=Wide(row.driver.name); const auto first=name.find_first_not_of(L" \t\r\n");
@@ -312,7 +366,7 @@ std::vector<int> ReadOrder(const wchar_t* section,const wchar_t* key,const std::
     return order;
 }
 Slots ReadSlots(const wchar_t* section,const wchar_t* const keys[],const Slots& defaults) {
-    Slots slots{}; for(int i=0;i<3;++i) slots[i]=std::clamp(ReadInt(section,keys[i],defaults[i]),0,MetricCount-1); return slots;
+    Slots slots{}; for(int i=0;i<SlotCount;++i) slots[i]=std::clamp(ReadInt(section,keys[i],defaults[i]),0,MetricCount-1); return slots;
 }
 int NormalizeScale(int scale) { return ((std::clamp(scale,50,150)+5)/10)*10; }
 void Load() {
@@ -322,6 +376,8 @@ void Load() {
         app.columnOrder[kind]=ReadOrder(section,L"ColumnOrder",DefaultColumns[kind]);
         for(int i=0;i<DriverColumnCount;++i) app.driverColumns[kind][i]=ReadBool(section,DriverColumnKeys[i],false);
         app.driverShortView[kind]={ReadBool(section,L"ShortLicenseView",false),ReadBool(section,L"ShortIRatingView",false)};
+        for(int i=0;i<ExtraColumnCount;++i) app.extraColumns[kind][i]=ReadBool(section,ExtraColumnKeys[i],false);
+        app.classColors[kind]=ReadBool(section,L"ShowClassColor",true);
         app.gapSigns[kind]=ReadBool(section,L"ShowGapSigns",false);
         app.driverFlags[kind]={ReadBool(section,L"ShowBlackFlag",true),ReadBool(section,L"ShowSlowdown",true),ReadBool(section,L"ShowRequiredRepairs",true)};
         app.showDriver[kind]=ReadBool(section,L"ShowDriver",true);
@@ -336,6 +392,7 @@ void Load() {
     app.rows=RelativeRowCount(ReadInt(L"Relative",L"Rows",7));
     app.gapDecimals=std::clamp(ReadInt(L"Relative",L"GapDecimals",1),0,3);
     app.relativeHidePit=ReadBool(L"Relative",L"HideDriversInPit",false);
+    app.lapColors=ReadBool(L"Relative",L"ShowLapColors",true); app.standingsProgress=ReadBool(L"Standings",L"ShowProgress",true);
     app.relativeBest=ReadBool(L"Relative",L"ShowBestLap",false); app.relativeLast=ReadBool(L"Relative",L"ShowLastLap",false);
     auto& standings=app.standings;
     standings.separateClasses=ReadBool(L"Standings",L"SeparateClasses",true);
@@ -348,13 +405,11 @@ void Load() {
     app.showInterval=ReadBool(L"Standings",L"ShowInterval",false);
     app.standingsLaps=ReadBool(L"Standings",L"ShowLaps",false);
     app.standingsGained=ReadBool(L"Standings",L"ShowPositionsGained",false);
-    app.fuelOrder=ReadOrder(L"Fuel Calculator",L"ElementOrder",DefaultFuelOrder);
-    for(int i=0;i<FuelElementCount;++i) app.fuelDisplay[i]=ReadBool(L"Fuel Calculator",FuelElements[i].key,true);
-    const wchar_t* fuelRowKeys[]={L"ShowLast",L"ShowAverage10",L"ShowAverage5",L"ShowMaximum",L"ShowMinimum",L"ShowAverage"};
-    for(int i=0;i<FuelMetricCount;++i) app.fuelRows[i]=ReadBool(L"Fuel Calculator",fuelRowKeys[i],true);
-    app.excludeYellowFuelLaps=ReadBool(L"Fuel Calculator",L"ExcludeYellowLaps",false);
-    app.weatherOrder=ReadOrder(L"Weather",L"ElementOrder",DefaultWeatherOrder);
-    for(int i=0;i<=WindDirectionOption;++i) app.weatherDisplay[i]=ReadBool(L"Weather",WeatherElements[i].key,true);
+    for(int i=0;i<FuelModuleCount;++i) app.fuelDisplay[i]=ReadBool(L"Fuel Calculator",FuelModules[i].key,FuelModules[i].on);
+    for(int i=0;i<FuelMetricCount;++i) app.fuelRows[i]=ReadBool(L"Fuel Calculator",FuelFigures[i].key,FuelFigures[i].on);
+    app.fuelStrip=ReadInt(L"Fuel Calculator",L"Layout",0)==1;
+    for(int i=0;i<WeatherModuleCount;++i) app.weatherDisplay[i]=ReadBool(L"Weather",WeatherModules[i].key,WeatherModules[i].on);
+    app.weatherStrip=ReadInt(L"Weather",L"Layout",0)==1;
     app.showTitleBar=ReadBool(L"General",L"ShowTitleBar",false);
     app.checkUpdates=ReadBool(L"General",L"CheckForUpdates",true);
     app.rate=std::clamp(ReadInt(L"General",L"RefreshHz",10),2,20);
@@ -367,6 +422,8 @@ void Load() {
         auto& p=app.overlays[kind].place; const auto* section=Sections[kind];
         p.x=ReadInt(section,L"X",DefaultPositions[kind].x); p.y=ReadInt(section,L"Y",DefaultPositions[kind].y);
         p.scale=NormalizeScale(ReadInt(section,L"Scale",100)); p.opacity=std::clamp(ReadInt(section,L"Opacity",90),40,100);
+        const int rate=ReadInt(section,L"RefreshHz",DefaultRates[kind]);
+        p.rate=*std::find_if(std::begin(OverlayRates),std::end(OverlayRates)-1,[&](int choice){return choice>=rate;});
         p.enabled=ReadBool(section,L"Enabled",true); p.growLeft=ReadBool(section,L"GrowLeft",false); p.growUp=ReadBool(section,L"GrowUp",false);
     }
 }
@@ -391,25 +448,25 @@ void Save() {
         order(section,L"ColumnOrder",app.columnOrder[kind]);
         for(int i=0;i<DriverColumnCount;++i) number(section,DriverColumnKeys[i],app.driverColumns[kind][i]);
         number(section,L"ShortLicenseView",app.driverShortView[kind][0]); number(section,L"ShortIRatingView",app.driverShortView[kind][1]);
+        for(int i=0;i<ExtraColumnCount;++i) number(section,ExtraColumnKeys[i],app.extraColumns[kind][i]);
+        number(section,L"ShowClassColor",app.classColors[kind]);
         number(section,L"ShowBlackFlag",app.driverFlags[kind][0]); number(section,L"ShowSlowdown",app.driverFlags[kind][1]); number(section,L"ShowRequiredRepairs",app.driverFlags[kind][2]);
         number(section,L"ShowDriver",app.showDriver[kind]); number(section,L"ShowStatus",app.showStatus[kind]); number(section,L"DriverNameFormat",app.nameFormat[kind]);
         number(section,L"ShowColumnHeaders",app.columnHeaders[kind]); number(section,L"ShowGapSigns",app.gapSigns[kind]); number(section,L"ShowHeader",app.tableHeaders[kind]); number(section,L"ShowFooter",app.footers[kind].enabled);
-        for(int i=0;i<3;++i) { number(section,HeaderKeys[i],app.headerMetrics[kind][i]); number(section,FooterKeys[i],app.footers[kind].metrics[i]); }
+        for(int i=0;i<SlotCount;++i) { number(section,HeaderKeys[i],app.headerMetrics[kind][i]); number(section,FooterKeys[i],app.footers[kind].metrics[i]); }
     }
     number(L"Relative",L"Rows",app.rows); number(L"Relative",L"GapDecimals",app.gapDecimals); number(L"Relative",L"HideDriversInPit",app.relativeHidePit);
-    number(L"Relative",L"ShowBestLap",app.relativeBest); number(L"Relative",L"ShowLastLap",app.relativeLast);
+    number(L"Relative",L"ShowLapColors",app.lapColors); number(L"Standings",L"ShowProgress",app.standingsProgress); number(L"Relative",L"ShowBestLap",app.relativeBest); number(L"Relative",L"ShowLastLap",app.relativeLast);
     const auto& standings=app.standings;
     number(L"Standings",L"SeparateClasses",standings.separateClasses); number(L"Standings",L"OwnClass",standings.ownClass);
     number(L"Standings",L"LiveGaps",standings.liveGaps); number(L"Standings",L"FallbackByIRating",standings.fallbackByRating);
     number(L"Standings",L"Leaders",standings.leaders); number(L"Standings",L"Ahead",standings.ahead); number(L"Standings",L"Behind",standings.behind);
     number(L"Standings",L"ShowInterval",app.showInterval); number(L"Standings",L"ShowLaps",app.standingsLaps); number(L"Standings",L"ShowPositionsGained",app.standingsGained);
-    order(L"Fuel Calculator",L"ElementOrder",app.fuelOrder);
-    for(int i=0;i<FuelElementCount;++i) number(L"Fuel Calculator",FuelElements[i].key,app.fuelDisplay[i]);
-    const wchar_t* fuelRowKeys[]={L"ShowLast",L"ShowAverage10",L"ShowAverage5",L"ShowMaximum",L"ShowMinimum",L"ShowAverage"};
-    for(int i=0;i<FuelMetricCount;++i) number(L"Fuel Calculator",fuelRowKeys[i],app.fuelRows[i]);
-    number(L"Fuel Calculator",L"ExcludeYellowLaps",app.excludeYellowFuelLaps);
-    order(L"Weather",L"ElementOrder",app.weatherOrder);
-    for(int i=0;i<=WindDirectionOption;++i) number(L"Weather",WeatherElements[i].key,app.weatherDisplay[i]);
+    for(int i=0;i<FuelModuleCount;++i) number(L"Fuel Calculator",FuelModules[i].key,app.fuelDisplay[i]);
+    for(int i=0;i<FuelMetricCount;++i) number(L"Fuel Calculator",FuelFigures[i].key,app.fuelRows[i]);
+    number(L"Fuel Calculator",L"Layout",app.fuelStrip);
+    for(int i=0;i<WeatherModuleCount;++i) number(L"Weather",WeatherModules[i].key,app.weatherDisplay[i]);
+    number(L"Weather",L"Layout",app.weatherStrip);
     number(L"General",L"ShowTitleBar",app.showTitleBar); number(L"General",L"RefreshHz",app.rate);
     number(L"General",L"StartWithWindows",app.startWithWindows); number(L"General",L"StartMinimized",app.startMinimized); number(L"General",L"CheckForUpdates",app.checkUpdates);
     if(app.windowRect.right>app.windowRect.left) {
@@ -421,7 +478,7 @@ void Save() {
     for(int kind=0;kind<OverlayCount;++kind) {
         const auto& p=app.overlays[kind].place; const auto* section=Sections[kind];
         number(section,L"X",p.x); number(section,L"Y",p.y); number(section,L"Scale",p.scale); number(section,L"Opacity",p.opacity);
-        number(section,L"Enabled",p.enabled); number(section,L"GrowLeft",p.growLeft); number(section,L"GrowUp",p.growUp);
+        number(section,L"RefreshHz",p.rate); number(section,L"Enabled",p.enabled); number(section,L"GrowLeft",p.growLeft); number(section,L"GrowUp",p.growUp);
     }
     if(!success && !app.settingsError) { app.settingsError=true; MessageBoxW(app.main,L"Could not save settings. Please check write access to the RaceMate configuration folder.",L"RaceMate",MB_OK|MB_ICONWARNING); }
 }
@@ -450,8 +507,12 @@ FuelPlan PreviewPlan() {
     auto& race=p.prediction; race.status=PredictionStatus::Racing; race.leader=0; race.leaderPace=138.2; race.ownPace=139.4;
     auto& finish=race.finish; finish.valid=true; finish.winner=0; finish.leaderTotalDistance=19+17/race.leaderPace; finish.leaderDistance=12.02; finish.finalLapTimeLeft=17;
     finish.ownDistance=p.lapsToFinish;
-    const double burns[]={3.09,3.12,3.10,3.21,2.98,3.11}; const int counts[]={1,10,5,12,12,12};
+    const double burns[]={3.09,3.12,3.10,3.21,2.98,3.11,3.13}; const int counts[]={1,10,5,12,12,12,3};
     for(int i=0;i<FuelMetricCount;++i) p.estimates[i]={burns[i],std::max(0.0,finish.ownDistance*burns[i]-app.frame.fuel),counts[i]};
+    // Whole laps so far, one of them under caution.
+    const double laps[]={3.06,3.11,3.02,3.09,3.10,3.12,3.04,3.12,3.07,3.09};
+    p.historyCount=std::clamp(app.frame.lapCompleted,0,10);
+    for(int i=0;i<p.historyCount;++i) { const bool caution=i==p.historyCount-3; p.history[i]={app.frame.lapCompleted-p.historyCount+1+i,laps[10-p.historyCount+i]-(caution?.7:0),!caution,caution}; }
     return p;
 }
 const FuelPlan& Plan() {
@@ -477,6 +538,11 @@ std::vector<Row> Rows(int kind) {
     return rows;
 }
 #include "Footer.inc"
+#include "BrandLogos.inc"
+int BrandLogo(const std::string& brand) {
+    for(int i=0;i<static_cast<int>(std::size(BrandLogoNames));++i) if(brand==BrandLogoNames[i]) return i;
+    return -1;
+}
 int HeightWithTitle(int kind) {
     if(kind==RelativeKind) return TableRowsTop(kind)+app.rows*27+(app.footers[kind].enabled?28:0);
     if(kind==StandingsKind) {
@@ -486,12 +552,8 @@ int HeightWithTitle(int kind) {
         }
         return height+(count==0?54:0);
     }
-    if(kind==FuelKind) {
-        int h=44; for(int i=0;i<FuelElementCount;++i) if(app.fuelDisplay[i]) h+=FuelElements[i].height;
-        const int rows=static_cast<int>(std::count(app.fuelRows.begin(),app.fuelRows.end(),true));
-        return h+(rows?24+29*rows:0);
-    }
-    return kind==WeatherKind?WeatherHeight():90;
+    if(kind==FuelKind) return 32+FuelHeight();
+    return kind==WeatherKind?32+WeatherHeight():90;
 }
 int BaseHeight(int kind) { return HeightWithTitle(kind)-(ShowOverlayHeader(kind)?0:32); }
 std::wstring Gap(const Row& r,int kind) {
@@ -518,9 +580,132 @@ double PlannedStopFuel(const PitWindow& window,const FuelPlan& p) {
     if(window.status!=PitWindowStatus::Open || !f.fuelKnown || !std::isfinite(f.fuel) || f.fuel<0 || !std::isfinite(capacity) || capacity<=0 || !std::isfinite(window.fuelAtEnd)) return -1;
     if(window.stops<=1) return std::min(capacity,std::max(0.0,-window.fuelAtEnd));
     const double untilStop=window.openNow?0:std::max(0.0,window.firstLap-(f.lapCompleted+f.lapPct));
-    return std::max(0.0,capacity-std::max(0.0,f.fuel-untilStop*p.estimates[RaceAverage].consumption));
+    return std::max(0.0,capacity-std::max(0.0,f.fuel-untilStop*p.estimates[FuelBasis].consumption));
 }
 COLORREF ColorOf(unsigned rgb) { return RGB((rgb>>16)&255,(rgb>>8)&255,rgb&255); }
+// Overlay palette. Translucent fills of the design are pre-blended over the panel, since the window has one alpha.
+namespace Ink {
+constexpr COLORREF Panel=RGB(12,15,19), Band=RGB(22,25,28), Line=RGB(27,29,33), Border=RGB(32,34,38), ClassBand=RGB(24,27,31), OwnRow=RGB(22,39,57), Divider=RGB(64,67,71);
+constexpr COLORREF White=RGB(232,237,242), Muted=RGB(154,166,178), Label=RGB(135,148,161), Accent=RGB(77,163,255);
+constexpr COLORREF Yellow=RGB(232,184,58), Orange=RGB(255,176,103), Red=RGB(255,122,107), Green=RGB(61,220,132), Purple=RGB(192,132,252), Wet=RGB(111,182,255);
+constexpr COLORREF LapsAhead=RGB(255,138,125), LapsBehind=RGB(127,191,255);
+constexpr COLORREF Value=RGB(195,204,213), Frame=RGB(46,49,53), IconBack=RGB(36,38,42), NeutralBadge=RGB(37,40,44), Brand=RGB(170,181,192);
+constexpr COLORREF BarBack=RGB(29,31,35), HatchFore=RGB(131,96,66), HatchBack=RGB(52,45,42), Missing=RGB(158,111,69);
+constexpr COLORREF ChartBar=RGB(80,82,85), CautionBar=RGB(122,99,38), PitBar=RGB(40,43,47), WindowOpen=RGB(46,160,92), LapAhead=RGB(34,37,40), LapDone=RGB(52,55,60);
+}
+// A translucent ink pre-blended over a background.
+COLORREF Mix(COLORREF base,COLORREF ink,double alpha) {
+    auto channel=[&](int b,int i){ return static_cast<int>(std::lround(b+(i-b)*alpha)); };
+    return RGB(channel(GetRValue(base),GetRValue(ink)),channel(GetGValue(base),GetGValue(ink)),channel(GetBValue(base),GetBValue(ink)));
+}
+constexpr int CornerRadius=10;
+// License pill colors by class letter, as on iRacing's license cards; other strings keep the SDK color.
+COLORREF LicenseFill(const Driver& d) {
+    switch(d.license.empty()?0:d.license[0]) {
+    case 'A': return RGB(31,111,209); case 'B': return RGB(47,154,74); case 'C': return RGB(184,135,15); case 'D': return RGB(208,102,29);
+    case 'R': return RGB(194,58,50); case 'P': return RGB(40,44,50);
+    default: return ColorOf(d.licenseColor);
+    }
+}
+// Fastest lap of each class, live or from the session results.
+double ClassBest(int classId) {
+    if(app.classBestVersion!=app.modelVersion) {
+        app.classBest.clear();
+        for(const auto& d:app.session.drivers) {
+            if(d.index<0 || d.index>=MaxCars) continue;
+            double best=app.frame.cars[d.index].best;
+            if(!(best>0) && app.session.number==app.frame.session) best=app.session.results[d.index].best;
+            if(!(best>0)) continue;
+            const auto known=std::find_if(app.classBest.begin(),app.classBest.end(),[&](const auto& entry){return entry.first==d.classId;});
+            if(known==app.classBest.end()) app.classBest.push_back({d.classId,best}); else known->second=std::min(known->second,best);
+        }
+        app.classBestVersion=app.modelVersion;
+    }
+    const auto known=std::find_if(app.classBest.begin(),app.classBest.end(),[&](const auto& entry){return entry.first==classId;});
+    return known==app.classBest.end()?-1:known->second;
+}
+// Laps or time done of the session, 0 to 1; -1 for unlimited sessions.
+double SessionProgress() {
+    const auto& f=app.frame;
+    if(f.lapsTotal>0 && f.lapsTotal<32767 && f.lapCompleted>=0) return std::clamp((f.lapCompleted+f.lapPct)/f.lapsTotal,0.0,1.0);
+    if(f.timeTotal>0 && f.timeTotal<604800 && f.timeLeftKnown) return std::clamp(1-f.timeLeft/f.timeTotal,0.0,1.0);
+    return -1;
+}
+const std::array<int,MaxCars>& RatingChanges() {
+    if(app.ratingVersion!=app.modelVersion) { app.ratingChanges=IRatingChanges(app.session,app.frame); app.ratingVersion=app.modelVersion; }
+    return app.ratingChanges;
+}
+// A table cell. Text, ink and font start from the row's defaults; a box (filled pill or frame) fills the column,
+// an icon square goes before the text and a badge (the status) after it.
+struct Cell {
+    enum Box : unsigned char { Plain, Filled, Framed, Ringed };
+    std::wstring text; COLORREF ink; FontId font=Regular; Box box=Plain; COLORREF boxColor=0;
+    std::wstring icon, badge; COLORREF badgeFill=0, badgeInk=0; int logo=-1;
+};
+void SetBadge(Cell& c,std::wstring status) {
+    c.badgeFill=Ink::Yellow; c.badgeInk=Ink::Panel;
+    if(status==L"OUT") { c.badgeFill=RGB(70,78,88); c.badgeInk=Ink::White; }
+    else if(status==L"TOW" || status==L"REPAIR" || status==L"SLOW") c.badgeFill=RGB(245,140,60);
+    else if(status==L"BLACK" || status==L"DQ") { c.badgeFill=RGB(214,64,56); c.badgeInk=RGB(255,255,255); }
+    c.badge=std::move(status);
+}
+using CellRenderer=void(*)(const Row&,int kind,Cell&);
+// Indexed by Column, shared by Relative and Standings.
+const CellRenderer CellRenderers[]={
+    +[](const Row& r,int kind,Cell& c) {
+        const int position=kind==StandingsKind && app.standings.separateClasses?r.car.classPosition:r.car.position;
+        c.text=position>0?std::to_wstring(position):L"—"; c.ink=Ink::Muted; },
+    +[](const Row& r,int kind,Cell& c) {
+        c.box=Cell::Filled; c.font=Bold; c.text=L"#"+Wide(r.driver.number);
+        if(!app.classColors[kind]) { c.boxColor=Ink::NeutralBadge; c.ink=Ink::White; return; }
+        const unsigned col=r.driver.classColor; c.boxColor=ColorOf(col);
+        c.ink=(299*((col>>16)&255)+587*((col>>8)&255)+114*(col&255)>100000)?Ink::Panel:RGB(255,255,255); },
+    +[](const Row& r,int kind,Cell& c) {
+        c.text=DriverName(r,kind); if(r.player) c.font=Bold;
+        if(app.showStatus[kind]) if(auto status=OverlayStatus(r,kind); !status.empty()) SetBadge(c,std::move(status)); },
+    +[](const Row& r,int kind,Cell& c) { c.text=Gap(r,kind); if(kind==RelativeKind) { c.font=Bold; if(r.player) c.ink=Ink::Accent; } },
+    +[](const Row& r,int,Cell& c) { c.text=Interval(r); c.ink=Ink::Muted; },
+    +[](const Row& r,int,Cell& c) { c.text=Lap(r.car.best); c.ink=r.car.best>0 && r.car.best<=ClassBest(r.driver.classId)+1e-4?Ink::Purple:Ink::Value; },
+    // A last lap equal to the car's best is a personal best.
+    +[](const Row& r,int,Cell& c) { c.text=Lap(r.car.last); c.ink=r.car.last>0 && r.car.best>0 && r.car.last<=r.car.best+1e-4?Ink::Green:Ink::Value; },
+    +[](const Row& r,int kind,Cell& c) {
+        c.text=DriverValue(r,0,kind); if(c.text==L"—") { c.ink=Ink::Muted; return; }
+        c.box=Cell::Filled; c.boxColor=LicenseFill(r.driver); c.ink=RGB(255,255,255); c.font=SmallBold; },
+    +[](const Row& r,int kind,Cell& c) { c.text=DriverValue(r,IRatingColumn-LicenseColumn,kind); c.ink=Ink::Value; },
+    +[](const Row& r,int,Cell& c) {
+        // The compound's initial in a ring: D dry, W wet, or S/M/H, P/A where a car has several dry compounds.
+        const auto label=TireLabel(r.driver,r.car.tireCompound);
+        if(label.empty()) { c.text=L"—"; c.ink=Ink::Muted; return; }
+        c.box=Cell::Ringed; c.font=SmallBold; c.text=std::wstring(1,static_cast<wchar_t>(label[0]));
+        c.ink=label=="Wet"?Ink::Wet:(label=="Soft"?Ink::Red:(label=="Medium"?Ink::Yellow:Ink::Value));
+        if(label=="Alternate") c.ink=r.driver.carPath.find("dw12")!=std::string::npos || r.driver.carName.find("DW12")!=std::string::npos?Ink::Red:Ink::Green; },
+    +[](const Row& r,int kind,Cell& c) { c.text=DriverValue(r,PitLapColumn-LicenseColumn,kind); c.ink=Ink::Value; },
+    +[](const Row& r,int kind,Cell& c) { c.text=DriverValue(r,PitTimeColumn-LicenseColumn,kind); c.ink=Ink::Value; },
+    +[](const Row& r,int kind,Cell& c) { c.text=DriverValue(r,PitStopColumn-LicenseColumn,kind); c.ink=Ink::Value; },
+    +[](const Row& r,int,Cell& c) { c.text=CompletedLaps(r); c.ink=Ink::Value; },
+    +[](const Row& r,int,Cell& c) {
+        const int gained=PositionsGained(app.session,r,app.standings.separateClasses);
+        c.text=gained==-MaxCars?L"—":(gained==0?L"–":(gained>0?L"\u25B2":L"\u25BC")+std::to_wstring(std::abs(gained)));
+        c.ink=gained==-MaxCars || gained==0?Ink::Muted:(gained>0?Ink::Green:Ink::Red); },
+    +[](const Row& r,int kind,Cell& c) {
+        c.text=OverlayStatus(r,kind);
+        c.ink=c.text==L"BLACK" || c.text==L"DQ"?Ink::Red:(c.text==L"TOW" || c.text==L"REPAIR" || c.text==L"SLOW"?RGB(245,163,65):Ink::Yellow); },
+    +[](const Row& r,int,Cell& c) {
+        // The brand's logo, or its initial where there is none.
+        auto brand=Wide(r.driver.brand); if(brand.empty()) { c.text=L"—"; c.ink=Ink::Muted; return; }
+        CharUpperBuffW(brand.data(),static_cast<DWORD>(brand.size()));
+        c.logo=BrandLogo(r.driver.brand); if(c.logo<0) c.icon=brand.substr(0,1);
+        c.text=std::move(brand); c.font=SmallBold; c.ink=Ink::Brand; },
+    +[](const Row& r,int,Cell& c) {
+        const int index=r.driver.index, change=index>=0 && index<MaxCars?RatingChanges()[index]:NoRatingChange;
+        if(change==NoRatingChange) { c.text=L"—"; c.ink=Ink::Muted; return; }
+        c.text=change>0?L"+"+std::to_wstring(change):(change<0?L"\u2212"+std::to_wstring(-change):L"0");
+        c.ink=change>0?Ink::Green:(change<0?Ink::Red:Ink::Muted); },
+    +[](const Row& r,int,Cell& c) {
+        c.box=Cell::Framed; c.boxColor=Ink::Frame; c.font=Small; c.ink=Ink::Value;
+        c.text=r.car.stintLaps>=0?L"L"+std::to_wstring(r.car.stintLaps):L"L-"; },
+    +[](const Row& r,int,Cell& c) { c.text=r.car.stops>=0?std::to_wstring(r.car.stops):L"?"; c.ink=r.car.stops>=0?Ink::Value:Ink::Muted; }};
+static_assert(std::size(CellRenderers)==ColumnCount);
 // Describes an overlay in physical pixels. Comparing it with the previous scene yields the exact changed areas.
 void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCommand>& out) {
     out.clear();
@@ -531,72 +716,95 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
     auto label=[&](std::wstring text,RECT r,COLORREF color,FontId font,UINT align=DT_LEFT) {
         r.top-=titleOffset; r.bottom-=titleOffset; out.push_back({DrawCommand::Text,font,align,r,color,{},std::move(text)});
     };
-    const COLORREF white=RGB(232,234,237), muted=RGB(152,159,169), yellow=RGB(246,204,66);
-    out.push_back({DrawCommand::Fill,Regular,0,{0,0,width,height},RGB(18,21,26)});
-    auto slots=[&](const Slots& metrics,RECT band,COLORREF ink,bool header) {
-        const int margin=px(12),third=width/3;
-        for(int slot=0;slot<3;++slot) {
-            RECT bounds{slot==0?margin:(slot==1?third:2*third),band.top,slot==0?third:(slot==1?2*third:width-margin),band.bottom};
-            // An empty center lets the outer slots use its space.
-            if(slot==0 && metrics[1]==NoMetric) bounds.right=metrics[2]==NoMetric?width-margin:2*third;
-            if(slot==2 && metrics[1]==NoMetric) bounds.left=metrics[0]==NoMetric?margin:2*third;
-            const bool emphasis=metrics[slot]==IncidentsMetric || (header && metrics[slot]==OverlayNameMetric);
-            label(FooterValue(metrics[slot],o.kind),bounds,metrics[slot]==IncidentsMetric?yellow:ink,emphasis?Bold:Regular,slot==0?DT_LEFT:(slot==1?DT_CENTER:DT_RIGHT));
+    auto shape=[&](DrawCommand::Type type,RECT r,COLORREF color,int radius=3) {
+        r.top-=titleOffset; r.bottom-=titleOffset; out.push_back({type,Regular,0,r,color,{static_cast<float>(px(radius))}});
+    };
+    const COLORREF white=Ink::White, muted=Ink::Muted;
+    out.push_back({DrawCommand::Fill,Regular,0,{0,0,width,height},Ink::Panel});
+    // Width in physical pixels, measured with the overlay's fonts exactly as DrawLabel will.
+    // Most metric texts repeat between refreshes, so widths are kept until the fonts change.
+    auto measure=[&](const std::wstring& text,FontId font) {
+        if(!o.dc || text.empty()) return 0;
+        for(const auto& [cachedFont,cachedText,width]:o.widths) if(cachedFont==font && cachedText==text) return width;
+        SIZE size{}; SelectObject(o.dc,o.fonts[font]); GetTextExtentPoint32W(o.dc,text.c_str(),static_cast<int>(text.size()),&size);
+        if(o.widths.size()>=32) o.widths.erase(o.widths.begin());
+        o.widths.push_back({font,text,static_cast<int>(size.cx)}); return static_cast<int>(size.cx);
+    };
+    // Header and footer metrics: the first on the left, the others right-aligned in order; labels muted, values bright.
+    auto slots=[&](const Slots& metrics,RECT band) {
+        const int margin=px(14),gap=px(14);
+        std::array<MetricText,SlotCount> texts; std::array<std::array<int,4>,SlotCount> parts{}; std::array<int,SlotCount> widths{}; int right=0;
+        for(int slot=0;slot<SlotCount;++slot) {
+            texts[slot]=Metric(metrics[slot],o.kind);
+            for(int part=0;part<4;++part) widths[slot]+=parts[slot][part]=measure(texts[slot].parts[part],part%2?Bold:Regular);
+            if(slot && widths[slot]) right+=widths[slot]+(right?gap:0);
         }
+        auto draw=[&](int slot,int x) {
+            for(int part=0;part<4;++part) {
+                auto& text=texts[slot].parts[part]; if(text.empty()) continue;
+                const int w=parts[slot][part];
+                const COLORREF ink=part%2?(metrics[slot]==IncidentsMetric?Ink::Orange:white):Ink::Label;
+                label(std::move(text),{x,band.top,std::min(x+w+1,width-margin),band.bottom},ink,part%2?Bold:Regular); x+=w;
+            }
+        };
+        draw(0,margin);
+        int x=std::max(width-margin-right,margin+widths[0]+gap);
+        for(int slot=1;slot<SlotCount;++slot) if(widths[slot]) { draw(slot,x); x+=widths[slot]+gap; }
     };
     if(ShowOverlayHeader(o.kind)) {
-        fill({0,0,width,px(32)},RGB(37,41,48));
-        fill({0,0,px(3),px(32)},yellow);
-        if(IsTable(o.kind)) slots(app.headerMetrics[o.kind],{0,0,width,px(32)},white,true);
+        fill({0,0,width,px(32)},Ink::Band);
+        fill({0,px(31),width,px(32)},Ink::Line);
+        if(IsTable(o.kind)) slots(app.headerMetrics[o.kind],{0,0,width,px(31)});
         else {
             label(o.kind==PitLimiterKind?L"PIT LANE":Titles[o.kind],rect(12,0,230,32),white,Bold);
             const auto mode=app.frame.replay?L"REPLAY":(!app.frame.onTrack?L"SPOTTING":Wide(app.session.type));
             if(o.kind!=WeatherKind) label(app.edit?L"MOVE":(app.preview?L"PREVIEW":mode),{width-px(145),0,width-px(12),px(32)},muted,Regular,DT_RIGHT);
         }
+        if(const double progress=o.kind==StandingsKind && app.standingsProgress?SessionProgress():-1; progress>=0) {
+            fill({0,px(29),width,px(32)},Ink::Line); fill({0,px(29),static_cast<int>(width*progress),px(32)},Ink::Accent);
+        }
     }
     if(IsTable(o.kind)) {
         const auto columns=VisibleColumns(o.kind); int headerX=12;
-        if(app.columnHeaders[o.kind]) for(int id:columns) { label(id==GapColumn && o.kind==RelativeKind?L"GAP ≈":ColumnTitle(id),rect(headerX,34,ColumnWidth(id,o.kind)-12,24),muted,Regular,id==DriverColumn || id==StatusColumn?DT_LEFT:DT_RIGHT); headerX+=ColumnWidth(id,o.kind); }
+        if(app.columnHeaders[o.kind]) for(int id:columns) { label(id==GapColumn && o.kind==RelativeKind?L"GAP ≈":ColumnTitle(id),rect(headerX,34,ColumnWidth(id,o.kind)-8,24),Ink::Label,Regular,Columns[id].align); headerX+=ColumnWidth(id,o.kind); }
         int y=TableRowsTop(o.kind);
         static const std::vector<Row> noRows; static const std::vector<StandingsGroup> noGroups;
         const auto& rows=o.kind==RelativeKind?RelativeRows():noRows;
         const auto& groups=o.kind==StandingsKind?StandingsGroups():noGroups;
         const bool rowsEmpty=o.kind==RelativeKind?rows.empty():std::none_of(groups.begin(),groups.end(),[](const StandingsGroup& group){return !group.rows.empty();});
         auto drawRow=[&](const Row& r) {
-            fill({0,px(y),width,px(y+27)},r.player?RGB(54,49,30):((y/27)%2?RGB(25,28,34):RGB(20,23,28)));
-            const COLORREF classColor=ColorOf(r.driver.classColor);
-            fill(rect(0,y,3,27),classColor);
-            COLORREF color=r.player?yellow:white;
-            if(o.kind==RelativeKind && app.session.type=="Race" && !r.player && r.lapDifference>0) color=RGB(236,120,114);
-            if(o.kind==RelativeKind && app.session.type=="Race" && !r.player && r.lapDifference<0) color=RGB(108,174,238);
+            fill({0,px(y),width,px(y+27)},r.player?Ink::OwnRow:Ink::Panel);
+            if(app.classColors[o.kind]) fill(rect(0,y,3,27),ColorOf(r.driver.classColor));
+            COLORREF color=white;
+            const bool lapColors=o.kind==RelativeKind && app.lapColors && app.session.type=="Race" && !r.player;
+            if(lapColors && r.lapDifference>0) color=Ink::LapsAhead;
+            if(lapColors && r.lapDifference<0) color=Ink::LapsBehind;
             int x=12;
             for(int id:columns) {
-                const int w=ColumnWidth(id,o.kind); std::wstring text; COLORREF ink=color;
-                switch(id) {
-                case PositionColumn: { const int position=o.kind==StandingsKind && app.standings.separateClasses?r.car.classPosition:r.car.position; text=position>0?std::to_wstring(position):L"—"; break; }
-                case NumberColumn: {
-                    const unsigned col=r.driver.classColor; fill(rect(x,y+4,w-6,19),classColor);
-                    ink=(299*((col>>16)&255)+587*((col>>8)&255)+114*(col&255)>140000)?RGB(12,14,18):RGB(255,255,255); text=Wide(r.driver.number); break;
+                const int w=ColumnWidth(id,o.kind), inner=w-8; Cell cell{{},color};
+                CellRenderers[id](r,o.kind,cell);
+                if(cell.box==Cell::Ringed) {
+                    const int left=x+(inner-19)/2;
+                    out.push_back({DrawCommand::Ring,cell.font,0,{px(left),px(y+4)-titleOffset,px(left+19),px(y+23)-titleOffset},cell.ink,{std::max(1.f,1.6f*px(100)/100.f)},std::move(cell.text)});
+                } else if(cell.box!=Cell::Plain) {
+                    const RECT area=rect(x,y+5,inner,17);
+                    shape(cell.box==Cell::Filled?DrawCommand::RoundFill:DrawCommand::Outline,area,cell.boxColor);
+                    label(std::move(cell.text),area,cell.ink,cell.font,DT_CENTER);
+                } else {
+                    int left=x;
+                    if(cell.logo>=0) { const RECT icon=rect(x,y+4,19,19); out.push_back({DrawCommand::Logo,Regular,0,{icon.left,icon.top-titleOffset,icon.left+icon.bottom-icon.top,icon.bottom-titleOffset},Ink::Brand,{static_cast<float>(cell.logo)}}); left+=25; }
+                    else if(!cell.icon.empty()) { const RECT icon=rect(x,y+5,17,17); shape(DrawCommand::RoundFill,icon,Ink::IconBack); label(std::move(cell.icon),icon,Ink::Label,SmallBold,DT_CENTER); left+=23; }
+                    RECT text=rect(left,y,x+inner-left,27);
+                    if(!cell.badge.empty()) {
+                        // The name shrinks (with an ellipsis) so the badge always fits behind it.
+                        const int badgeWidth=measure(cell.badge,SmallBold)+px(10), gap=px(6);
+                        text.right=std::min(text.left+measure(cell.text,cell.font)+1,text.right-badgeWidth-gap);
+                        const RECT badge{text.right+gap,px(y+6),text.right+gap+badgeWidth,px(y+21)};
+                        shape(DrawCommand::RoundFill,badge,cell.badgeFill); label(std::move(cell.badge),badge,cell.badgeInk,SmallBold,DT_CENTER);
+                    }
+                    label(std::move(cell.text),text,cell.ink,cell.font,Columns[id].align);
                 }
-                case DriverColumn: text=DriverName(r,o.kind); break;
-                case GapColumn: text=Gap(r,o.kind); break;
-                case IntervalColumn: text=Interval(r); break;
-                case BestColumn: text=Lap(r.car.best); break;
-                case LastColumn: text=Lap(r.car.last); break;
-                case StatusColumn: text=OverlayStatus(r,o.kind); ink=text==L"BLACK" || text==L"DQ"?RGB(236,120,114):(text==L"TOW" || text==L"REPAIR" || text==L"SLOW"?RGB(245,163,65):yellow); break;
-                case GainedColumn: {
-                    const int gained=PositionsGained(app.session,r,app.standings.separateClasses);
-                    text=gained==-MaxCars?L"—":(gained==0?L"0":(gained>0?L"↑ ":L"↓ ")+std::to_wstring(std::abs(gained)));
-                    ink=gained==-MaxCars || gained==0?muted:(gained>0?RGB(96,208,136):RGB(236,120,114)); break;
-                }
-                case LapsColumn: text=CompletedLaps(r); break;
-                default:
-                    text=DriverValue(r,id-LicenseColumn,o.kind);
-                    ink=id==LicenseColumn?ColorOf(r.driver.licenseColor):(id==TiresColumn?TireTextColor(r):white);
-                    if(id==TiresColumn && TireLabel(r.driver,r.car.tireCompound)=="Primary") fill(rect(x,y+4,w-12,19),RGB(0,0,0));
-                }
-                const bool badge=id==NumberColumn;
-                label(std::move(text),badge?rect(x,y+4,w-6,19):rect(x,y,w-12,27),ink,id==PositionColumn || badge || (id==DriverColumn && r.player)?Bold:Regular,id==DriverColumn || id==StatusColumn?DT_LEFT:(badge?DT_CENTER:DT_RIGHT)); x+=w;
+                x+=w;
             }
             y+=27;
         };
@@ -607,10 +815,11 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         }
         else for(const auto& group:groups) {
             if(app.standings.separateClasses) {
-                fill({0,px(y),width,px(y+25)},RGB(35,39,46));
+                fill({0,px(y),width,px(y+25)},Ink::ClassBand); fill(rect(0,y,3,25),ColorOf(group.color));
                 int cars=0; const int sof=ClassSof(group.classId,cars);
-                label(Wide(group.name)+L" · "+std::to_wstring(cars)+(cars==1?L" car":L" cars"),{px(12),px(y),width-px(110),px(y+25)},ColorOf(group.color),Bold);
-                label(sof>0?L"SOF "+std::to_wstring(sof):L"",{width-px(110),px(y),width-px(12),px(y+25)},muted,Regular,DT_RIGHT);
+                auto name=Wide(group.name); const int nameWidth=measure(name,Bold);
+                label(std::move(name),{px(12),px(y),std::min(px(12)+nameWidth+1,width-px(12)),px(y+25)},ColorOf(group.color),Bold);
+                label(std::to_wstring(cars)+(cars==1?L" car":L" cars")+(sof>0?L"  \u00B7  SOF "+std::to_wstring(sof):L""),{px(12)+nameWidth+px(10),px(y),width-px(12),px(y+25)},Ink::Label,Small);
                 y+=25;
             }
             int previous=0;
@@ -618,179 +827,307 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                 const int position=app.standings.separateClasses?row.car.classPosition:row.car.position;
                 const bool skipped=previous && position>previous+1;
                 drawRow(row);
-                if(skipped) out.push_back({DrawCommand::DottedLine,Regular,0,{px(12),px(y-27)-titleOffset,width-px(12),px(y-27)-titleOffset+1},RGB(108,115,128)});
+                if(skipped) out.push_back({DrawCommand::DottedLine,Regular,0,{px(12),px(y-27)-titleOffset,width-px(12),px(y-27)-titleOffset+1},Ink::Divider});
                 previous=position;
             }
         }
         if(rowsEmpty) label(L"Waiting for driver and position data …",rect(12,TableRowsTop(o.kind)+16,335,28),muted,Regular);
         if(app.footers[o.kind].enabled) {
             const int footer=o.kind==RelativeKind?TableRowsTop(o.kind)+app.rows*27:y+(rowsEmpty?54:0);
-            fill({0,px(footer),width,height+titleOffset},RGB(30,34,41));
-            slots(app.footers[o.kind].metrics,{0,px(footer),width,height+titleOffset},muted,false);
+            fill({0,px(footer),width,height+titleOffset},Ink::Band); fill({0,px(footer),width,px(footer)+std::max(1,px(1))},Ink::Line);
+            slots(app.footers[o.kind].metrics,{0,px(footer),width,height+titleOffset});
         }
     } else if(o.kind==FuelKind) {
-        const auto& p=Plan(); const auto& scene=p.prediction.finish;
-        double pace=p.prediction.ownPace; if(pace<=0) pace=app.frame.lastLap>0?app.frame.lastLap:app.frame.bestLap;
-        const auto baseWindow=CalculatePitWindow(app.session,app.frame,p.lapsToFinish,p.estimates[RaceAverage].consumption,pace);
-        int y=36; const int layoutWidth=OverlayWidth(2);
-        const bool endKnown=std::isfinite(baseWindow.fuelAtEnd);
-        const bool tankKnown=app.frame.fuelKnown && std::isfinite(app.frame.fuel) && app.frame.fuel>=0;
+        const auto& p=Plan(); const auto& f=app.frame; const auto& on=app.fuelDisplay;
+        double pace=p.prediction.ownPace; if(pace<=0) pace=f.lastLap>0?f.lastLap:f.bestLap;
+        const auto& basis=p.estimates[FuelBasis]; const double burn=basis.samples?basis.consumption:-1;
+        const auto window=CalculatePitWindow(app.session,f,p.lapsToFinish,burn,pace);
+        const bool open=window.status==PitWindowStatus::Open, noStop=window.status==PitWindowStatus::NoStopNeeded, extraStop=window.status==PitWindowStatus::ExtraStopNeeded;
+        const bool tankKnown=f.fuelKnown && std::isfinite(f.fuel) && f.fuel>=0;
         const double capacity=app.session.fuelCapacity; const bool capacityKnown=std::isfinite(capacity) && capacity>0;
-        const int current=app.frame.lapCompleted>=0?app.frame.lapCompleted+1:-1;
-        const int finishLap=FuelFinishLap();
-        // The timeline covers one full-tank stint from its first lap, capped at the predicted finish.
-        const int first=p.stintStartLap>0?p.stintStartLap:std::max(1,current);
-        const int count=finishLap>0?std::max(0,std::min(StintCellCount(),finishLap-first+1)):StintCellCount();
-        const COLORREF red=RGB(238,91,91), green=RGB(90,197,104);
-        for(int element:app.fuelOrder) {
-            if(element!=ConsumptionTableElement && !app.fuelDisplay[element]) continue;
-            switch(element) {
-            case KeyNumbersElement: {
-                const int third=(layoutWidth-24)/3; const double average=p.estimates[RaceAverage].consumption;
-                const wchar_t* captions[]={L"TANK",L"RANGE (LAPS)",L"AT FINISH"};
-                const std::wstring values[]={tankKnown?Format(app.frame.fuel,1)+L" L":L"—",Format(tankKnown && average>0?app.frame.fuel/average:-1,1),
-                    endKnown?(baseWindow.fuelAtEnd<0?L"−":L"+")+Format(std::abs(baseWindow.fuelAtEnd),1)+L" L":L"—"};
-                for(int i=0;i<3;++i) {
-                    label(captions[i],rect(12+i*third,y,third,16),muted,Small);
-                    label(values[i],rect(12+i*third,y+16,third,30),i==2 && endKnown?(baseWindow.fuelAtEnd<0?red:green):white,Hero);
+        const double range=tankKnown && burn>0?f.fuel/burn:-1, refuel=burn>0?basis.add:-1, needed=burn>0 && p.lapsToFinish>=0?burn*p.lapsToFinish:-1;
+        const bool refuelFits=refuel>=0 && (!capacityKnown || refuel<=capacity);
+        const int current=f.lapCompleted>=0?f.lapCompleted+1:-1, finishLap=FuelFinishLap();
+        auto lap=[](int number){ return number>0?L"L"+std::to_wstring(number):std::wstring(L"—"); };
+        // Targets: the most fuel per lap that still reaches the latest stop, or the finish when no stop is needed.
+        const int targetLap=open?window.lastLap:(noStop?finishLap:-1);
+        const double targetDistance=open?window.lastLap-(f.lapCompleted+f.lapPct):(noStop?p.lapsToFinish:-1);
+        auto target=[&](int extra){ const double distance=targetDistance+extra; return tankKnown && targetDistance>0 && distance>.05?f.fuel/distance:-1.0; };
+        auto targetInk=[&](double value){ return value<0 || burn<=0?Ink::Muted:(value>=burn?Ink::Green:(value>=.9*burn?Ink::Yellow:Ink::Red)); };
+        auto litres=[](double value,bool plus=false){ return value<0?std::wstring(L"—"):(plus?L"+":L"")+Format(value,1)+L" L"; };
+        const int W=OverlayWidth(FuelKind); int y=32;
+        if(app.fuelStrip) {
+            int n=0;
+            auto item=[&](const wchar_t* head,std::wstring value,COLORREF ink) {
+                const int x=n++*FuelStripCell; if(x) fill(rect(x,y+1,1,48),Ink::Line);
+                label(head,rect(x+12,y+6,FuelStripCell-16,16),Ink::Label,Small); label(std::move(value),rect(x+12,y+21,FuelStripCell-16,24),ink,Bold);
+            };
+            if(on[TankModule]) { item(L"TANK",litres(tankKnown?f.fuel:-1),white); item(L"RANGE",range>=0?Format(range,1)+L" laps":L"—",Ink::Accent); }
+            if(on[FiguresModule]) item(L"AVG 10",burn>0?Format(burn,2):L"—",white);
+            if(on[RefuelCard]) item(L"REFUEL",litres(refuel,true),refuel<0?Ink::Muted:(refuelFits?Ink::Green:Ink::Red));
+            if(on[WindowCard]) item(L"BOX BY",open?lap(window.lastLap):L"—",white);
+            if(on[TargetRow]) item(L"TARGET",target(0)>=0?Format(target(0),2):L"—",targetInk(target(0)));
+            if(on[OneLongerRow]) item(L"+1 LAP",target(1)>=0?Format(target(1),2):L"—",targetInk(target(1)));
+        } else {
+            if(on[FuelHeaderModule]) {
+                fill(rect(0,y,W,36),Ink::Band); fill(rect(0,y+35,W,1),Ink::Line);
+                label(L"FUEL",rect(16,y,80,36),white,Bold);
+                int right=px(W-16);
+                std::wstring status; COLORREF statusInk=Ink::Muted;
+                if(noStop) { status=L"NO STOP NEEDED"; statusInk=Ink::Green; }
+                else if(open) { status=std::to_wstring(window.stops)+(window.stops==1?L" STOP NEEDED":L" STOPS NEEDED"); statusInk=Ink::Orange; }
+                else if(extraStop) { status=L"NO PIT WINDOW"; statusInk=Ink::Red; }
+                if(!status.empty()) {
+                    const RECT pill{right-measure(status,SmallBold)-px(18),px(y+9),right,px(y+27)};
+                    shape(DrawCommand::RoundFill,pill,Mix(Ink::Band,statusInk,.16),9); label(std::move(status),pill,statusInk,SmallBold,DT_CENTER);
+                    right=pill.left-px(10);
                 }
-                break; }
-            case PitTimelineElement: {
-                const int span=layoutWidth-24;
+                label(L"LAP "+(current>0?std::to_wstring(current):L"—")+L" / "+(finishLap>0?std::to_wstring(finishLap):L"—"),{px(96),px(y),right,px(y+36)},Ink::Muted,Regular,DT_RIGHT);
+                y+=36;
+            }
+            if(on[TankModule]) {
+                label(L"IN TANK",rect(16,y+10,150,16),Ink::Label,Small); label(L"RANGE",rect(W-166,y+10,150,16),Ink::Label,Small,DT_RIGHT);
+                const std::wstring fuel=tankKnown?Format(f.fuel,1):L"—", laps=range>=0?Format(range,1):L"—";
+                const int fuelWidth=measure(fuel,Large), unitWidth=measure(L"laps",Regular), lapsWidth=measure(laps,Large), end=px(W-16);
+                label(fuel,{px(16),px(y+24),px(16)+fuelWidth+1,px(y+68)},white,Large);
+                label(L"L",{px(21)+fuelWidth,px(y+38),px(60)+fuelWidth,px(y+64)},Ink::Label,Regular);
+                label(L"laps",{end-unitWidth,px(y+38),end,px(y+64)},Ink::Label,Regular);
+                label(laps,{end-unitWidth-px(5)-lapsWidth,px(y+24),end-unitWidth-px(5)+1,px(y+68)},Ink::Accent,Large);
+                // The bar spans the tank (or more fuel when the finish needs more): fuel in it, fuel missing to the finish, and the finish mark.
+                const int left=16,span=W-32,top=y+74; const double scale=std::max({capacityKnown?capacity:0.0,needed,tankKnown?f.fuel:0.0});
+                fill(rect(left,top,span,12),Ink::BarBack);
+                auto at=[&](double value){ return left+static_cast<int>(span*std::clamp(value/scale,0.0,1.0)); };
+                if(scale>0 && tankKnown) fill(rect(left,top,at(f.fuel)-left,12),Ink::Accent);
+                if(scale>0 && tankKnown && needed>f.fuel) out.push_back({DrawCommand::Hatch,Regular,0,{px(at(f.fuel)),px(top)-titleOffset,px(at(needed)),px(top+12)-titleOffset},Ink::HatchFore,{static_cast<float>(Ink::HatchBack)}});
+                if(scale>0 && needed>=0) fill(rect(at(needed)-1,top-4,2,20),RGB(255,255,255));
+                fill(rect(16,y+97,8,8),Ink::Accent); label(L"In tank",rect(29,y+92,70,18),Ink::Muted,Small);
+                if(tankKnown && needed>f.fuel) { fill(rect(100,y+97,8,8),Ink::Missing); label(L"Missing "+litres(needed-f.fuel),rect(113,y+92,130,18),Ink::Muted,Small); }
+                if(needed>=0) { fill(rect(246,y+96,2,10),RGB(255,255,255)); label(L"Needed "+litres(needed)+L" · "+Format(p.lapsToFinish,1)+L" laps",rect(253,y+92,W-269,18),Ink::Muted,Small); }
+                y+=112;
+            }
+            const int figures=static_cast<int>(std::count(app.fuelRows.begin(),app.fuelRows.end(),true));
+            if(on[FiguresModule] && figures) {
+                fill(rect(0,y,W,1),Ink::Line);
+                for(int i=0,index=0;i<FuelMetricCount;++i) if(app.fuelRows[i]) {
+                    const auto& figure=FuelFigures[i]; const auto& estimate=p.estimates[figure.metric];
+                    const int left=W*index/figures,cell=W*(index+1)/figures-left; ++index;
+                    if(left) fill(rect(left,y+1,1,50),Ink::Line);
+                    const COLORREF ink=figure.metric==FuelBasis?Ink::Accent:(figure.metric==static_cast<int>(FuelMetric::Minimum)?Ink::Green:(figure.metric==static_cast<int>(FuelMetric::Maximum)?Ink::Red:white));
+                    label(figure.heading,rect(left,y+7,cell,16),Ink::Label,Small,DT_CENTER);
+                    label(estimate.samples?Format(estimate.consumption,2):L"—",rect(left,y+23,cell,22),ink,Bold,DT_CENTER);
+                }
+                fill(rect(0,y+51,W,1),Ink::Line); y+=52;
+            }
+            if(on[HistoryModule]) {
+                label(L"CONSUMPTION  ·  LAST 10 LAPS",rect(16,y+8,W/2,16),Ink::Label,Small);
+                const int n=p.historyCount,top=y+30,chart=56,gap=6,bar=(W-32-9*gap)/10;
+                if(!n) label(L"Waiting for complete laps",rect(16,top,W-32,chart),Ink::Muted,Regular,DT_CENTER);
+                else {
+                    // The scale starts a little below the lowest lap, so differences of a few percent stay visible.
+                    double low=burn>0?burn:p.history[0].burn,high=low; int lastCounted=-1; const FuelLap* caution=nullptr;
+                    for(int i=0;i<n;++i) { low=std::min(low,p.history[i].burn); high=std::max(high,p.history[i].burn); if(p.history[i].counted) lastCounted=i; }
+                    low=std::max(0.0,low-std::max(.2*(high-low),.04*high)); high*=1.02;
+                    auto barTop=[&](double value){ return top+chart-std::max(2,static_cast<int>(chart*(value-low)/(high-low))); };
+                    for(int i=0;i<n;++i) {
+                        const auto& l=p.history[i]; const int x=16+(10-n+i)*(bar+gap), barY=barTop(l.burn);
+                        fill(rect(x,barY,bar,top+chart-barY),l.counted?(i==lastCounted?Ink::Accent:Ink::ChartBar):(l.caution && on[CautionMarks]?Ink::CautionBar:Ink::PitBar));
+                        if(l.caution && !caution) caution=&l;
+                    }
+                    if(burn>0) {
+                        const int average=barTop(burn);
+                        out.push_back({DrawCommand::DottedLine,Regular,0,{px(16),px(average)-titleOffset,px(W-16),px(average)+1-titleOffset},Ink::Muted});
+                        label(L"Ø "+Format(burn,2),rect(W-80,average-16,64,14),Ink::Value,Small,DT_RIGHT);
+                    }
+                    label(lap(p.history[0].lap),rect(16+(10-n)*(bar+gap),top+chart+2,60,16),Ink::Label,Small);
+                    label(lap(p.history[n-1].lap),rect(W-76,top+chart+2,60,16),Ink::Label,Small,DT_RIGHT);
+                    if(caution && on[CautionMarks]) label(lap(caution->lap)+L" caution · not averaged",rect(W/2,y+8,W/2-16,16),Ink::Yellow,Small,DT_RIGHT);
+                }
+                y+=104;
+            }
+            if(on[RefuelCard] || on[WindowCard]) {
+                const int cardWidth=on[RefuelCard] && on[WindowCard]?(W-42)/2:W-32; int x=16;
+                auto card=[&](const wchar_t* title,std::wstring value,COLORREF ink,std::wstring note) {
+                    shape(DrawCommand::RoundFill,rect(x,y,cardWidth,80),Ink::Band,6);
+                    label(title,rect(x+12,y+8,cardWidth-24,16),Ink::Label,Small);
+                    label(std::move(value),rect(x+12,y+24,cardWidth-24,32),ink,Hero);
+                    label(std::move(note),rect(x+12,y+56,cardWidth-24,16),Ink::Muted,Small); x+=cardWidth+10;
+                };
+                if(on[RefuelCard]) card(L"REFUEL TO FINISH",litres(refuel,true),refuel<0?Ink::Muted:(refuelFits?Ink::Green:Ink::Red),
+                    refuel<0?L"waiting for laps":(refuel==0?L"enough fuel to finish":(refuelFits?L"fits in the tank":L"more than one tank")));
+                if(on[WindowCard]) card(L"PIT WINDOW",open?lap(window.firstLap)+L"–"+std::to_wstring(window.lastLap):L"—",white,
+                    open?(window.openNow?std::wstring(L"open now"):L"opens "+lap(window.firstLap))+L" · latest "+lap(window.lastLap)
+                        :(noStop?L"no stop needed":(extraStop?L"an extra stop is needed":L"waiting for laps")));
+                y+=92;
+            }
+            if(on[TimelineModule]) {
+                // One block per lap of a full tank from the stint's first lap, capped at the finish.
+                fill(rect(0,y,W,1),Ink::Line);
+                const int first=p.stintStartLap>0?p.stintStartLap:std::max(1,current);
+                const int count=finishLap>0?std::max(0,std::min(StintCellCount(),finishLap-first+1)):StintCellCount();
                 for(int i=0;i<count;++i) {
-                    const int lap=first+i, left=12+i*span/count, right=12+(i+1)*span/count-2;
-                    const bool open=baseWindow.status==PitWindowStatus::Open && lap>=baseWindow.firstLap && lap<=baseWindow.lastLap;
-                    const RECT block=rect(left,y,std::max(1,right-left),12); fill(block,open?RGB(49,157,67):(lap==current?yellow:RGB(53,57,64)));
-                    if(lap==current && open) fill({block.left,block.top,block.right,block.top+std::max(1,px(3))},yellow);
+                    const int number=first+i,left=16+i*(W-32)/count,blockWidth=std::max(1,16+(i+1)*(W-32)/count-2-left);
+                    const bool inWindow=open && number>=window.firstLap && number<=window.lastLap;
+                    if(number==current) fill(rect(left,y+9,blockWidth,18),Ink::Yellow);
+                    else fill(rect(left,y+12,blockWidth,12),inWindow?Ink::WindowOpen:(number<current?Ink::LapDone:Ink::LapAhead));
                 }
-                label(current>0?L"L"+std::to_wstring(current):L"PIT",rect(12,y+12,40,18),muted,Small);
-                label(finishLap>0?L"L"+std::to_wstring(finishLap):L"",rect(layoutWidth-52,y+12,40,18),muted,Small,DT_RIGHT);
-                std::wstring box=L"—"; COLORREF boxInk=muted;
-                if(baseWindow.status==PitWindowStatus::Open) {
-                    const double add=PlannedStopFuel(baseWindow,p);
-                    box=(baseWindow.openNow?L"BOX NOW · L":L"BOX L")+std::to_wstring(baseWindow.firstLap)+L"–"+std::to_wstring(baseWindow.lastLap);
-                    if(add>=0) box+=L" · +"+Format(add,1)+L" L";
-                    if(baseWindow.stops>1) box+=L" · "+std::to_wstring(baseWindow.stops)+L" STOPS";
-                    boxInk=baseWindow.openNow?green:white;
+                if(count) { label(lap(first),rect(16,y+27,60,16),Ink::Label,Small); label(lap(first+count-1),rect(W-76,y+27,60,16),Ink::Label,Small,DT_RIGHT); }
+                std::wstring box=L"—"; COLORREF boxInk=Ink::Muted;
+                if(open) {
+                    const double add=PlannedStopFuel(window,p);
+                    box=(window.openNow?L"BOX NOW · ":L"BOX ")+lap(window.firstLap)+L"–"+std::to_wstring(window.lastLap);
+                    if(add>=0) box+=L" · "+litres(add,true);
+                    if(window.stops>1) box+=L" · "+std::to_wstring(window.stops)+L" STOPS";
+                    boxInk=window.openNow?Ink::Green:white;
                 }
-                else if(baseWindow.status==PitWindowStatus::NoStopNeeded) { box=L"NO STOP NEEDED"; boxInk=green; }
-                else if(baseWindow.status==PitWindowStatus::ExtraStopNeeded) box=L"NO PIT WINDOW";
-                label(std::move(box),rect(52,y+12,layoutWidth-104,18),boxInk,Small,DT_CENTER);
-                break; }
-            case LeaderDistanceElement:
-                label(L"Leader Distance",rect(12,y,212,29),muted,Regular);
-                label(Format(scene.leaderTotalDistance,2)+L" laps",rect(325,y,128,29),white,Bold,DT_RIGHT);
-                break;
-            case RemainingLeaderDistanceElement:
-                label(L"Remaining Leader Distance",rect(12,y,300,29),muted,Regular);
-                label(Format(scene.leaderDistance,2)+L" laps",rect(325,y,128,29),white,Bold,DT_RIGHT);
-                break;
-            case RefuelToEndElement: {
-                label(L"Refuel to End (Average)",rect(12,y,280,27),muted,Regular);
-                const double add=p.estimates[RaceAverage].add;
-                label(add>=0?Format(add,1)+L" L":L"—",rect(300,y,153,27),yellow,Bold,DT_RIGHT);
-                break; }
-            case FinalLapTimeElement:
-                label(L"Time left at final lap start",rect(12,y,230,29),muted,Regular);
-                label(Format(scene.finalLapTimeLeft)+L" s",rect(345,y,108,29),yellow,Bold,DT_RIGHT);
-                break;
-            case TimeEmptyElement: {
-                label(L"Time Empty (Average)",rect(12,y,260,27),muted,Regular);
-                wchar_t clock[64]{}; if(baseWindow.timeEmpty>=0 && baseWindow.timeEmpty<36000000) { const int seconds=static_cast<int>(baseWindow.timeEmpty); swprintf_s(clock,L"%d:%02d:%02d",seconds/3600,(seconds/60)%60,seconds%60); }
-                label(clock[0]?clock:L"—",rect(280,y,173,27),white,Bold,DT_RIGHT);
-                break; }
-            case FuelAtEndElement: {
-                label(L"Fuel at End (Average)",rect(12,y,260,27),muted,Regular);
-                const auto end=endKnown?(baseWindow.fuelAtEnd<0?L"−":L"")+Format(std::abs(baseWindow.fuelAtEnd),1)+L" L":L"—";
-                label(end,rect(280,y,173,27),!endKnown?muted:(baseWindow.fuelAtEnd<0?red:green),Bold,DT_RIGHT);
-                break; }
-            case StopsRemainingElement:
-                label(L"Stops Remaining (Average)",rect(12,y,300,27),muted,Regular);
-                label(baseWindow.stops>=0?std::to_wstring(baseWindow.stops):L"—",rect(330,y,123,27),white,Bold,DT_RIGHT);
-                break;
-            case TankGaugeElement:
-                fill(rect(12,y,layoutWidth-24,19),RGB(65,70,78)); fill(rect(14,y+2,layoutWidth-28,15),RGB(32,36,42));
-                if(tankKnown && capacityKnown) fill(rect(14,y+2,static_cast<int>((layoutWidth-28)*std::clamp(app.frame.fuel/capacity,0.0,1.0)),15),white);
-                label(L"E",rect(12,y+19,24,24),muted,Regular);
-                label(tankKnown?Format(app.frame.fuel,1)+L" L":L"—",rect(12,y+19,layoutWidth-24,24),white,Bold,DT_CENTER);
-                label(capacityKnown?Format(capacity,1)+L" L max":L"—",rect(layoutWidth-150,y+19,138,24),muted,Regular,DT_RIGHT);
-                break;
-            case StintTimelineElement: {
-                label(current>0?L"L"+std::to_wstring(current):L"PIT",rect(12,y+2,34,24),white,Bold);
-                // Narrow blocks stay taller than they are wide, even for short stints.
-                const int pitch=count>0?std::max(1,std::min(11,(layoutWidth-64)/count)):11;
-                for(int i=0;i<count;++i) {
-                    const int lap=first+i,x=52+i*pitch,w=std::max(1,pitch-3);
-                    const bool open=baseWindow.status==PitWindowStatus::Open && lap>=baseWindow.firstLap && lap<=baseWindow.lastLap;
-                    const RECT block=rect(x,y,w,26); fill(block,open?RGB(49,157,67):(lap==current?yellow:RGB(53,57,64)));
-                    if(lap==current && open) fill({block.left,block.top,block.right,block.top+std::max(1,px(3))},yellow);
-                }
-                break; }
-            case PitPanelElement: {
-                label(current>0?L"Current Lap "+std::to_wstring(current)+L" of "+(finishLap>0?std::to_wstring(finishLap):L"—"):L"Current Lap —",rect(12,y,190,39),muted,Regular);
-                fill(rect(205,y,248,39),baseWindow.openNow?RGB(39,153,62):RGB(77,82,91)); fill(rect(301,y+2,150,35),RGB(18,21,26));
-                const bool rangeKnown=baseWindow.status==PitWindowStatus::Open;
-                label(baseWindow.openNow?L"OPEN":L"CLOSED",rect(207,rangeKnown?y:y+4,92,rangeKnown?20:30),white,Bold,DT_CENTER);
-                if(rangeKnown) label(L"L"+std::to_wstring(baseWindow.firstLap)+L"–"+std::to_wstring(baseWindow.lastLap),rect(207,y+19,92,20),white,Regular,DT_CENTER);
-                const double add=PlannedStopFuel(baseWindow,p);
-                label(add>=0?L"+"+Format(add,1)+L" L":L"—",rect(305,y+2,143,35),white,Bold,DT_CENTER);
-                break; }
-            case ConsumptionTableElement: {
-                if(std::any_of(app.fuelRows.begin(),app.fuelRows.end(),[](bool shown){return shown;})) {
-                    label(L"CONSUMPTION",rect(12,y,151,24),muted,Regular);
-                    label(L"L / LAP",rect(170,y,70,24),muted,Regular,DT_RIGHT);
-                    label(L"ADD TO FINISH",rect(250,y,103,24),yellow,Regular,DT_RIGHT);
-                    if(app.fuelDisplay[ConsumptionTableElement]) label(L"PIT ≈",rect(363,y,90,24),muted,Regular,DT_RIGHT);
+                else if(noStop) { box=L"NO STOP NEEDED"; boxInk=Ink::Green; }
+                else if(extraStop) box=L"NO PIT WINDOW";
+                label(std::move(box),rect(76,y+27,W-152,16),boxInk,SmallBold,DT_CENTER);
+                y+=46;
+            }
+            if(on[TargetRow] || on[OneLongerRow] || on[TwoLongerRow] || on[OneShorterRow]) {
+                fill({0,px(y),width,height+titleOffset},Ink::Band); fill(rect(0,y,W,1),Ink::Line); y+=8;
+                struct TargetInfo { int module, extra; const wchar_t* name; };
+                static constexpr TargetInfo targets[]={{TargetRow,0,L"Target"},{OneLongerRow,1,L"One lap longer"},{TwoLongerRow,2,L"Two laps longer"},{OneShorterRow,-1,L"One lap shorter"}};
+                for(const auto& t:targets) if(on[t.module]) {
+                    const double value=target(t.extra); const bool main=t.extra==0;
+                    label(t.name,rect(16,y,150,24),main?white:Ink::Muted,main?Bold:Regular);
+                    label(targetLap>0?lap(targetLap+t.extra):L"",rect(166,y,50,24),Ink::Label,Small);
+                    label(value>=0?L"max "+Format(value,2)+L" L/lap":L"—",rect(216,y,150,24),targetInk(value),main?Bold:Regular,DT_RIGHT);
+                    label(value>=0 && burn>0?(value>=burn?L"+":L"−")+Format(std::abs(value/burn-1)*100,0)+L" %":L"",rect(366,y,W-382,24),Ink::Label,Small,DT_RIGHT);
                     y+=24;
                 }
-                for(int i:{0,5,1,2,3,4}) if(app.fuelRows[i]) {
-                    const auto& estimate=p.estimates[i];
-                    fill({0,px(y),width,px(y+29)},(y/29)%2?RGB(25,28,34):RGB(20,23,28));
-                    std::wstring name=FuelMetricNames[i]; if((i==1 && estimate.samples<10) || (i==2 && estimate.samples<5)) name+=L" ("+std::to_wstring(estimate.samples)+L")";
-                    label(std::move(name),rect(12,y,151,29),white,Regular); label(estimate.samples?Format(estimate.consumption,2):L"—",rect(170,y,70,29),white,Regular,DT_RIGHT);
-                    label(Format(estimate.add)+L" L",rect(250,y,103,29),yellow,Bold,DT_RIGHT);
-                    if(app.fuelDisplay[ConsumptionTableElement]) {
-                        const auto window=CalculatePitWindow(app.session,app.frame,p.lapsToFinish,estimate.consumption);
-                        const auto text=window.status==PitWindowStatus::Open?L"L"+std::to_wstring(window.firstLap)+L"–"+std::to_wstring(window.lastLap):(window.status==PitWindowStatus::NoStopNeeded?L"No stop":(window.status==PitWindowStatus::ExtraStopNeeded?L"No window":L"—"));
-                        label(text,rect(363,y,90,29),window.status==PitWindowStatus::Open?RGB(90,197,104):muted,Regular,DT_RIGHT);
-                    }
-                    y+=29;
-                }
-                continue; }
             }
-            y+=FuelElements[element].height;
         }
     } else if(o.kind==WeatherKind) {
-        int y=40;
-        for(int element:app.weatherOrder) if(app.weatherDisplay[element]) {
-            const int h=WeatherElements[element].height;
-            fill(rect(8,y,224,h),RGB(30,34,41));
-            if(element==TrackTempElement || element==AirTempElement) {
-                label(WeatherElements[element].title,rect(20,y,112,h),white,Regular);
-                label(FooterTemperature(element==TrackTempElement?app.frame.trackTemperature:app.frame.airTemperature),rect(132,y,88,h),white,Bold,DT_RIGHT);
-            } else if(element==WindElement) {
-                label(L"Wind",rect(20,y,110,32),white,Regular);
-                label(L"km/h",rect(166,y,54,32),muted,Regular,DT_RIGHT);
-                const double angle=app.weatherDisplay[WindDirectionOption]?RelativeWindAngle(app.frame):std::numeric_limits<double>::quiet_NaN();
-                const int cy=y+106;
-                // Float geometry keeps the anti-aliased ring free of intermediate pixel rounding.
-                const float scale=static_cast<float>(dpi*o.place.scale)/9600, centerX=120*scale, centerY=cy*scale-titleOffset, radius=65*scale;
-                const RECT bounds{static_cast<LONG>(centerX-radius-8*scale)-1,static_cast<LONG>(centerY-radius-8*scale)-1,static_cast<LONG>(centerX+radius+8*scale)+2,static_cast<LONG>(centerY+radius+8*scale)+2};
-                out.push_back({DrawCommand::WindRing,Regular,0,bounds,0,{centerX,centerY,radius,scale,std::isfinite(angle)?static_cast<float>(angle):-1.f}});
-                label(Format(app.frame.windSpeed*3.6,0),rect(65,cy-24,110,48),white,Large,DT_CENTER);
-            } else if(element==WetnessElement) {
-                label(FooterValue(WetnessMetric),rect(20,y,200,h),white,Regular,DT_CENTER);
-            } else {
-                std::wstring usage=Wide(app.session.trackUsage); if(usage.empty()) usage=L"Track Usage —"; else usage[0]=static_cast<wchar_t>(towupper(usage[0]));
-                label(std::move(usage),rect(20,y,200,h),white,Regular,DT_CENTER);
+        const auto& f=app.frame; const auto& on=app.weatherDisplay; const auto& history=app.weatherHistory;
+        const int W=OverlayWidth(WeatherKind), wet=f.trackWetness>=0 && f.trackWetness<8?f.trackWetness:0; int y=32;
+        const COLORREF wetInk=RGB(140,198,255);
+        auto degrees=[](double value){ if(!std::isfinite(value)) return std::wstring(L"—"); wchar_t text[24]; swprintf_s(text,L"%.1f°",value); return std::wstring(text); };
+        auto percent=[](double fraction){ return std::isfinite(fraction) && fraction>=0?Format(fraction*100,0)+L" %":std::wstring(L"—"); };
+        // Trend arrows over the last ten minutes; nothing while unknown or switched off.
+        using Trend=std::pair<std::wstring,COLORREF>;
+        auto trend=[&](double change,double steady,int decimals,const wchar_t* unit,COLORREF rising,COLORREF falling) {
+            if(!on[TrendArrows] || !std::isfinite(change)) return Trend{};
+            if(std::abs(change)<steady) return Trend{L"→",Ink::Muted};
+            return Trend{(change>0?L"↑ +":L"↓ −")+Format(std::abs(change),decimals)+unit,change>0?rising:falling};
+        };
+        const double wetChange=history.Change(&WeatherHistory::Sample::wetness);
+        const Trend wetTrend=!on[TrendArrows] || !std::isfinite(wetChange)?Trend{}:(wetChange>=1?Trend{L"↗ getting wetter",wetInk}:(wetChange<=-1?Trend{L"↘ drying",Ink::Value}:Trend{L"→ steady",Ink::Muted}));
+        const Trend rainTrend=trend(history.Change(&WeatherHistory::Sample::rain)*100,2,0,L" %",wetInk,Ink::Muted);
+        const Trend trackTrend=trend(history.Change(&WeatherHistory::Sample::track),.3,1,L"",Ink::Orange,Ink::Wet), airTrend=trend(history.Change(&WeatherHistory::Sample::air),.3,1,L"",Ink::Orange,Ink::Wet);
+        // Wind: compass direction it comes from, and where it hits the car.
+        static constexpr const wchar_t* Compass[]={L"N",L"NE",L"E",L"SE",L"S",L"SW",L"W",L"NW"};
+        static constexpr const wchar_t* Sides[]={L"Headwind",L"From front right",L"Crosswind from the right",L"From rear right",L"Tailwind",L"From rear left",L"Crosswind from the left",L"From front left"};
+        constexpr double pi=3.141592653589793;
+        const double angle=on[WindRelative]?RelativeWindAngle(f):std::numeric_limits<double>::quiet_NaN();
+        auto octant=[&](double radians){ return static_cast<int>(std::lround(std::fmod(std::fmod(radians,2*pi)+2*pi,2*pi)/(pi/4)))%8; };
+        const std::wstring speed=f.windSpeed>=0?Format(f.windSpeed*3.6,0):L"—", from=std::isfinite(f.windDirection)?Compass[octant(f.windDirection)]:L"";
+        const std::wstring side=std::isfinite(angle)?Sides[octant(angle)]:L"";
+        if(app.weatherStrip) {
+            int n=0;
+            auto item=[&](const wchar_t* head,std::wstring value,COLORREF ink,Trend extra,int cells=1) {
+                const int x=n*WeatherStripCell, cell=cells*WeatherStripCell; n+=cells; if(x) fill(rect(x,y+1,1,48),Ink::Line);
+                label(head,rect(x+12,y+6,cell-16,16),Ink::Label,Small);
+                const int w=measure(value,Bold); label(std::move(value),{px(x+12),px(y+21),std::min(px(x+12)+w+1,px(x+cell-4)),px(y+45)},ink,Bold);
+                if(!extra.first.empty()) label(std::move(extra.first),{px(x+12)+w+px(4),px(y+21),px(x+cell-4),px(y+45)},extra.second,Small);
+            };
+            if(on[ConditionModule]) item(L"TRACK",WetnessNames[wet],wet>=3?wetInk:white,wetTrend.first.empty()?Trend{}:Trend{wetTrend.first.substr(0,1),wetTrend.second});
+            if(on[RainModule]) item(L"RAIN",percent(f.precipitation),white,rainTrend.first.empty()?Trend{}:Trend{rainTrend.first.substr(0,1),rainTrend.second});
+            if(on[TemperatureModule]) {
+                item(L"TRACK °C",degrees(f.trackTemperature),white,trackTrend.first.empty()?Trend{}:Trend{trackTrend.first.substr(0,1),trackTrend.second});
+                item(L"AIR °C",degrees(f.airTemperature),white,airTrend.first.empty()?Trend{}:Trend{airTrend.first.substr(0,1),airTrend.second});
             }
-            y+=h+8;
+            if(on[WindModule]) item(L"WIND",speed+L" km/h"+(side.empty()?(from.empty()?L"":L" from "+from):L" · "+side),Ink::Yellow,{},2);
+        } else {
+            // A value with its trend right after it.
+            auto valueWithTrend=[&](int x,int top,int h,std::wstring value,FontId font,COLORREF ink,Trend extra,int right) {
+                const int w=measure(value,font); label(std::move(value),{px(x),px(top),std::min(px(x)+w+1,px(right)),px(top+h)},ink,font);
+                if(!extra.first.empty()) label(std::move(extra.first),{px(x)+w+px(6),px(top),px(right),px(top+h)},extra.second,Small);
+            };
+            if(on[WeatherHeaderModule]) {
+                fill(rect(0,y,W,36),Ink::Band); fill(rect(0,y+35,W,1),Ink::Line);
+                label(L"WEATHER",rect(16,y,120,36),white,Bold);
+                if(f.declaredWet) {
+                    const std::wstring pill=L"DECLARED WET"; const RECT area{px(W-16)-measure(pill,SmallBold)-px(18),px(y+9),px(W-16),px(y+27)};
+                    shape(DrawCommand::RoundFill,area,Mix(Ink::Band,Ink::Wet,.16),9); label(pill,area,wetInk,SmallBold,DT_CENTER);
+                }
+                y+=36;
+            }
+            if(on[ConditionModule]) {
+                label(L"TRACK CONDITION",rect(16,y+10,W/2,16),Ink::Label,Small);
+                if(!wetTrend.first.empty()) label(wetTrend.first,rect(W/2,y+10,W/2-16,16),wetTrend.second,Small,DT_RIGHT);
+                label(WetnessNames[wet],rect(16,y+26,W-32,30),wet>=3?wetInk:white,Hero);
+                // iRacing's seven levels; the track is wet from "very lightly wet" on.
+                const int segment=(W-32-6*3)/7;
+                for(int i=0;i<7;++i) fill(rect(16+i*(segment+3),y+58,segment,7),i<wet?(wet>=3?RGB(79,155,232):Ink::Value):Ink::LapAhead);
+                label(L"Dry",rect(16,y+66,100,16),Ink::Label,Small); label(L"Extremely wet",rect(W-116,y+66,100,16),Ink::Label,Small,DT_RIGHT);
+                y+=84;
+            }
+            if(on[RainModule]) {
+                fill(rect(0,y,W,1),Ink::Line);
+                label(L"PRECIPITATION",rect(16,y,W/2,36),Ink::Label,Small);
+                // Right-aligned: the value, then its trend.
+                const std::wstring value=percent(f.precipitation); const int valueWidth=measure(value,Bold), trendWidth=rainTrend.first.empty()?0:measure(rainTrend.first,Small)+px(6);
+                const int left=px(W-16)-trendWidth-valueWidth;
+                label(value,{left,px(y),left+valueWidth+1,px(y+36)},white,Bold);
+                if(trendWidth) label(rainTrend.first,{left+valueWidth+px(6),px(y),px(W-16),px(y+36)},rainTrend.second,Small);
+                y+=36;
+            }
+            if(on[TemperatureModule]) {
+                fill(rect(0,y,W,1),Ink::Line); fill(rect(W/2,y,1,62),Ink::Line);
+                label(L"TRACK",rect(16,y+9,W/2-32,16),Ink::Label,Small); valueWithTrend(16,y+26,28,degrees(f.trackTemperature),Hero,white,trackTrend,W/2-8);
+                label(L"AIR",rect(W/2+16,y+9,W/2-32,16),Ink::Label,Small); valueWithTrend(W/2+16,y+26,28,degrees(f.airTemperature),Hero,white,airTrend,W-8);
+                y+=62;
+            }
+            if(on[TemperatureHistoryModule]) {
+                fill(rect(0,y,W,1),Ink::Line);
+                label(L"TRACK TEMP  ·  LAST 20 MIN",rect(16,y+8,W-32,16),Ink::Label,Small);
+                double low=1e9,high=-1e9; int count=0;
+                for(int i=0;i<history.Count();++i) if(const double t=history.At(i).track; std::isfinite(t)) { low=std::min(low,t); high=std::max(high,t); ++count; }
+                if(count<2) label(L"Collecting the first minutes …",rect(16,y+28,W-32,36),Ink::Muted,Regular,DT_CENTER);
+                else {
+                    // At least 1 °C of height, so sensor noise stays flat.
+                    const double span=std::max(1.0,high-low), base=(low+high)/2-span/2; std::wstring points;
+                    for(int i=0;i<history.Count();++i) if(const double t=history.At(i).track; std::isfinite(t)) points+=static_cast<wchar_t>(1+std::lround(1000*(t-base)/span));
+                    out.push_back({DrawCommand::Sparkline,Regular,0,{px(18),px(y+30)-titleOffset,px(W-64),px(y+64)-titleOffset},Ink::Wet,{std::max(1.f,2.f*px(100)/100.f)},std::move(points)});
+                    label(degrees(high),rect(W-60,y+24,44,16),Ink::Label,Small,DT_RIGHT); label(degrees(low),rect(W-60,y+54,44,16),Ink::Label,Small,DT_RIGHT);
+                }
+                y+=76;
+            }
+            if(on[WindModule]) {
+                fill(rect(0,y,W,1),Ink::Line);
+                // Today's wind ring at 40 px radius: the arrow shows where the wind comes from relative to the car.
+                const float scale=static_cast<float>(dpi*o.place.scale)/9600, ring=scale*40/65, centerX=62*scale, centerY=(y+54)*scale-titleOffset, radius=40*scale;
+                const RECT bounds{static_cast<LONG>(centerX-radius-8*ring)-1,static_cast<LONG>(centerY-radius-8*ring)-1,static_cast<LONG>(centerX+radius+8*ring)+2,static_cast<LONG>(centerY+radius+8*ring)+2};
+                out.push_back({DrawCommand::WindRing,Regular,0,bounds,0,{centerX,centerY,radius,ring,std::isfinite(angle)?static_cast<float>(angle):-1.f}});
+                label(speed,rect(22,y+32,80,30),white,Hero,DT_CENTER); label(L"km/h",rect(22,y+60,80,14),Ink::Label,Small,DT_CENTER);
+                label(L"WIND",rect(124,y+20,W-140,16),Ink::Label,Small);
+                valueWithTrend(124,y+38,26,speed+L" km/h",Bold,white,from.empty()?Trend{}:Trend{L"from "+from,Ink::Muted},W-16);
+                if(!side.empty()) label(side,rect(124,y+64,W-140,22),Ink::Yellow,Regular);
+                y+=108;
+            }
+            if(on[DetailsModule]) {
+                fill(rect(0,y,W,32),Ink::Band); fill(rect(0,y,W,1),Ink::Line);
+                static constexpr const wchar_t* Skies[]={L"clear",L"partly cloudy",L"mostly cloudy",L"overcast"};
+                const std::wstring parts[]={L"Humidity ",percent(f.humidity),L"Sky ",f.skies>=0 && f.skies<4?Skies[f.skies]:L"—",L"Fog ",percent(f.fog)};
+                int x=px(16);
+                for(int i=0;i<6;++i) { const FontId font=i%2?Bold:Regular; const int w=measure(parts[i],font); label(parts[i],{x,px(y),std::min(x+w+1,px(W-8)),px(y+32)},i%2?white:Ink::Label,font); x+=w+(i%2?px(18):0); }
+                y+=32;
+            }
+            if(on[UsageModule]) {
+                fill(rect(0,y,W,1),Ink::Line);
+                std::wstring usage=Wide(app.session.trackUsage); if(usage.empty()) usage=L"—"; else usage[0]=static_cast<wchar_t>(towupper(usage[0]));
+                label(L"TRACK USAGE",rect(16,y,W/2,32),Ink::Label,Small); label(std::move(usage),rect(W/2,y,W/2-16,32),white,Regular,DT_RIGHT);
+                y+=32;
+            }
         }
     } else {
         const bool known=app.frame.limiterKnown;
         fill({0,px(32),width,height+titleOffset},!known?RGB(95,100,110):(app.frame.limiter?RGB(27,135,68):RGB(182,41,44)));
         label(!known?L"PIT LIMITER STATUS UNKNOWN":(app.frame.limiter?L"PIT LIMITER ACTIVE":L"PIT LIMITER NOT ACTIVE"),{px(12),px(38),width-px(12),height+titleOffset-px(6)},RGB(255,255,255),Bold,DT_CENTER);
     }
+    // The panel's 1 px border, last so it stays on top; the window region rounds the same corners.
+    out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{static_cast<float>(px(CornerRadius))}});
 }
 // DrawTextW costs about three times as much as measuring and ExtTextOutW; it remains only for ellipsis.
 void DrawLabel(HDC dc,const DrawCommand& c) {
@@ -814,6 +1151,32 @@ void DrawWind(HDC dc,const DrawCommand& c) {
     graphics.DrawLines(&pen,arrow,3);
 }
 // Replays the scene into the back buffer, limited to the dirty region when one is given.
+// The logo atlas (resource 102) is decoded only while logos are missing at some overlay's size, then released.
+struct LogoAtlas { IStream* stream=nullptr; Gdiplus::Bitmap* bitmap=nullptr; } logoAtlas;
+void ReleaseLogoAtlas() { delete logoAtlas.bitmap; if(logoAtlas.stream) logoAtlas.stream->Release(); logoAtlas={}; }
+HBITMAP LogoBitmap(Overlay& o,int index,int size,COLORREF tint) {
+    for(const auto& logo:o.logos) if(logo.index==index && logo.size==size) return logo.bitmap;
+    if(!logoAtlas.bitmap) {
+        const HRSRC resource=FindResourceW(app.instance,MAKEINTRESOURCEW(102),RT_RCDATA);
+        const HGLOBAL data=resource?LoadResource(app.instance,resource):nullptr;
+        if(!data) return nullptr;
+        logoAtlas.stream=SHCreateMemStream(static_cast<const BYTE*>(LockResource(data)),SizeofResource(app.instance,resource));
+        if(logoAtlas.stream) logoAtlas.bitmap=Gdiplus::Bitmap::FromStream(logoAtlas.stream);
+        if(!logoAtlas.bitmap || logoAtlas.bitmap->GetLastStatus()!=Gdiplus::Ok) { ReleaseLogoAtlas(); return nullptr; }
+    }
+    BITMAPINFO info{}; info.bmiHeader={sizeof(BITMAPINFOHEADER),size,-size,1,32,BI_RGB};
+    void* bits=nullptr; HBITMAP bitmap=CreateDIBSection(nullptr,&info,DIB_RGB_COLORS,&bits,nullptr,0);
+    if(!bitmap) return nullptr;
+    {
+        Gdiplus::Bitmap target(size,size,size*4,PixelFormat32bppPARGB,static_cast<BYTE*>(bits));
+        Gdiplus::Graphics graphics(&target); graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic); graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+        graphics.DrawImage(logoAtlas.bitmap,Gdiplus::Rect(0,0,size,size),index%BrandLogoColumns*BrandLogoCell,index/BrandLogoColumns*BrandLogoCell,BrandLogoCell,BrandLogoCell,Gdiplus::UnitPixel);
+    }
+    // The logos are white: their alpha alone, premultiplied with the tint.
+    auto* pixel=static_cast<uint32_t*>(bits);
+    for(int i=0;i<size*size;++i) { const uint32_t a=pixel[i]>>24; pixel[i]=a<<24|(GetRValue(tint)*a/255)<<16|(GetGValue(tint)*a/255)<<8|GetBValue(tint)*a/255; }
+    o.logos.push_back({index,size,bitmap}); return bitmap;
+}
 void PaintScene(Overlay& o,HRGN dirty) {
     HDC dc=o.dc;
     SelectClipRgn(dc,dirty);
@@ -824,13 +1187,62 @@ void PaintScene(Overlay& o,HRGN dirty) {
         case DrawCommand::Fill: SetDCBrushColor(dc,c.color); FillRect(dc,&c.r,static_cast<HBRUSH>(GetStockObject(DC_BRUSH))); break;
         case DrawCommand::Text: if(font!=c.font) { SelectObject(dc,o.fonts[c.font]); font=c.font; } DrawLabel(dc,c); break;
         case DrawCommand::DottedLine: {
-            HPEN pen=CreatePen(PS_DOT,1,c.color); const auto old=SelectObject(dc,pen);
+            HPEN pen=CreatePen(PS_DASH,1,c.color); const auto old=SelectObject(dc,pen);
             MoveToEx(dc,c.r.left,c.r.top,nullptr); LineTo(dc,c.r.right,c.r.top); SelectObject(dc,old); DeleteObject(pen); break;
         }
         case DrawCommand::WindRing: DrawWind(dc,c); break;
+        case DrawCommand::Ring: {
+            // An antialiased ring around a letter centered on its ink: cap height and glyph box, not the text cell.
+            const float stroke=c.shape[0], w=static_cast<float>(c.r.right-c.r.left), h=static_cast<float>(c.r.bottom-c.r.top);
+            {
+                Gdiplus::Graphics graphics(dc); graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias); graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+                Gdiplus::Pen pen(Gdiplus::Color(255,GetRValue(c.color),GetGValue(c.color),GetBValue(c.color)),stroke);
+                graphics.DrawEllipse(&pen,c.r.left+stroke/2,c.r.top+stroke/2,w-stroke,h-stroke);
+            }
+            if(c.text.empty()) break;
+            if(font!=c.font) { SelectObject(dc,o.fonts[c.font]); font=c.font; }
+            OUTLINETEXTMETRICW metrics{}; metrics.otmSize=sizeof(metrics); GetOutlineTextMetricsW(dc,sizeof(metrics),&metrics);
+            ABC glyph{}; GetCharABCWidthsW(dc,c.text[0],c.text[0],&glyph);
+            const int x=static_cast<int>(std::lround(c.r.left+w/2-glyph.abcB/2.f-glyph.abcA));
+            const int y=static_cast<int>(std::lround(c.r.top+h/2-(metrics.otmTextMetrics.tmAscent-metrics.otmsCapEmHeight/2.f)));
+            SetTextColor(dc,c.color); ExtTextOutW(dc,x,y,0,nullptr,c.text.c_str(),1,nullptr); break;
+        }
+        case DrawCommand::Logo: {
+            const int size=c.r.right-c.r.left;
+            if(HBITMAP logo=LogoBitmap(o,static_cast<int>(c.shape[0]),size,c.color)) {
+                HDC source=CreateCompatibleDC(dc); const auto old=SelectObject(source,logo);
+                AlphaBlend(dc,c.r.left,c.r.top,size,size,source,0,0,size,size,{AC_SRC_OVER,0,255,AC_SRC_ALPHA});
+                SelectObject(source,old); DeleteDC(source);
+            }
+            break;
+        }
+        case DrawCommand::Sparkline: {
+            const int count=static_cast<int>(c.text.size()); if(count<2) break;
+            std::vector<Gdiplus::PointF> points(count); const float w=static_cast<float>(c.r.right-c.r.left), h=static_cast<float>(c.r.bottom-c.r.top);
+            for(int i=0;i<count;++i) points[i]={c.r.left+w*i/(count-1),c.r.bottom-h*(c.text[i]-1)/1000.f};
+            Gdiplus::Graphics graphics(dc); graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+            const Gdiplus::Color ink(255,GetRValue(c.color),GetGValue(c.color),GetBValue(c.color));
+            Gdiplus::Pen pen(ink,c.shape[0]); pen.SetLineJoin(Gdiplus::LineJoinRound); graphics.DrawLines(&pen,points.data(),count);
+            Gdiplus::SolidBrush dot(ink); const float r=c.shape[0]*1.5f; graphics.FillEllipse(&dot,points.back().X-r,points.back().Y-r,2*r,2*r); break;
+        }
+        case DrawCommand::Hatch: {
+            HBRUSH brush=CreateHatchBrush(HS_BDIAGONAL,c.color);
+            SetBkMode(dc,OPAQUE); SetBkColor(dc,static_cast<COLORREF>(c.shape[0])); FillRect(dc,&c.r,brush); SetBkMode(dc,TRANSPARENT); DeleteObject(brush); break;
+        }
+        case DrawCommand::RoundFill: {
+            const int diameter=2*static_cast<int>(c.shape[0]);
+            SelectObject(dc,GetStockObject(NULL_PEN)); SelectObject(dc,GetStockObject(DC_BRUSH)); SetDCBrushColor(dc,c.color);
+            RoundRect(dc,c.r.left,c.r.top,c.r.right+1,c.r.bottom+1,diameter,diameter); break;
+        }
+        case DrawCommand::Outline: {
+            const int diameter=2*static_cast<int>(c.shape[0]);
+            SelectObject(dc,GetStockObject(DC_PEN)); SetDCPenColor(dc,c.color); const auto brush=SelectObject(dc,GetStockObject(NULL_BRUSH));
+            RoundRect(dc,c.r.left,c.r.top,c.r.right,c.r.bottom,diameter,diameter); SelectObject(dc,brush); break;
+        }
         }
     }
     SelectClipRgn(dc,nullptr);
+    if(logoAtlas.bitmap) ReleaseLogoAtlas();
 }
 bool EnsureBuffer(Overlay& o,int width,int height,int dpi) {
     if(o.dc && o.width==width && o.height==height && o.dpi==dpi) return false;
@@ -841,7 +1253,7 @@ bool EnsureBuffer(Overlay& o,int width,int height,int dpi) {
     const int size=std::max(8,MulDiv(14,dpi*o.place.scale,9600));
     auto font=[&](int pixels,int weight){ return CreateFontW(-pixels,0,0,0,weight,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI"); };
     auto scaled=[&](int pixels){ return MulDiv(pixels,dpi*o.place.scale,9600); };
-    o.fonts={font(size,FW_NORMAL),font(size,FW_SEMIBOLD),font(scaled(32),FW_SEMIBOLD),font(std::max(7,scaled(11)),FW_NORMAL),font(scaled(22),FW_SEMIBOLD)};
+    o.fonts={font(size,FW_NORMAL),font(size,FW_SEMIBOLD),font(scaled(32),FW_SEMIBOLD),font(std::max(7,scaled(11)),FW_NORMAL),font(scaled(22),FW_SEMIBOLD),font(std::max(7,scaled(11)),FW_BOLD)};
     o.originalFont=SelectObject(o.dc,o.fonts[Regular]);
     SetBkMode(o.dc,TRANSPARENT);
     o.width=width; o.height=height; o.dpi=dpi;
@@ -852,8 +1264,10 @@ void RefreshOverlay(Overlay& o) {
     RECT client{}; GetClientRect(o.window,&client);
     if(client.right<=0 || client.bottom<=0) return;
     const int dpi=GetDpiForWindow(o.window);
+    // The buffer comes first: building the scene measures text with its fonts.
+    const bool resized=EnsureBuffer(o,client.right,client.bottom,dpi);
     BuildScene(o,client.right,client.bottom,dpi,app.sceneBuffer);
-    const bool full=EnsureBuffer(o,client.right,client.bottom,dpi) || app.sceneBuffer.size()!=o.scene.size();
+    const bool full=resized || app.sceneBuffer.size()!=o.scene.size();
     HRGN dirty=nullptr;
     if(!full) {
         for(size_t i=0;i<app.sceneBuffer.size();++i) {
@@ -899,33 +1313,57 @@ void Fit(Overlay& o,bool recover=false) {
     SetWindowPos(o.window,HWND_TOPMOST,x,y,w,h,SWP_NOACTIVATE);
     o.Free(); InvalidateRect(o.window,nullptr,FALSE);
     SetLayeredWindowAttributes(o.window,0,static_cast<BYTE>(o.place.opacity*255/100),LWA_ALPHA);
+    const int diameter=2*MulDiv(CornerRadius,dpi*o.place.scale,9600);
+    SetWindowRgn(o.window,CreateRoundRectRgn(0,0,w+1,h+1,diameter,diameter),TRUE);
 }
-void UpdateOverlays() {
+// Ticks refresh each overlay at its own rate; everything else (settings, hide, diagnostics) forces a refresh.
+void UpdateOverlays(bool force=true) {
     InvalidateModel();
     const bool pitVisible=app.pitVisibility.Update(app.session,app.frame);
     for(auto& o:app.overlays) {
-        bool visible=o.place.enabled && !app.hidden && (o.kind!=WeatherKind || std::any_of(app.weatherDisplay.begin(),app.weatherDisplay.begin()+WeatherCardCount,[](bool value){return value;})) && (app.preview || (app.frame.connected && (o.kind!=PitLimiterKind || pitVisible)));
+        bool visible=o.place.enabled && !app.hidden && (o.kind!=WeatherKind || std::any_of(app.weatherDisplay.begin(),app.weatherDisplay.begin()+WeatherPanelCount,[](bool value){return value;})) && (app.preview || (app.frame.connected && (o.kind!=PitLimiterKind || pitVisible)));
         auto style=GetWindowLongPtrW(o.window,GWL_EXSTYLE);
         const auto desired=app.edit?(style&~WS_EX_TRANSPARENT):(style|WS_EX_TRANSPARENT);
         if(style!=desired) SetWindowLongPtrW(o.window,GWL_EXSTYLE,desired);
-        if(visible && !IsWindowVisible(o.window)) ShowWindow(o.window,SW_SHOWNOACTIVATE);
+        if(visible && !IsWindowVisible(o.window)) { ShowWindow(o.window,SW_SHOWNOACTIVATE); o.due=0; }
         if(!visible && IsWindowVisible(o.window)) ShowWindow(o.window,SW_HIDE);
         if(visible) {
             const int dpi=GetDpiForWindow(o.window);
             RECT client{}; GetClientRect(o.window,&client);
+            // Half a timer period of slack keeps a 10 Hz overlay on a 10 Hz timer from skipping ticks.
+            if(!force && app.now+app.timerMs/2<o.due) continue;
+            o.due=app.now+1000/o.place.rate;
             if(client.bottom!=MulDiv(BaseHeight(o.kind),dpi*o.place.scale,9600) || client.right!=MulDiv(OverlayWidth(o.kind),dpi*o.place.scale,9600)) { Fit(o); InvalidateModel(); }
             RefreshOverlay(o);
         }
     }
 }
+// Telemetry is read at the chosen rate, or faster when an enabled overlay refreshes faster.
+int ReadRate() {
+    int rate=app.rate;
+    for(const auto& o:app.overlays) if(o.place.enabled) rate=std::max(rate,o.place.rate);
+    return rate;
+}
 void Timer() {
-    const int ms=app.preview || app.frame.connected?1000/app.rate:1000;
+    const int ms=app.preview || app.frame.connected?1000/ReadRate():1000;
     if(app.timerMs!=ms) { KillTimer(app.main,1); SetTimer(app.main,1,ms,nullptr); app.timerMs=ms; }
+}
+// Sample weather for the preview and diagnostics: light rain, the track cooling over the last 20 minutes.
+void PreviewWeather() {
+    auto& f=app.frame; f.trackWetness=4; f.precipitation=.35; f.humidity=.82; f.fog=0; f.skies=3; f.declaredWet=true;
+    if(app.weatherHistory.Count()) return;
+    Frame sample=f; sample.replay=false; sample.connected=true;
+    for(int i=0;i<WeatherHistory::Size;++i) {
+        sample.time=f.time-1170+i*30; sample.trackTemperature=34.3-1.9*i/39; sample.precipitation=.25+.1*i/39; sample.trackWetness=i<24?3:4;
+        app.weatherHistory.Update(app.session,sample);
+    }
 }
 void PreviewData(double time) {
     app.session=DemoSession(); app.frame=DemoFrame(time); app.frame.pit=false;
     for(auto& d:app.session.drivers) { d.license="A 3.45"; d.licenseColor=0x55aaff; auto& c=app.frame.cars[d.index]; c.tireCompound=d.index%2; c.lastPitLap=8; c.lastPitDuration=42.3; c.lastPitStationary=21.6; }
     app.frame.cars[1].outLap=true; app.frame.cars[2].pit=true; app.frame.cars[2].pitStationary=8.4; app.frame.cars[5].surface=-1;
+    for(int i=0;i<10;++i) { auto& c=app.frame.cars[i]; c.stintLaps=i==2?0:(i==6?-1:3+i); c.stops=i==6?-1:1; }
+    PreviewWeather();
     for(auto& driver:app.session.drivers) if(driver.index>=6) {
         driver.classId=2; driver.className="GT4"; driver.classColor=0x67b7ff;
         app.frame.cars[driver.index].classPosition=driver.index-5;
@@ -937,16 +1375,17 @@ void PollUpdates();
 // Posted to the main window when the banner and the current page should show new state.
 constexpr UINT RefreshUiMessage=WM_APP+2;
 void ProcessFrame(bool connected) {
-    if(!connected) { app.frame={}; app.events.Update(app.session,app.frame); app.session={}; app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); }
-    else { app.pitHistory.Update(app.session,app.frame); app.events.Update(app.session,app.frame); app.fuel.Update(app.session,app.frame,app.excludeYellowFuelLaps); app.predictor.Update(app.session,app.frame); }
+    if(!connected) { app.frame={}; app.events.Update(app.session,app.frame); app.session={}; app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.weatherHistory.Reset(); }
+    else { app.pitHistory.Update(app.session,app.frame); app.events.Update(app.session,app.frame); app.fuel.Update(app.session,app.frame,true); app.weatherHistory.Update(app.session,app.frame); app.predictor.Update(app.session,app.frame); }
 }
 void Tick() {
-    if(app.preview) PreviewData(GetTickCount64()/1000.0);
+    app.now=GetTickCount64();
+    if(app.preview) PreviewData(app.now/1000.0);
     else ProcessFrame(app.telemetry.Read(app.frame,app.session));
-    UpdateStatus(); UpdateOverlays(); UpdateRaceControl(); PollUpdates(); Timer();
+    UpdateStatus(); UpdateOverlays(false); UpdateRaceControl(); PollUpdates(); Timer();
 }
 void ShowSettings() { ShowWindow(app.main,IsIconic(app.main)?SW_RESTORE:SW_SHOW); SetForegroundWindow(app.main); }
-void TogglePreview() { app.preview=!app.preview; app.frame={}; app.session={}; app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.telemetry.Close(); app.events.Reset(); Tick(); RefreshPage(); }
+void TogglePreview() { app.preview=!app.preview; app.frame={}; app.session={}; app.weatherHistory.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.telemetry.Close(); app.events.Reset(); Tick(); RefreshPage(); }
 void ToggleEdit() { app.edit=!app.edit; Tick(); RefreshPage(); }
 void ToggleHidden() { app.hidden=!app.hidden; UpdateOverlays(); RefreshPage(); }
 LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
@@ -1094,7 +1533,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
     else { MessageBoxW(nullptr,L"Could not open the configuration folder.",L"RaceMate",MB_OK|MB_ICONERROR); if(mutex) CloseHandle(mutex); return 1; }
     Load();
     if(diagnostics) {
-        app.weatherOrder=DefaultWeatherOrder; app.weatherDisplay.fill(true); app.footers={}; app.columnHeaders.fill(false); app.rows=9; app.rate=10; app.standings={}; app.fuelRows.fill(true); app.fuelDisplay.fill(true); app.startWithWindows=app.startMinimized=false;
+        app.weatherDisplay.fill(true); app.footers={}; app.columnHeaders.fill(false); app.rows=9; app.rate=10; app.standings={}; app.fuelRows.fill(true); app.fuelDisplay.fill(true); app.startWithWindows=app.startMinimized=false;
         for(int kind=0;kind<OverlayCount;++kind) { auto& p=app.overlays[kind].place; p={}; p.x=DefaultPositions[kind].x; p.y=DefaultPositions[kind].y; }
     }
     INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_STANDARD_CLASSES|ICC_LISTVIEW_CLASSES|ICC_HOTKEY_CLASS}; InitCommonControlsEx(&controls);

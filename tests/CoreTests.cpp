@@ -5,6 +5,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <chrono>
+#include <fstream>
 using namespace rm;
 void PredictionTests();
 void RaceControlTests();
@@ -452,6 +453,8 @@ void FuelMetricsTests() {
  Near(plan.estimates[3].consumption,12,"session maximum");
  Near(plan.estimates[4].consumption,1,"session minimum retained beyond ten-lap window");
  Near(plan.estimates[5].consumption,6.5,"complete average retains all twelve samples beyond rolling history");
+ Near(plan.estimates[6].consumption,11,"last three average"); Require(plan.estimates[6].samples==3,"last three count");
+ Require(plan.historyCount==10 && plan.history[9].lap==f.lapCompleted && std::abs(plan.history[9].burn-12)<1e-9 && plan.history[0].burn<plan.history[9].burn,"history keeps the last ten whole laps, oldest first");
  Require(plan.estimates[5].samples==12,"complete average reports all observed samples");
  Require(plan.estimates[1].samples==10 && plan.estimates[2].samples==5,"full rolling window counts");
  RacePrediction forecast; forecast.finish.valid=true; forecast.finish.ownDistance=5;
@@ -465,6 +468,16 @@ void FuelMetricsTests() {
  plan=calculator.Plan(f); Near(plan.estimates[5].consumption,6.5,"refueling retains complete race average");
  Require(plan.stintStartLap==f.lapCompleted+1,"refueling updates the full-stint display anchor");
  calculator.Reset(); Require(calculator.Plan(f).estimates[5].samples==0,"complete average resets with fuel history");
+ {
+  // Caution and pit laps appear in the history but not in the estimates.
+  FuelCalculator laps; auto g=DemoFrame(0); g.pit=false; g.fuel=100; g.lapCompleted=0; g.lapPct=0; laps.Update(s,g);
+  auto lap=[&](double burn,unsigned flags,bool pit) { g.time+=50; g.flags=flags; g.pit=pit; laps.Update(s,g,true); g.time+=50; g.flags=0; g.pit=false; ++g.lapCompleted; g.fuel-=burn; laps.Update(s,g,true); };
+  lap(3,0,false); lap(3,0,false); lap(2,0x4000,false); lap(3.5,0,true);
+  const auto history=laps.Plan(g);
+  Require(history.historyCount==3,"the anchoring partial lap is not shown");
+  Require(history.history[0].counted && history.history[1].caution && !history.history[1].counted && !history.history[2].counted && !history.history[2].caution,"counted, caution and pit laps are told apart");
+  Require(history.samples==1,"caution and pit laps stay out of the average");
+ }
  Require(calculator.Plan(f).estimates[4].samples==0,"metric history resets");
 }
 void FirstRaceLapFuelTests() {
@@ -609,6 +622,17 @@ void WindTests() {
  f.onTrack=true; f.replay=true; Require(!std::isfinite(RelativeWindAngle(f)),"replay does not reuse live heading");
  f.replay=false; f.connected=false; Require(!std::isfinite(RelativeWindAngle(f)),"disconnect has no direction");
 }
+void WeatherHistoryTests() {
+ auto s=DemoSession(); auto f=DemoFrame(0); WeatherHistory history;
+ f.trackTemperature=26; f.time=0; history.Update(s,f);
+ for(int second=10;second<=900;second+=10) { f.time=second; f.trackTemperature=26-second/600.0; f.precipitation=.2; history.Update(s,f); if(second==240) Require(!std::isfinite(history.Change(&WeatherHistory::Sample::track)),"no trend before five minutes"); }
+ Require(history.Count()==31,"one sample every 30 seconds");
+ Near(history.Change(&WeatherHistory::Sample::track),-1,"ten-minute change"); Near(history.Change(&WeatherHistory::Sample::rain),0,"steady rain");
+ f.replay=true; f.time=2000; history.Update(s,f); Require(history.Count()==31,"replays are not sampled");
+ f.replay=false; f.time=10; history.Update(s,f); Require(history.Count()==1,"time going back restarts the history");
+ for(int second=40;second<=1500;second+=30) { f.time=second; history.Update(s,f); }
+ Require(history.Count()==WeatherHistory::Size && history.At(WeatherHistory::Size-1).time==1480,"twenty minutes kept, oldest first");
+}
 int main(int argc,char** argv) {
  if(argc==2 && std::string(argv[1])=="--benchmark-prediction") {
   auto session=DemoSession(); auto frame=DemoFrame(0); session.drivers.clear(); session.number=0;
@@ -656,6 +680,36 @@ int main(int argc,char** argv) {
    <<"; forecast status: "<<static_cast<int>(forecast.status)<<"; leader finish in: "<<forecast.finish.leaderFinishIn
    <<" s; own distance: "<<forecast.finish.ownDistance<<" laps; own crossings: "<<forecast.finish.ownCrossings<<'\n'; return 0;
  }
+ if(argc==2 && std::string(argv[1])=="--dump-vars") {
+  // Every telemetry variable of a running session with its current value, plus the session YAML, to check SDK names.
+  HANDLE map=OpenFileMappingW(FILE_MAP_READ,FALSE,L"Local\\IRSDKMemMapFileName");
+  const auto* memory=map?static_cast<const unsigned char*>(MapViewOfFile(map,FILE_MAP_READ,0,0,0)):nullptr;
+  if(!memory) { std::cout<<"No iRacing shared memory; start a session first.\n"; if(map) CloseHandle(map); return 2; }
+  const auto* h=reinterpret_cast<const MemoryHeader*>(memory);
+  const auto* vars=reinterpret_cast<const VariableHeader*>(memory+h->varsOffset);
+  int latest=0; for(int i=1;i<h->numBuffers && i<4;++i) if(h->buffers[i].tick>h->buffers[latest].tick) latest=i;
+  const unsigned char* data=memory+h->buffers[latest].offset;
+  std::ofstream out("irsdk-dump.txt");
+  const std::string yaml(reinterpret_cast<const char*>(memory+h->sessionOffset),strnlen(reinterpret_cast<const char*>(memory+h->sessionOffset),h->sessionLength));
+  out<<"Wanted by the overlay redesign:\n";
+  for(const char* name:{"WeatherDeclaredWet","Precipitation","RelativeHumidity","FogLevel","Skies","dcBrakeBias","TrackWetness","AirPressure","SolarAltitude",
+      "PlayerCarDriverIncidentCount","PlayerCarTeamIncidentCount","SessionTimeTotal","SessionLapsTotal","Yaw","YawNorth","WindDir","WindVel"}) {
+   bool found=false; for(int i=0;i<h->numVars && !found;++i) found=std::strcmp(vars[i].name,name)==0;
+   out<<"  "<<(found?"found   ":"MISSING ")<<name<<'\n';
+  }
+  for(const char* key:{"FlairName:","FlairID:","CountryCode:","IncidentLimit:","IncidentWarning","CarScreenName:","CarPath:"})
+   out<<"  YAML "<<(yaml.find(key)!=std::string::npos?"found   ":"MISSING ")<<key<<'\n';
+  const char* types[]={"char","bool","int","bitfield","float","double"};
+  out<<"\nVariables ("<<h->numVars<<"): name, type[count], unit, value of entry 0, description\n";
+  for(int i=0;i<h->numVars;++i) {
+   const auto& v=vars[i]; const unsigned char* p=data+v.offset; double value=0;
+   switch(v.type) { case 0: case 1: value=*p; break; case 2: case 3: value=*reinterpret_cast<const int*>(p); break; case 4: value=*reinterpret_cast<const float*>(p); break; case 5: value=*reinterpret_cast<const double*>(p); break; }
+   out<<"  "<<v.name<<"  "<<(v.type>=0 && v.type<6?types[v.type]:"?")<<'['<<v.count<<"]  "<<v.unit<<"  "<<value<<"  "<<v.description<<'\n';
+  }
+  out<<"\nSession YAML:\n"<<yaml;
+  UnmapViewOfFile(memory); CloseHandle(map);
+  std::cout<<"Wrote irsdk-dump.txt ("<<h->numVars<<" variables).\n"; return 0;
+ }
  if(argc==2 && std::string(argv[1])=="--live-summary") {
   Telemetry reader; Frame frame; Session session;
   if(!reader.Read(frame,session)) { std::cout<<"No connected iRacing telemetry available.\n"; return 2; }
@@ -677,6 +731,6 @@ int main(int argc,char** argv) {
    <<"; SessionNum: "<<frame.session<<"; ReplaySessionNum: "<<frame.replaySession<<'\n';
   return 0;
  }
- try { ReviewRegressionTests(); WindTests(); ParserTests(); ResultsTests(); RowTests(); RelativeCenterTests(); StandingsSelectionTests(); EarlyAndLiveGapTests(); UntimedPracticeTests(); MissingDriverDataTests(); LivePositionAndPitVisibilityTests(); FuelMetricsTests(); FirstRaceLapFuelTests(); FuelTests(); PredictionTests(); RaceControlTests(); TelemetryTests(); std::cout<<"PASS: review regressions, parser, historical results, relative, standings, fuel metrics, finish projection, leader changes, pit learning, confidence, replay and shared memory\n"; }
+ try { ReviewRegressionTests(); WindTests(); WeatherHistoryTests(); ParserTests(); ResultsTests(); RowTests(); RelativeCenterTests(); StandingsSelectionTests(); EarlyAndLiveGapTests(); UntimedPracticeTests(); MissingDriverDataTests(); LivePositionAndPitVisibilityTests(); FuelMetricsTests(); FirstRaceLapFuelTests(); FuelTests(); PredictionTests(); RaceControlTests(); TelemetryTests(); std::cout<<"PASS: review regressions, parser, historical results, relative, standings, fuel metrics, finish projection, leader changes, pit learning, confidence, replay and shared memory\n"; }
  catch(const std::exception& e) { std::cerr<<"FAIL: "<<e.what()<<'\n'; return 1; }
 }

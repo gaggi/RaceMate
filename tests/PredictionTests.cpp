@@ -32,7 +32,23 @@ void PitHistoryTests() {
     Require(TireLabel(formula,0)=="Soft" && TireLabel(formula,1)=="Medium" && TireLabel(formula,2)=="Hard" && TireLabel(formula,3).empty(),"three dry compounds do not become wet");
     formula.carName="Mercedes-AMG W13 E Performance"; Require(TireLabel(formula,1)=="Medium","W13 compound labels");
 
+    Require(CarBrand("bmwm4gt3","BMW M4 GT3")=="BMW" && CarBrand("astonmartin_vantagegt3","")=="Aston Martin" && CarBrand("mercedesamgevogt3","")=="Mercedes","brands from CarPath");
+    Require(CarBrand("rayff1600","Ray FF1600")=="Ray" && CarBrand("","").empty(),"brand falls back to the first word of the car name");
+    Require(CarBrand("rufrt12r","")=="RUF" && CarBrand("fordgt2017","Ford GT")=="Ford" && CarBrand("trucks\\silverado","")=="Chevrolet","short fragments match at the start only");
+
     auto s=Race(); auto f=RacingFrame(); PitHistory history;
+    {
+        // Equal ratings: the class leader gains, the last loses, about as much; other classes rank separately.
+        auto rated=Race(); auto order=RacingFrame();
+        rated.drivers={{0,1,2000},{1,1,2000},{2,1,2000},{3,2,1500}};
+        for(int i=0;i<3;++i) order.cars[i].classPosition=i+1;
+        order.cars[3].classPosition=1;
+        const auto change=IRatingChanges(rated,order);
+        Require(change[0]>0 && change[2]<0 && std::abs(change[0]+change[2])<=2 && std::abs(change[1])<=2,"equal ratings: gain for the leader, loss for the last");
+        Require(change[3]==NoRatingChange,"a class of one has no change");
+        rated.drivers[2].rating=4000; Require(IRatingChanges(rated,order)[2]<change[2],"losing to weaker drivers costs more");
+        rated.type="Practice"; Require(IRatingChanges(rated,order)[0]==NoRatingChange,"no change outside races");
+    }
     s.gridPositions[0]=4; s.gridPositions[1]=7;
     Row row; row.driver=s.drivers[1]; row.car.position=5; row.car.classPosition=1;
     Require(PositionsGained(s,row,false)==2,"overall gained positions use starting grid");
@@ -62,6 +78,17 @@ void PitHistoryTests() {
     f.time+=1; f.cars[0].pit=true; history.Update(s,f); f.time+=10; f.cars[0].pit=false; history.Update(s,f);
     Require(f.cars[0].lastPitLap<0 && !f.cars[0].outLap,"telemetry gaps discard partial visits and unknown outlap");
     f.time-=100; history.Update(s,f); Require(f.cars[0].lastPitDuration<0,"replay rewind clears stop history");
+    // Laps since the last stop and the stop count: unknown when joining mid-race, counted when watched from the start.
+    history.Reset(); f=RacingFrame(); history.Update(s,f);
+    Require(f.cars[0].stintLaps==-1 && f.cars[0].stops==-1,"joining mid-race leaves stint and stops unknown");
+    f.time+=1; f.cars[0].pit=true; history.Update(s,f); Require(f.cars[0].stintLaps==-1,"a pit visit alone does not start a stint");
+    f.time+=1; f.cars[0].pit=false; history.Update(s,f); Require(f.cars[0].stintLaps==0 && f.cars[0].stops==-1,"pit exit starts a stint, stop count stays unknown");
+    f.time+=1; Progress(f.cars[0],13.2); history.Update(s,f); Require(f.cars[0].stintLaps==3,"stint counts laps since pit exit");
+    history.Reset(); f=RacingFrame(); Progress(f.cars[0],0.1); f.time=10; history.Update(s,f);
+    Require(f.cars[0].stintLaps==0 && f.cars[0].stops==0,"watched from the start: no stops, stint from lap 0");
+    f.time+=1; Progress(f.cars[0],5.5); history.Update(s,f); Require(f.cars[0].stintLaps==5,"first stint counts race laps");
+    f.time+=1; f.cars[0].pit=true; history.Update(s,f); Require(f.cars[0].stintLaps==0,"car in the pits shows L0");
+    f.time+=1; f.cars[0].pit=false; history.Update(s,f); Require(f.cars[0].stops==1,"observed stop counted");
     // Separate time stopped inside the stall from transit, creeping and waiting elsewhere.
     history.Reset(); f=RacingFrame(); s.trackMeters=1000; auto& c=f.cars[0]; c.pct=.5;
     history.Update(s,f); f.time+=1; c.pit=true; c.pct=.6; history.Update(s,f);

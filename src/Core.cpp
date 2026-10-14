@@ -193,12 +193,21 @@ void PitHistory::Update(const Session& s, Frame& f) {
             if(!car.pit && v.seen && v.pit && v.complete) {
                 v.lastLap=v.lap; v.duration=std::max(0.0,f.time-v.entry); v.complete=false;
             }
+            // A car first seen before its first race lap is known from the start: no stops yet, stint from lap 0.
+            if(!v.known) { v.known=true; if(s.type=="Race" && car.completed<=0) { v.stintStart=0; v.stops=0; } }
+            if(!car.pit && v.seen && v.pit) {
+                v.stintStart=std::max(0,car.completed);
+                // Leaving the pits for the start is not a stop.
+                if(v.stops>=0 && s.type=="Race" && f.state==4 && (car.completed>0 || car.lap>1)) ++v.stops;
+            }
             v.seen=true; v.pit=car.pit; v.surface=car.surface;
         }
         car.lastPitStationary=v.lastStopped;
         car.pitStationary=car.pit && v.stopValid?v.stopped+(v.stillRun>=.5?v.stillRun:0):-1;
         car.outLap=v.out && !car.pit && car.surface>=0;
         car.lastPitLap=v.lastLap; car.lastPitDuration=v.duration;
+        car.stintLaps=v.stintStart<0 || car.completed<0?-1:(car.pit?0:std::max(0,car.completed-v.stintStart));
+        car.stops=v.stops;
     }
     time_=f.time;
 }
@@ -250,8 +259,9 @@ Session ParseSession(const std::string& yaml, int sessionNumber) {
         result={}; resultIndex=-1; hasResult=false;
     };
     auto save = [&] {
-        if (driver.index >= 0 && driver.index < MaxCars && !driver.paceCar && !driver.spectator)
-            s.drivers.push_back(driver);
+        if (driver.index >= 0 && driver.index < MaxCars && !driver.paceCar && !driver.spectator) {
+            driver.brand=CarBrand(driver.carPath,driver.carName); s.drivers.push_back(driver);
+        }
         driver = {};
     };
     size_t start = 0;
@@ -293,6 +303,7 @@ Session ParseSession(const std::string& yaml, int sessionNumber) {
             }
         }
         if (section == "WeekendInfo") {
+            if (key == "IncidentWarningInitialLimit" && value!="unlimited") { const double n=Number(value); if(std::isfinite(n) && n>0 && n<1000000) s.incidentWarning=static_cast<int>(n); }
             if (key == "IncidentLimit" && value!="unlimited") { const double n=Number(value); if(std::isfinite(n) && n>0 && n<1000000) s.incidentLimit=static_cast<int>(n); }
             if (key == "TrackLength") s.trackMeters = Number(value)*(value.find("km")!=std::string::npos?1000:1);
             if (key == "TrackDisplayName") s.track = value;
@@ -357,6 +368,65 @@ Session ParseSession(const std::string& yaml, int sessionNumber) {
     if(std::isfinite(tank) && tank>0 && std::isfinite(fuelFraction) && fuelFraction>0 && fuelFraction<=1) s.fuelCapacity=tank*fuelFraction;
     s.key = sessionId + ":" + subSession;
     return s;
+}
+std::string CarBrand(const std::string& carPath, const std::string& carName) {
+    // CarPath fragments, most specific first; ^ matches only at the start. The logo atlas uses the same names.
+    static constexpr std::pair<const char*,const char*> brands[]={
+        {"astonmartin","Aston Martin"},{"mclaren","McLaren"},{"mercedes","Mercedes"},{"amg","Mercedes"},{"lamborghini","Lamborghini"},
+        {"porsche","Porsche"},{"ferrari","Ferrari"},{"bmw","BMW"},{"audi","Audi"},{"acura","Acura"},{"cadillac","Cadillac"},
+        {"corvette","Chevrolet"},{"camaro","Chevrolet"},{"chevy","Chevrolet"},{"chevrolet","Chevrolet"},{"silverado","Chevrolet"},
+        {"mustang","Ford"},{"fordgt","Ford"},{"ford","Ford"},{"toyota","Toyota"},{"supra","Toyota"},{"gr86","Toyota"},{"camry","Toyota"},
+        {"honda","Honda"},{"hyundai","Hyundai"},{"nissan","Nissan"},{"mazda","Mazda"},{"mx5","Mazda"},{"ligier","Ligier"},{"dallara","Dallara"},
+        {"superformula","Dallara"},{"radical","Radical"},{"lotus","Lotus"},{"renault","Renault"},{"williams","Williams"},{"subaru","Subaru"},
+        {"volkswagen","Volkswagen"},{"vw","Volkswagen"},{"kia","Kia"},{"pontiac","Pontiac"},{"riley","Riley"},{"tatuus","Tatuus"},
+        {"dodge","Dodge"},{"holden","Holden"},{"buick","Buick"},{"lexus","Lexus"},{"skipbarber","Skip Barber"},{"^ruf","RUF"},{"^ray","Ray"}};
+    std::string path=carPath; for(char& c:path) c=static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    for(const auto& [fragment,brand]:brands)
+        if(fragment[0]=='^'?path.rfind(fragment+1,0)==0:path.find(fragment)!=std::string::npos) return brand;
+    const auto first=carName.find_first_not_of(' ');
+    return first==std::string::npos?std::string{}:carName.substr(first,carName.find(' ',first)-first);
+}
+std::array<int,MaxCars> IRatingChanges(const Session& s,const Frame& f) {
+    std::array<int,MaxCars> change; change.fill(NoRatingChange);
+    if(s.type!="Race") return change;
+    // iRacing's rating curve: e = exp(-rating / (1600 / ln 2)) turns ratings into win chances.
+    const double scale=1600/std::log(2.0);
+    // Rated cars with a class position, grouped by class and ranked by class position.
+    struct Entry { int classId, position, index; double e; };
+    std::vector<Entry> entries;
+    for(const auto& d:s.drivers)
+        if(d.rating>0 && d.index>=0 && d.index<MaxCars && f.cars[d.index].classPosition>0)
+            entries.push_back({d.classId,f.cars[d.index].classPosition,d.index,std::exp(-d.rating/scale)});
+    std::sort(entries.begin(),entries.end(),[](const Entry& a,const Entry& b){return a.classId!=b.classId?a.classId<b.classId:a.position<b.position;});
+    for(size_t begin=0;begin<entries.size();) {
+        size_t end=begin; while(end<entries.size() && entries[end].classId==entries[begin].classId) ++end;
+        const double n=static_cast<double>(end-begin);
+        if(n>=2) for(size_t i=begin;i<end;++i) {
+            const double ei=entries[i].e; double expected=-.5; // Drivers i is expected to beat; j==i adds 0.5.
+            for(size_t j=begin;j<end;++j) { const double ej=entries[j].e; expected+=(1-ei)*ej/((1-ej)*ei+(1-ei)*ej); }
+            const double position=static_cast<double>(i-begin+1), fudge=(n/2-position)/100;
+            change[entries[i].index]=static_cast<int>(std::lround((n-position-expected-fudge)*200/n));
+        }
+        begin=end;
+    }
+    return change;
+}
+void WeatherHistory::Update(const Session& s,const Frame& f) {
+    if(!f.connected || f.replay) return;
+    if(key_!=s.key || session_!=f.session || (count_ && f.time<At(count_-1).time)) { Reset(); key_=s.key; session_=f.session; }
+    if(count_ && f.time-At(count_-1).time<30) return;
+    samples_[cursor_]={f.time,f.trackTemperature,f.airTemperature,f.precipitation,f.trackWetness>0?static_cast<double>(f.trackWetness):std::numeric_limits<double>::quiet_NaN()};
+    cursor_=(cursor_+1)%Size; count_=std::min(Size,count_+1);
+}
+double WeatherHistory::Change(double Sample::* value) const {
+    if(count_<2) return std::numeric_limits<double>::quiet_NaN();
+    const auto& now=At(count_-1);
+    for(int i=0;i<count_-1;++i) {
+        const auto& then=At(i);
+        if(now.time-then.time>601) continue;
+        return now.time-then.time>=299?now.*value-then.*value:std::numeric_limits<double>::quiet_NaN();
+    }
+    return std::numeric_limits<double>::quiet_NaN();
 }
 int RelativeRowCount(int requested) { int count=std::clamp(requested,1,MaxCars-1); return count%2?count:count+1; }
 std::vector<Row> Relative(const Session& s, const Frame& f, int count, bool ownClass, bool hidePit) {
@@ -554,22 +624,28 @@ void FuelCalculator::Update(const Session& s, const Frame& f, bool excludeYellow
     }
     if(f.lapCompleted<0) { anchored_=false; return; }
     if(stintStartLap_<0 || f.fuel>previousFuel_+.05) stintStartLap_=f.lapCompleted+1;
-    const bool caution = excludeYellowLaps && (f.flags & SessionFlag::Neutralized) != 0;
+    const bool neutralized = (f.flags & SessionFlag::Neutralized) != 0, caution = excludeYellowLaps && neutralized;
     if (!anchored_ || f.lapCompleted < lap_ || f.lapCompleted > lap_ + 1) {
         const bool observedStart=s.type=="Race" && f.state==4 && f.lapCompleted==0 && preStartTime_>=0 && f.time>=preStartTime_ && f.time-preStartTime_<=5;
-        anchored_=true; dirty_=!observedStart; lap_=f.lapCompleted; fuel_=f.fuel; previousFuel_=f.fuel; time_=f.time;
+        anchored_=true; dirty_=partial_=!observedStart; caution_=false; lap_=f.lapCompleted; fuel_=f.fuel; previousFuel_=f.fuel; time_=f.time;
         preStartTime_=-1;
     }
     dirty_ = dirty_ || f.pit || f.inStall || caution || f.fuel > previousFuel_ + 0.05;
+    caution_ = caution_ || neutralized;
     if (f.lapCompleted != lap_) {
         const double burn = fuel_ - f.fuel, duration = f.time - time_;
+        const bool whole = !partial_ && f.lapCompleted == lap_ + 1 && burn > 0.01 && duration > 10 && std::isfinite(burn);
+        if (whole) {
+            history_[historyCursor_] = {f.lapCompleted, burn, !dirty_, caution_};
+            historyCursor_ = (historyCursor_ + 1) % 10; historyCount_ = std::min(10, historyCount_ + 1);
+        }
         if (!dirty_ && burn > 0.01 && duration > 10 && std::isfinite(burn)) {
             burns_[cursor_] = burn; cursor_ = (cursor_ + 1) % 10;
             used_ = std::min(10, used_ + 1); ++samples_; totalBurn_+=burn; last_ = burn;
             maximum_=std::max(maximum_,burn); minimum_=std::min(minimum_,burn);
         }
         lap_ = f.lapCompleted; fuel_ = f.fuel; time_ = f.time;
-        dirty_ = f.pit || f.inStall || caution;
+        dirty_ = f.pit || f.inStall || caution; partial_ = false; caution_ = neutralized;
     }
     previousFuel_ = f.fuel;
 }
@@ -608,18 +684,22 @@ PitWindow CalculatePitWindow(const Session& s,const Frame& f,double distance,dou
 }
 FuelPlan FuelCalculator::Plan(const Frame& f, const RacePrediction* prediction) const {
     FuelPlan p; p.samples = samples_; p.stintStartLap=stintStartLap_;
+    p.historyCount = f.replay ? 0 : historyCount_;
+    for (int i = 0; i < p.historyCount; ++i) p.history[i] = history_[(historyCursor_ + 10 - historyCount_ + i) % 10];
     if(prediction) { p.prediction=*prediction; p.lapsToFinish=prediction->finish.valid?prediction->finish.ownDistance:-1; }
     if (!used_ || !f.fuelKnown || f.replay) return p;
-    double average=0, recent5=0;
+    double average=0, recent5=0, recent3=0;
     for (int i = 0; i < used_; ++i) average += burns_[i];
-    const int count5=std::min(5,used_);
+    const int count5=std::min(5,used_), count3=std::min(3,used_);
     for(int i=0;i<count5;++i) recent5+=burns_[(cursor_+9-i)%10];
+    for(int i=0;i<count3;++i) recent3+=burns_[(cursor_+9-i)%10];
     p.estimates[0]={last_,-1,1};
     p.estimates[1]={average/used_,-1,used_};
     p.estimates[2]={recent5/count5,-1,count5};
     p.estimates[3]={maximum_,-1,samples_};
     p.estimates[4]={minimum_,-1,samples_};
     p.estimates[5]={samples_?totalBurn_/samples_:0,-1,samples_};
+    p.estimates[6]={recent3/count3,-1,count3};
     if(p.lapsToFinish>=0) for(auto& estimate:p.estimates) estimate.add=std::max(0.0,p.lapsToFinish*estimate.consumption-f.fuel);
     return p;
 }
@@ -627,7 +707,8 @@ Session DemoSession() {
     Session s; s.track = "Spa-Francorchamps"; s.type = "Race"; s.key = "demo"; s.player = 3; s.fuelCapacity=30; s.trackUsage="moderately low usage";
     s.cameras={{1,"Scenic",true},{7,"Cockpit"},{11,"Far Chase"},{12,"TV1"}};
     const char* names[] = {"Luca Weber", "Daniel Fischer", "Alex Martin", "You", "Sofia Laurent", "Ben Clarke", "Marco Rossi", "Thomas Meyer", "Emma Wilson", "Nico Berg"};
-    for (int i = 0; i < 10; ++i) s.drivers.push_back({i,1,2400+i*117,0xe7c451,false,false,names[i],std::to_string(12+i),"GT3"});
+    const char* paths[] = {"porsche992rgt3","bmwm4gt3","ferrari296gt3","bmwm4gt3","mclaren720sgt3","mercedesamgevogt3","audir8lmsevo2gt3","fordmustanggt3","lamborghinievogt3","astonmartinvantagegt3"};
+    for (int i = 0; i < 10; ++i) { s.drivers.push_back({i,1,2400+i*117,0xe7c451,false,false,names[i],std::to_string(12+i),"GT3"}); s.drivers.back().carPath=paths[i]; s.drivers.back().brand=CarBrand(paths[i],""); }
     return s;
 }
 double RelativeWindAngle(const Frame& f) {
@@ -644,7 +725,7 @@ Frame DemoFrame(double time) {
     Frame f; f.connected = f.onTrack = f.fuelKnown = f.limiterKnown = true; f.player = 3; f.session = 0;
     f.incidentsKnown=f.timeLeftKnown=true; f.airTemperature=21.3; f.trackTemperature=32.4; f.timeOfDay=67500; f.windSpeed=3.3; f.trackWetness=1;
     f.yawNorth=0; f.windDirection=-.7;
-    f.time = time; f.lapCompleted = 7; f.lapPct = .45; f.fuel = 27.4; f.timeLeft = 960; f.lapsLeft = 32767; f.bestLap = 138.2; f.lastLap = 139.4;
+    f.time = time; f.lapCompleted = 7; f.lapPct = .45; f.fuel = 27.4; f.timeLeft = 960; f.timeTotal = 2400; f.lapsLeft = 32767; f.bestLap = 138.2; f.lastLap = 139.4;
     f.pit = true; f.limiter = static_cast<int>(time / 4) % 2 == 0;
     for (int i=0;i<10;++i) { auto& c=f.cars[i]; c.position=c.classPosition=i+1; c.lap=8; c.pct=.45+(3-i)*.018; c.estTime=c.pct*138.2; c.f2Time=i*2.6; c.best=138.2+i*.13; c.last=139.4+i*.16; c.surface=3; }
     f.cars[7].pit = true; return f;

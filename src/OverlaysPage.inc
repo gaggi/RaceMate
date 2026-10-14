@@ -1,11 +1,11 @@
 // Overlays page: one row per overlay with its switch, and size, opacity and corner
-// in the expanded row; below it the setup actions (preview, move, hide, reset).
+// and refresh rate in the expanded row; below it the setup actions (preview, move, hide, reset).
 class OverlaysPage : public PageWindow {
 public:
     OverlaysPage() : PageWindow(ui.heading,ui.text) {}
 private:
     enum class Key { None, Overlay, Preview, Move, Hide, Reset };
-    static constexpr int ListId=100, ScaleId=200, OpacityId=201, CornerId=202;
+    static constexpr int ListId=100, ScaleId=200, OpacityId=201, CornerId=202, RateId=203;
     static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E';
     static constexpr const wchar_t* Corners[]={L"Top left",L"Top right",L"Bottom left",L"Bottom right"};
 
@@ -18,7 +18,7 @@ private:
 
     static int Corner(const Placement& place) { return (place.growLeft?1:0)+(place.growUp?2:0); }
     static std::wstring Summary(const Overlay& o) {
-        std::wstring text=std::to_wstring(o.place.scale)+L" %  \u00B7  opacity "+std::to_wstring(o.place.opacity)+L" %  \u00B7  "+Corners[Corner(o.place)];
+        std::wstring text=std::to_wstring(o.place.scale)+L" %  \u00B7  opacity "+std::to_wstring(o.place.opacity)+L" %  \u00B7  "+Corners[Corner(o.place)]+L"  ·  "+std::to_wstring(o.place.rate)+L" Hz";
         return text;
     }
     void Refresh() {
@@ -52,13 +52,16 @@ private:
         editors_.Clear();
         const int row=ExpandedRow(); if(row<0) return;
         const auto& place=app.overlays[expanded_].place;
-        std::vector<std::wstring> scales,opacities,corners(std::begin(Corners),std::end(Corners));
+        std::vector<std::wstring> scales,opacities,corners(std::begin(Corners),std::end(Corners)),rates;
         for(int n=50;n<=150;n+=10) scales.push_back(std::to_wstring(n)+L" %");
         for(int n=40;n<=100;n+=10) opacities.push_back(std::to_wstring(n)+L" %");
+        for(int n:OverlayRates) rates.push_back(std::to_wstring(n)+L" Hz");
+        const int rate=static_cast<int>(std::find(std::begin(OverlayRates),std::end(OverlayRates),place.rate)-std::begin(OverlayRates));
         syncing_=true; editors_.Begin(row);
         editors_.Label(L"Size",0,10,40); editors_.Combo(ScaleId,scales,(place.scale-50)/10,44,10,90);
         editors_.Label(L"Opacity",152,10,56); editors_.Combo(OpacityId,opacities,(place.opacity-40)/10,210,10,90);
         editors_.Label(L"Fixed corner",318,10,84); editors_.Combo(CornerId,corners,Corner(place),404,10,130);
+        editors_.Label(L"Updates",548,10,56); editors_.Combo(RateId,rates,rate,606,10,80);
         syncing_=false; editors_.Position();
     }
     void Expand(int kind) {
@@ -71,12 +74,13 @@ private:
         auto& o=app.overlays[expanded_]; const int choice=editors_.Selection(id);
         if(choice<0) return;
         if(id==CornerId) SetOverlayCorner(expanded_,choice);
+        else if(id==RateId) { o.place.rate=OverlayRates[choice]; o.due=0; Timer(); SettingChanged(); UpdateStatus(); }
         else { (id==ScaleId?o.place.scale:o.place.opacity)=id==ScaleId?50+10*choice:40+10*choice; Fit(o); SettingChanged(); }
         Refresh();
     }
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); return true; }
-        if(id==ScaleId || id==OpacityId || id==CornerId) { if(!syncing_ && code==CBN_SELCHANGE) ApplyEditor(id); return true; }
+        if(id==ScaleId || id==OpacityId || id==CornerId || id==RateId) { if(!syncing_ && code==CBN_SELCHANGE) ApplyEditor(id); return true; }
         if(id!=ListId) return false;
         if(code==RowList::kLayoutChanged) { editors_.Position(); return true; }
         const int row=list_.NotifiedRow();

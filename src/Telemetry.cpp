@@ -37,7 +37,8 @@ constexpr const char* VarNames[] = {
     "PlayerCarMyIncidentCount","AirTemp","TrackTempCrew","TrackTemp","WindDir","YawNorth","SessionTimeOfDay","WindVel","TrackWetness",
     "CarIdxPosition","CarIdxClassPosition","CarIdxLap","CarIdxTrackSurface","CarIdxSessionFlags","CarIdxTireCompound",
     "CarIdxLapCompleted","CarIdxLapDistPct","CarIdxEstTime","CarIdxF2Time","CarIdxBestLapTime","CarIdxLastLapTime","CarIdxOnPitRoad",
-    "PlayerCarIsTowing","PlayerCarTowTime","Speed","PlayerTrackSurface","ReplayFrameNumEnd"};
+    "PlayerCarIsTowing","PlayerCarTowTime","Speed","PlayerTrackSurface","ReplayFrameNumEnd","dcBrakeBias","SessionTimeTotal","SessionLapsTotal",
+    "WeatherDeclaredWet","Precipitation","RelativeHumidity","FogLevel","Skies"};
 static_assert(std::size(VarNames) == Telemetry::VarCount);
 }
 bool Telemetry::BuildVariables(const MemoryHeader& h) {
@@ -118,6 +119,11 @@ bool Telemetry::Read(Frame& f, Session& s) {
     next.windDirection=Value(WindDir,std::numeric_limits<double>::quiet_NaN()); next.yawNorth=Value(YawNorth,std::numeric_limits<double>::quiet_NaN());
     next.timeOfDay=Value(SessionTimeOfDay,-1); next.windSpeed=Value(WindVel,-1); next.trackWetness=static_cast<int>(Value(TrackWetness,-1));
     next.incidents=next.incidentsKnown?static_cast<int>(incidents):0;
+    next.brakeBias=Value(dcBrakeBias,std::numeric_limits<double>::quiet_NaN());
+    next.timeTotal=Value(SessionTimeTotal,-1); next.lapsTotal=static_cast<int>(Value(SessionLapsTotal,-1));
+    next.declaredWet=Value(WeatherDeclaredWet,0)!=0; next.skies=static_cast<int>(Value(Skies,-1));
+    next.precipitation=Value(Precipitation,std::numeric_limits<double>::quiet_NaN()); next.humidity=Value(RelativeHumidity,std::numeric_limits<double>::quiet_NaN());
+    next.fog=Value(FogLevel,std::numeric_limits<double>::quiet_NaN());
     // Entries beyond the published array length keep the Car defaults, which equal the fallbacks below.
     int published=0; for(int id=CarIdxPosition;id<=CarIdxOnPitRoad;++id) published=std::max(published,vars_[id].count);
     for(int i=0;i<std::min(published,MaxCars);++i) {

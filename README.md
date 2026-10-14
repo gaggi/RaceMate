@@ -25,11 +25,11 @@ Overlays stay visible during spotting, replays and paused playback, and follow t
 
 ## Overlays
 
-On the Overlays page, each overlay's row expands to its size, opacity and **fixed corner**. The fixed corner stays in place when the overlay grows or shrinks (more rows, extra columns, header or footer). **Settings** in the row opens the overlay's own page.
+On the Overlays page, each overlay's row expands to its size, opacity, **fixed corner** and **update rate** (1–20 Hz; default 10 Hz for Relative and Pit Limiter, 1 Hz for Standings, Fuel Calculator and Weather). The fixed corner stays in place when the overlay grows or shrinks (more rows, extra columns, header or footer). **Settings** in the row opens the overlay's own page.
 
 ### Relative
 
-Nearby cars centered on the reference car, with position, class-colored number badge, driver, status and estimated gap. In races, cars a lap ahead are red and a lap behind blue.
+Nearby cars centered on the reference car, with position, class-colored number badge, driver with status badge and estimated gap. In races, cars a lap ahead are red and a lap behind blue (switch **Lap colors**).
 
 - **Rows**: odd number from 1 to 127 (default 7: three ahead, the reference car, three behind).
 - **Gap decimals**: 0–3 (default 1). Gaps use same-class SDK time estimates where possible, otherwise track position and a reference lap time.
@@ -42,27 +42,33 @@ Separate class sections or one combined order, optionally only the reference car
 - Best and last laps merge live telemetry with the session results, so laps set before you joined are shown. Practice and qualifying rank by best lap; drivers without a time follow by car number or, optionally, iRating.
 - **Show Interval (INT)**: gap to the car directly ahead, including hidden rows.
 - **Live Positions / GAP / INT (estimated)**: ranks races by live track progress instead of the SDK's start/finish snapshots.
-- Optional **LAPS** (completed laps) and **GAIN** (positions gained against the starting grid).
+- Optional **LAPS** (completed laps), **GAIN** (▲/▼ positions against the starting grid) and **STOPS** (pit stops seen in this race, `?` after joining late). The fastest lap of each class is purple.
+- **Session progress**: a thin bar under the header, by laps or by time.
 
 ### Columns, header and footer (Relative and Standings)
 
 Both overlays offer the same options, configured separately.
 
 
-- **STATUS** shows one value, by priority: PIT > TOW > BLACK/DQ > REPAIR > SLOW > OUT. OUT lasts from an observed pit exit to the next line crossing. TOW uses the SDK for your car and is inferred for others from a direct return to the pit stall.
-- Optional: license/safety rating, iRating (both with a short view), tires, last pit lap, pit lane time and **PIT STOP** (estimated stationary time in the stall, marked ≈).
+- The **status badge** after the driver's name shows one value, by priority: PIT > TOW > BLACK/DQ > REPAIR > SLOW > OUT. OUT lasts from an observed pit exit to the next line crossing. TOW uses the SDK for your car and is inferred for others from a direct return to the pit stall.
+- Optional: car brand with its logo (the initial for brands without one), tires as a ring with D (dry), W (wet) or the compound's initial, iRating (both with a short view), **iRating change** (estimated as if the race ended in the current class order), **laps since stop** (L12; L- until a stop or the start was seen), last pit lap, pit lane time and **PIT STOP** (estimated stationary time in the stall, marked ≈). A last lap equal to the car's best is green.
+- **Class colors** puts the class color on the number box and a stripe on the left; switched off, numbers sit in a neutral box.
 - Every column is a row on the page: optional columns have a switch, all can move up and down, and the order is saved per overlay.
-- Header and footer each show up to three metrics: track, incidents, temperatures, session clocks, lap and finish forecasts, session type, wetness, wind, class SOF or overlay name. Forecasts are marked `~`, missing data `—`.
+- Header and footer each show up to four metrics, the first on the left and the others right-aligned: track, incidents (with the race's warning and disqualification limits), temperatures, session clocks, lap and finish forecasts, session type, wetness, wind, class SOF, position in class, brake bias or overlay name. Forecasts are marked `~`, missing data `—`.
 
 ### Fuel Calculator
 
-RaceMate learns consumption between line crossings. The first partial lap, pit and refuel laps and replays are never counted. Yellow-flag laps count unless **Exclude yellow / red flag laps** is on. History resets when the session or car changes.
+RaceMate learns consumption between line crossings. Only whole laps at racing speed count: caution laps, pit and out laps, refuels, the first partial lap and replays never do. History resets when the session or car changes. The average of the last 10 counted laps drives range, pit window, refuel and targets.
 
-- **Tank / Range / At Finish**: current fuel, laps the tank lasts and fuel left (green) or missing (red) at the finish.
-- **Pit window timeline**: one block per lap of a full-tank stint, current lap yellow, pit window green, with the window and fuel to add at the next stop.
-- Consumption rows: Last lap, Average (all clean laps), Average 10, Average 5, Maximum, Minimum, each with L/lap, **ADD TO FINISH** and an optional pit window (**PIT ≈**).
+- **Header**: current and expected final lap, and how many stops are needed.
+- **Tank**: fuel, range in laps and a bar of the tank with the fuel missing to the finish (hatched) and the finish mark.
+- **Consumption**: last lap, averages of 3, 10 and 5 laps, race average, minimum and maximum, each with its own switch.
+- **Last 10 laps**: every whole lap's fuel against the 10-lap average; caution laps can be marked.
+- **Refuel to finish** (without a safety margin; green when it fits in the tank) and **pit window** (earliest and latest lap).
+- **Pit window timeline**: one block per lap of a full-tank stint, current lap yellow, window green, with the fuel to add at the next stop.
+- **Targets**: the most fuel per lap that still reaches the latest stop (or the finish without a stop), and the same for one lap longer, two laps longer or one lap shorter.
 - The finish forecast projects the overall leader to the flag and then your own first crossing after it, using observed pace and track position. Lapping by faster classes is included; future pit stops are not.
-- Further elements: leader distance, time left at final lap start, Time Empty, Fuel at End, Stops Remaining, Refuel to End, tank gauge, stint timeline and pit-window panel. Every element can be hidden and reordered; all forecasts use the race Average.
+- Layout **Panel** shows the modules one under the other; **Strip** shows tank, range, average, refuel, latest stop and targets in one line.
 
 ### Pit Limiter
 
@@ -70,7 +76,10 @@ Green when the limiter is on, red when it is off, gray when unknown. Shown while
 
 ### Weather
 
-Track and air temperature, wind speed with a direction ring relative to your car, track wetness and track usage. Each card can be hidden and reordered.
+Modules, each with its own switch: a header with **DECLARED WET** while rain tires are allowed; the track condition in iRacing's seven levels; precipitation; track and air temperature; the track temperature of the last 20 minutes; wind speed, compass direction and the direction ring relative to your car (with "Crosswind from the left" and similar); humidity, sky and fog; track usage.
+
+- **Trend arrows** compare with ten minutes ago (from five minutes of history on): rising, falling or steady. iRacing publishes no forecast, so RaceMate samples the weather every 30 seconds itself.
+- Layout **Panel** or **Strip** (condition, rain, temperatures and wind in one line).
 
 ## Race Control
 
@@ -87,11 +96,11 @@ A normal resizable window (Race Control page or tray menu) with full standings a
 ## Resource use
 
 - RaceMate runs in Windows efficiency mode (low priority, EcoQoS), so the simulator always gets CPU time first.
-- Refresh rate 2, 5, 10 or 20 Hz (default 10). One connection attempt per second while iRacing is not running.
-- Each overlay keeps a list of draw commands and repaints only the parts that changed.
+- Telemetry rate 2, 5, 10, 15 or 20 Hz (default 10, Settings page); an overlay set to update faster raises it. One connection attempt per second while iRacing is not running.
+- Each overlay updates at its own rate, keeps a list of draw commands and repaints only the parts that changed.
 - Session YAML is parsed only when iRacing updates it.
 
-Measured on the development machine (`build.ps1 -Diagnostics`, then the benchmarks below): with 60 cars in three classes and every overlay visible, a refresh costs about 0.6 ms of CPU time; reading a telemetry frame about 4 µs.
+Measured on the development machine (`build.ps1 -Diagnostics`, then the benchmarks below): with 60 cars in three classes and every overlay visible, a refresh of all overlays costs about 0.6 ms of CPU time, about 2.5 ms per second at the default rates; reading a telemetry frame about 4 µs.
 
 ## Build
 
@@ -105,12 +114,15 @@ Requires Visual Studio 2022 Build Tools (Desktop development with C++, Windows S
 
 Diagnostics and benchmarks use `build\qa\settings.ini` and leave personal settings untouched.
 
+Car brand logos are white PNGs in `resources/brand-logos/`, named after the brand; `resources/generate-brand-logos.ps1` packs them into `resources/brand-logos.png` and `src/BrandLogos.inc`.
+
 ```powershell
 .\build\x64\Release\RaceMateDiagnostics.exe --diagnostics       # GUI checks, BMP previews in build\qa
 .\build\x64\Release\RaceMateDiagnostics.exe --benchmark-tick    # refresh cost, written to build\qa\benchmark.txt
 .\build\x64\Release\RaceMateTests.exe --benchmark-telemetry
 .\build\x64\Release\RaceMateTests.exe --benchmark-prediction
 .\build\x64\Release\RaceMateTests.exe --live-summary            # lap-time coverage and live/replay state of a running session
+.\build\x64\Release\RaceMateTests.exe --dump-vars               # every telemetry variable and the session YAML of a running session, to irsdk-dump.txt
 ```
 
 ## Releases

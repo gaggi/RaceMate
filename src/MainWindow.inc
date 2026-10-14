@@ -35,7 +35,7 @@ void UpdateStatus() {
     else if(app.frame.connected) {
         tone=Tone::Active; title=L"Connected to iRacing";
         detail=Wide(app.session.track); if(!app.session.type.empty()) detail+=L"  \u00B7  "+Wide(app.session.type);
-        detail+=L"  \u00B7  "+std::to_wstring(app.rate)+L" Hz"; button=L"Move overlays";
+        detail+=L"  \u00B7  "+std::to_wstring(ReadRate())+L" Hz"; button=L"Move overlays";
     }
     else { title=L"Waiting for iRacing"; detail=L"RaceMate connects as soon as a session is loaded."; button=L"Preview"; }
     std::wstring problems;
@@ -153,7 +153,9 @@ void SetColumnVisible(int kind,int id,bool on) {
     case GainedColumn: app.standingsGained=on; break;
     case BestColumn: if(kind==RelativeKind) app.relativeBest=on; break;
     case LastColumn: if(kind==RelativeKind) app.relativeLast=on; break;
-    default: if(id>=LicenseColumn && id<=PitStopColumn) app.driverColumns[kind][id-LicenseColumn]=on;
+    default:
+        if(id>=BrandColumn) app.extraColumns[kind][id-BrandColumn]=on;
+        else if(id>=LicenseColumn && id<=PitStopColumn) app.driverColumns[kind][id-LicenseColumn]=on;
     }
     SettingChanged();
 }

@@ -25,8 +25,11 @@ struct Driver {
     int incidentCount = -1;
     std::string license; unsigned licenseColor = 0x989fa9;
     double estimatedLapTime = -1;
+    std::string brand; // Manufacturer, from CarBrand().
 };
 std::string TireLabel(const Driver&, int compound);
+// Manufacturer from CarPath, else the first word of CarScreenName; empty without either.
+std::string CarBrand(const std::string& carPath, const std::string& carName);
 bool HasMultipleDryCompounds(const Driver&);
 struct SessionResult {
     int position = 0, classPosition = 0;
@@ -36,7 +39,7 @@ struct SessionResult {
 struct CameraGroup { int number=-1; std::string name; bool scenic=false; };
 struct Session {
     std::string track, type, key, trackUsage;
-    int number = -1, player = -1, totalLaps = -1, incidentLimit = -1;
+    int number = -1, player = -1, totalLaps = -1, incidentLimit = -1, incidentWarning = -1;
     double trackMeters = -1, fuelCapacity = -1;
     std::vector<Driver> drivers;
     std::vector<CameraGroup> cameras;
@@ -51,6 +54,8 @@ struct Car {
     unsigned sessionFlags = 0;
     int tireCompound = -1, lastPitLap = -1; double lastPitDuration = -1;
     double speed = -1, lastPitStationary = -1, pitStationary = -1;
+    // Laps since the last pit exit and stops in this race; -1 while unknown (not watched since the start nor seen leaving the pits).
+    int stintLaps = -1, stops = -1;
 };
 struct Frame {
     bool connected = false, onTrack = false, pit = false, inStall = false, replay = false;
@@ -58,6 +63,11 @@ struct Frame {
     double airTemperature = std::numeric_limits<double>::quiet_NaN(), trackTemperature = std::numeric_limits<double>::quiet_NaN();
     double windDirection = std::numeric_limits<double>::quiet_NaN(), yawNorth = std::numeric_limits<double>::quiet_NaN();
     double timeOfDay = -1, windSpeed = -1; int trackWetness = -1;
+    double brakeBias = std::numeric_limits<double>::quiet_NaN(); // dcBrakeBias, own car only; missing on some cars.
+    double timeTotal = -1; int lapsTotal = -1; // SessionTimeTotal / SessionLapsTotal; unlimited sessions report 604800 s and 32767 laps.
+    // Precipitation, RelativeHumidity and FogLevel are fractions 0..1; Skies 0 clear to 3 overcast; WeatherDeclaredWet allows rain tires.
+    bool declaredWet = false; int skies = -1;
+    double precipitation = std::numeric_limits<double>::quiet_NaN(), humidity = std::numeric_limits<double>::quiet_NaN(), fog = std::numeric_limits<double>::quiet_NaN();
     bool limiterKnown = false, limiter = false, fuelKnown = false, timeLeftKnown = false;
     int player = -1, camera = -1, session = -1, lapCompleted = -1, incidents = 0, state = 0;
     int cameraGroup = 1, replaySession = -1;
@@ -70,6 +80,25 @@ struct Frame {
 };
 // Clockwise source bearing on screen: 0 is ahead, pi/2 is right.
 double RelativeWindAngle(const Frame&);
+// Track and air temperature, precipitation and wetness every 30 s of session time, 20 minutes back.
+class WeatherHistory {
+public:
+    struct Sample {
+        double time = -1, track = std::numeric_limits<double>::quiet_NaN(), air = std::numeric_limits<double>::quiet_NaN();
+        double rain = std::numeric_limits<double>::quiet_NaN(), wetness = std::numeric_limits<double>::quiet_NaN();
+    };
+    static constexpr int Size = 40;
+    void Reset() { *this = {}; }
+    void Update(const Session&, const Frame&);
+    int Count() const { return count_; }
+    const Sample& At(int i) const { return samples_[(cursor_ + Size - count_ + i) % Size]; } // Oldest first.
+    // Change over the last ten minutes once at least five are known; NaN before.
+    double Change(double Sample::* value) const;
+private:
+    std::array<Sample, Size> samples_{};
+    int count_ = 0, cursor_ = 0, session_ = -1;
+    std::string key_;
+};
 class PitLimiterVisibility {
 public:
     void Reset() { *this={}; }
@@ -84,6 +113,7 @@ public:
 private:
     struct Visit { bool seen=false, pit=false, complete=false, out=false, tow=false; int outLap=-1, outCompleted=-1; double pct=-1; double entry=-1; int lap=-1, lastLap=-1; double duration=-1;
         int surface=-1; bool stopValid=false; double stopped=0, stillRun=0, lastStopped=-1;
+        bool known=false; int stintStart=-1, stops=-1;
     };
     std::array<Visit,MaxCars> visits_{};
     std::string key_; int session_=-1; double time_=-1;
@@ -105,6 +135,9 @@ struct Row {
 };
 // -MaxCars denotes unavailable (missing grid or non-race session).
 int PositionsGained(const Session&, const Row&, bool ownClass);
+// Estimated iRating change per car index if the race ended in the current class order; NoRatingChange where unknown.
+constexpr int NoRatingChange = -100000;
+std::array<int, MaxCars> IRatingChanges(const Session&, const Frame&);
 std::string DriverFlags(unsigned flags, bool black=true, bool slowdown=true, bool repair=true);
 int RelativeRowCount(int requested);
 std::vector<Row> Relative(const Session&, const Frame&, int count, bool ownClass, bool hidePit = false);
@@ -120,7 +153,7 @@ struct StandingsGroup {
     std::vector<Row> rows;
 };
 std::vector<StandingsGroup> SelectStandings(const Session&, const Frame&, const StandingsOptions&);
-enum class FuelMetric { Last, Average10, Average5, Maximum, Minimum, Average, Count };
+enum class FuelMetric { Last, Average10, Average5, Maximum, Minimum, Average, Average3, Count };
 constexpr int FuelMetricCount = static_cast<int>(FuelMetric::Count);
 struct FinishScenario {
     bool valid = false;
@@ -160,10 +193,13 @@ enum class PitWindowStatus { Unavailable, NoStopNeeded, ExtraStopNeeded, Open };
 struct PitWindow { PitWindowStatus status=PitWindowStatus::Unavailable; int currentLap=-1, firstLap=-1, lastLap=-1, finishLap=-1, stops=-1; bool openNow=false; double fuelAtEnd=std::numeric_limits<double>::quiet_NaN(), timeEmpty=-1; };
 PitWindow CalculatePitWindow(const Session&, const Frame&, double remainingDistance, double consumption, double lapTime=-1);
 struct FuelEstimate { double consumption = 0, add = -1; int samples = 0; };
+// A completed whole lap's fuel; counted laps feed the estimates, the others ran under caution or through the pits.
+struct FuelLap { int lap = -1; double burn = 0; bool counted = false, caution = false; };
 struct FuelPlan {
     int samples = 0, stintStartLap = -1;
     double lapsToFinish = -1;
     std::array<FuelEstimate, FuelMetricCount> estimates{};
+    std::array<FuelLap, 10> history{}; int historyCount = 0; // Oldest first.
     RacePrediction prediction;
 };
 class FuelCalculator {
@@ -175,7 +211,8 @@ public:
 private:
     std::string key_;
     int session_ = -1, player_ = -1, lap_ = -1, samples_ = 0, used_ = 0, cursor_ = 0;
-    bool anchored_ = false, dirty_ = false;
+    bool anchored_ = false, dirty_ = false, partial_ = false, caution_ = false;
+    std::array<FuelLap, 10> history_{}; int historyCount_ = 0, historyCursor_ = 0;
     double fuel_ = 0, previousFuel_ = 0, time_ = -1, last_ = 0;
     double preStartTime_ = -1;
     int stintStartLap_ = -1;

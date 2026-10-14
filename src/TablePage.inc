@@ -4,7 +4,7 @@ class TablePage : public PageWindow {
 public:
     explicit TablePage(int kind) : PageWindow(ui.heading,ui.text), kind_(kind) {}
 private:
-    enum class Key { None, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, ClassView, OwnClass, LiveGaps, UntimedOrder, Column, Header, Footer, ColumnHeadings };
+    enum class Key { None, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, ClassView, OwnClass, LiveGaps, UntimedOrder, ClassColors, LapColors, Progress, Column, Header, Footer, ColumnHeadings };
     static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, NameFormatEditId=201, FlagEditId=202, ShortViewEditId=205, SlotEditId=206;
     static constexpr UINT_PTR TypingTimer=1;
     static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E', UpGlyph=L'\uE74A', DownGlyph=L'\uE74B';
@@ -12,10 +12,12 @@ private:
     static constexpr ColumnText ColumnTexts[]={
         {L"Position",L"Overall or class position"},{L"Car number",L"On the class color"},{L"Driver",L""},
         {L"Gap",L""},{L"Interval",L"Gap to the car directly ahead, including hidden rows"},{L"Best lap",L"Fastest lap of this session"},{L"Last lap",L"Most recent lap"},
-        {L"License",L"License class and safety rating"},{L"iRating",L""},{L"Tires",L"Dry / wet, or the compound where a car has several"},
+        {L"License",L"License class and safety rating"},{L"iRating",L""},{L"Tires",L"D dry, W wet, or S/M/H where a car has several compounds"},
         {L"Last pit lap",L"Lap of the last observed pit entry"},{L"Pit lane time",L"From pit entry to pit exit"},
         {L"Pit stop time",L"Time standing in the pit stall, estimated"},{L"Completed laps",L""},
-        {L"Positions gained",L"Compared with the starting grid"},{L"Status",L""}};
+        {L"Positions gained",L"Compared with the starting grid"},{L"Status badge",L""},
+        {L"Car brand",L"Manufacturer, with its initial until logos arrive"},{L"iRating change",L"Estimated, as if the race ended in the current order"},
+        {L"Laps since stop",L"L12; L- until a stop or the start was seen"},{L"Pit stops",L"Observed in this race; ? after joining late"}};
     static constexpr const wchar_t* NameFormats[]={L"First name Last name",L"F. Last name",L"F Last name"};
     static constexpr const wchar_t* FlagNames[]={L"Black flag",L"Slowdown",L"Required repairs"};
     static_assert(std::size(ColumnTexts)==ColumnCount);
@@ -30,7 +32,7 @@ private:
 
     bool Optional(int id) const {
         if(id==BestColumn || id==LastColumn) return kind_==RelativeKind;
-        return id==DriverColumn || id==StatusColumn || id==IntervalColumn || id==LapsColumn || id==GainedColumn || id>=LicenseColumn && id<=PitStopColumn;
+        return id==DriverColumn || id==StatusColumn || id==IntervalColumn || id==LapsColumn || id==GainedColumn || id>=LicenseColumn && id<=PitStopColumn || id>=BrandColumn;
     }
     static bool HasOptions(int id) { return id==DriverColumn || id==StatusColumn || id==LicenseColumn || id==IRatingColumn; }
     std::wstring ColumnDetail(int id) const {
@@ -38,7 +40,7 @@ private:
         case DriverColumn: return NameFormats[app.nameFormat[kind_]];
         case GapColumn: return kind_==RelativeKind?L"Time to each car, estimated":L"Gap to the class leader";
         case StatusColumn: {
-            std::wstring text=L"PIT, TOW, OUT";
+            std::wstring text=L"After the name: PIT, TOW, OUT";
             for(int i=0;i<3;++i) if(app.driverFlags[kind_][i]) text+=std::wstring(L", ")+FlagNames[i];
             return text;
         }
@@ -52,7 +54,7 @@ private:
     }
     static std::wstring SlotsText(const Slots& metrics) {
         std::wstring text;
-        for(int slot=0;slot<3;++slot) text+=(slot?L"  \u00B7  ":L"")+std::wstring(metrics[slot]==NoMetric?L"\u2014":MetricTitles[metrics[slot]]);
+        for(int slot=0;slot<SlotCount;++slot) text+=(slot?L"  \u00B7  ":L"")+std::wstring(metrics[slot]==NoMetric?L"\u2014":MetricTitles[metrics[slot]]);
         return text;
     }
     void Refresh() {
@@ -94,6 +96,17 @@ private:
             untimed.detail=standings.fallbackByRating?L"Ordered by iRating, highest first":L"Ordered by car number";
             push(std::move(untimed),Key::UntimedOrder);
         }
+        header(L"Markings");
+        RowList::Row classColors; classColors.title=L"Class colors"; classColors.detail=L"Stripe on the left and the car number on the class color; off: a neutral number box.";
+        classColors.toggle=app.classColors[kind_]?1:0; push(std::move(classColors),Key::ClassColors);
+        if(kind_==RelativeKind) {
+            RowList::Row lapColors; lapColors.title=L"Lap colors"; lapColors.detail=L"In races, red names are a lap or more ahead of you, blue names behind.";
+            lapColors.toggle=app.lapColors?1:0; push(std::move(lapColors),Key::LapColors);
+        }
+        if(kind_==StandingsKind) {
+            RowList::Row progress; progress.title=L"Session progress"; progress.detail=L"A thin bar under the header, by laps or by time.";
+            progress.toggle=app.standingsProgress?1:0; push(std::move(progress),Key::Progress);
+        }
         header(L"Columns  \u00B7  left to right");
         const auto& order=app.columnOrder[kind_];
         // Same button, same column: {expand, down, up} or {0, down, up} (see "Controls line up in columns").
@@ -101,10 +114,12 @@ private:
         for(size_t i=0;i<order.size();++i) {
             const int id=order[i];
             RowList::Row row; row.title=ColumnTexts[id].name; row.detail=ColumnDetail(id);
-            if(Optional(id)) row.toggle=ColumnVisible(kind_,id)?1:0;
+            // The status badge follows the name, so it has no place of its own to move.
+            const bool shown=id==StatusColumn?app.showStatus[kind_]:ColumnVisible(kind_,id);
+            if(Optional(id)) row.toggle=shown?1:0;
             else row.pill=L"Always";
-            row.muted=!ColumnVisible(kind_,id);
-            row.iconButtons={DownGlyph,UpGlyph};
+            row.muted=!shown;
+            row.iconButtons=id==StatusColumn?std::vector<wchar_t>{0,0}:std::vector<wchar_t>{DownGlyph,UpGlyph};
             if(HasOptions(id)) expandable(row,Key::Column,id,48);
             else if(anyOptions) row.iconButtons.insert(row.iconButtons.begin(),0);
             push(std::move(row),Key::Column,id);
@@ -142,8 +157,8 @@ private:
         } else if(expandedKey_==Key::Header || expandedKey_==Key::Footer) {
             const Slots& metrics=expandedKey_==Key::Header?app.headerMetrics[kind_]:app.footers[kind_].metrics;
             const std::vector<std::wstring> titles(std::begin(MetricTitles),std::end(MetricTitles));
-            const wchar_t* labels[]={L"Left",L"Center",L"Right"};
-            for(int slot=0;slot<3;++slot) { editors_.Label(labels[slot],slot*228,10,44); editors_.Combo(SlotEditId+slot,titles,metrics[slot],slot*228+46,10,170); }
+            const wchar_t* labels[]={L"Left",L"Right 1",L"Right 2",L"Right 3"};
+            for(int slot=0;slot<SlotCount;++slot) { editors_.Label(labels[slot],slot*184,10,56); editors_.Combo(SlotEditId+slot,titles,metrics[slot],slot*184+58,10,118); }
         } else if(expandedId_==DriverColumn) {
             editors_.Label(L"Name format",0,10,90);
             editors_.Combo(NameFormatEditId,std::vector<std::wstring>(std::begin(NameFormats),std::end(NameFormats)),app.nameFormat[kind_],94,10,200);
@@ -192,7 +207,7 @@ private:
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); return true; }
         if(id==RowsEditId || (id>=LeadersEditId && id<=BehindEditId)) { if(code==EN_CHANGE && !syncing_) { typing_=true; SetTimer(Handle(),TypingTimer,500,nullptr); } return true; }
-        if(id>=NameFormatEditId && id<SlotEditId+3) {
+        if(id>=NameFormatEditId && id<SlotEditId+SlotCount) {
             if(syncing_) return true;
             if(id==NameFormatEditId && code==CBN_SELCHANGE) app.nameFormat[kind_]=std::max(0,editors_.Selection(id));
             else if(id>=FlagEditId && id<FlagEditId+3 && code==BN_CLICKED) app.driverFlags[kind_][id-FlagEditId]=editors_.Checked(id);
@@ -223,6 +238,9 @@ private:
             if(pressed) { const int choice=ChooseFromMenu({L"Separate classes",L"Combined overall standings"},app.standings.separateClasses?0:1); if(choice>=0) { app.standings.separateClasses=choice==0; Changed(); } }
             break;
         case Key::OwnClass: if(code==RowList::kToggled) { app.standings.ownClass=on; Changed(); } break;
+        case Key::ClassColors: if(code==RowList::kToggled) { app.classColors[kind_]=on; Changed(); } break;
+        case Key::LapColors: if(code==RowList::kToggled) { app.lapColors=on; Changed(); } break;
+        case Key::Progress: if(code==RowList::kToggled) { app.standingsProgress=on; Changed(); } break;
         case Key::LiveGaps: if(code==RowList::kToggled) { app.standings.liveGaps=on; Changed(); } break;
         case Key::UntimedOrder:
             if(pressed) { const int choice=ChooseFromMenu({L"By car number",L"By iRating, highest first"},app.standings.fallbackByRating?1:0); if(choice>=0) { app.standings.fallbackByRating=choice==1; Changed(); } }

@@ -1,5 +1,7 @@
 #include <windows.h>
 101 ICON "rm64.ico"
+// Car brand logos, made by generate-brand-logos.ps1; src/BrandLogos.inc lists the cells.
+102 RCDATA "brand-logos.png"
 1 RT_MANIFEST "app.manifest"
 // The version comes from project() in CMakeLists.txt.
 1 VERSIONINFO

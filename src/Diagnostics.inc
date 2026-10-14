@@ -70,17 +70,12 @@ int RunDiagnostics() {
         report<<"Settings save only changed keys and survive a reload: "<<(saveOk?"PASS":"FAIL")<<"\n"; ok=saveOk && ok;
     }
     {
-        const bool savedFilter=app.excludeYellowFuelLaps;
-        WritePrivateProfileStringW(L"Fuel Calculator",L"ExcludeYellowLaps",nullptr,app.config.c_str());
-        Load();
-        bool filterOk=!app.excludeYellowFuelLaps;
-        for(bool enabled:{true,false}) {
-            app.excludeYellowFuelLaps=enabled; SettingChanged();
-            Load(); filterOk=(app.excludeYellowFuelLaps==enabled) && filterOk;
-        }
-        app.excludeYellowFuelLaps=savedFilter; Save();
-        report<<"Optional yellow fuel filter defaults off, persists and restores in settings: "<<(filterOk?"PASS":"FAIL")<<"\n";
-        ok=filterOk && ok;
+        // Caution laps never count now, so the fuel page has a layout and modules instead of a filter.
+        const bool savedStrip=app.fuelStrip; const auto savedModules=app.fuelDisplay; bool fuelOk=true;
+        app.fuelStrip=true; app.fuelDisplay[TwoLongerRow]=true; SettingChanged(); Load();
+        fuelOk=app.fuelStrip && app.fuelDisplay[TwoLongerRow] && OverlayWidth(FuelKind)==FuelStripCount()*FuelStripCell && HeightWithTitle(FuelKind)==32+50 && fuelOk;
+        app.fuelStrip=savedStrip; app.fuelDisplay=savedModules; SettingChanged();
+        report<<"Fuel layout and modules persist; the strip's width follows its values: "<<(fuelOk?"PASS":"FAIL")<<"\n"; ok=fuelOk && ok;
     }
     UpdateOverlays();
     for(auto& o:app.overlays) ok=Export(o.window,L"build\\qa\\overlay-"+std::to_wstring(o.kind)+L".bmp")&&ok;
@@ -115,7 +110,7 @@ int RunDiagnostics() {
             int width=OverlayWidth(kind);
             SetColumnVisible(kind,DriverColumn,false); displayOk=!ColumnVisible(kind,DriverColumn) && OverlayWidth(kind)==width-ColumnWidth(DriverColumn,kind) && displayOk;
             width=OverlayWidth(kind);
-            SetColumnVisible(kind,StatusColumn,false); displayOk=!ColumnVisible(kind,StatusColumn) && OverlayWidth(kind)==width-ColumnWidth(StatusColumn,kind) && displayOk;
+            SetColumnVisible(kind,StatusColumn,false); displayOk=!app.showStatus[kind] && OverlayWidth(kind)==width && displayOk;
             app.footers[kind].enabled=false; SettingChanged();
             displayOk=BaseHeight(kind)==before+5-28 && displayOk;
             Load(); displayOk=!app.showDriver[kind] && !app.showStatus[kind] && !app.columnHeaders[kind] && app.tableHeaders[kind] && !app.footers[kind].enabled && app.nameFormat[kind]==1 && displayOk;
@@ -164,10 +159,31 @@ int RunDiagnostics() {
             app.driverFlags[kind]={true,true,true}; SettingChanged(); OpenOverlay(kind);
             Export(app.main,L"build\\qa\\driver-flags-settings-"+std::to_wstring(kind)+L".bmp"); Export(app.overlays[kind].window,L"build\\qa\\driver-flags-overlay-"+std::to_wstring(kind)+L".bmp");
             app.driverFlags[kind]={false,false,false}; SettingChanged();
-            Load(); flagsOk=ColumnVisible(kind,StatusColumn) && std::none_of(app.driverFlags[kind].begin(),app.driverFlags[kind].end(),[](bool v){return v;}) && flagsOk;
+            Load(); flagsOk=app.showStatus[kind] && std::none_of(app.driverFlags[kind].begin(),app.driverFlags[kind].end(),[](bool v){return v;}) && flagsOk;
         }
         app.driverFlags=savedFlags; app.frame=savedFrame; Save(); UpdateOverlays();
         report<<"Driver flag display settings, independent overlays and persisted disabled flags with PIT/OUT status retained: "<<(flagsOk?"PASS":"FAIL")<<"\n"; ok=flagsOk && ok;
+    }
+    {
+        // Every new column, the status badge and class colors on and off; the previews are for review.
+        const auto savedExtra=app.extraColumns; const auto savedColumns=app.driverColumns; const auto savedHeaders=app.tableHeaders; const auto savedClass=app.classColors;
+        const auto savedFrame=app.frame; bool columnsOk=true;
+        app.frame.cars[1].outLap=true; app.frame.cars[2].pit=true; app.frame.cars[2].best=app.frame.cars[2].last;
+        for(int i=0;i<10;++i) app.frame.cars[i].stintLaps=i==4?-1:i;
+        for(int kind=0;kind<2;++kind) {
+            const int before=OverlayWidth(kind);
+            for(auto& on:app.extraColumns[kind]) on=true;
+            app.driverColumns[kind][0]=app.driverColumns[kind][1]=app.driverColumns[kind][2]=true; app.tableHeaders[kind]=true; SettingChanged();
+            columnsOk=OverlayWidth(kind)>before && Export(app.overlays[kind].window,L"build\\qa\\columns-all-"+std::to_wstring(kind)+L".bmp") && columnsOk;
+            app.classColors[kind]=false; SettingChanged();
+            columnsOk=Export(app.overlays[kind].window,L"build\\qa\\columns-neutral-"+std::to_wstring(kind)+L".bmp") && columnsOk;
+            Load(); columnsOk=!app.classColors[kind] && std::all_of(app.extraColumns[kind].begin(),app.extraColumns[kind].end(),[](bool on){return on;}) && columnsOk;
+        }
+        columnsOk=RatingChanges()[0]>0 && RatingChanges()[9]<0 && columnsOk;
+        // Logos for every brand the demo uses, decoded once per size and the atlas released after painting.
+        columnsOk=BrandLogo("BMW")>=0 && BrandLogo("Aston Martin")>=0 && BrandLogo("Unknown")<0 && !app.overlays[0].logos.empty() && !logoAtlas.bitmap && columnsOk;
+        app.extraColumns=savedExtra; app.driverColumns=savedColumns; app.tableHeaders=savedHeaders; app.classColors=savedClass; app.frame=savedFrame; Save(); UpdateOverlays();
+        report<<"Car, iRating change and stint columns, license pills, status badge and neutral class colors: "<<(columnsOk?"PASS":"FAIL")<<"\n"; ok=columnsOk && ok;
     }
     {
         const auto savedShort=app.driverShortView; const auto savedColumns=app.driverColumns;
@@ -221,7 +237,7 @@ int RunDiagnostics() {
     }
     {
         const auto saved=app.frame; constexpr double pi=3.141592653589793;
-        bool windOk=OverlayWidth(4)==240 && BaseHeight(4)==WeatherHeight()-(app.showTitleBar?0:32);
+        PreviewWeather(); bool windOk=OverlayWidth(4)==WeatherPanelWidth && BaseHeight(4)==WeatherHeight();
         for(int direction=0;direction<5;++direction) {
             const double angle=direction==4?25*pi/180:direction*pi/2;
             app.frame.yawNorth=.4; app.frame.windDirection=.4+angle; app.frame.windSpeed=5;
@@ -235,23 +251,15 @@ int RunDiagnostics() {
     {
         bool weatherOk=true; OpenOverlay(WeatherKind);
         weatherOk=Export(app.main,L"build\\qa\\weather-settings.bmp") && weatherOk;
-        const auto originalOrder=app.weatherOrder;
-        for(int step=0;step<4;++step) weatherOk=MoveInOrder(app.weatherOrder,originalOrder.back(),-1) && weatherOk;
-        weatherOk=!MoveInOrder(app.weatherOrder,originalOrder.back(),-1) && weatherOk;
-        Save(); Load(); weatherOk=app.weatherOrder.front()==originalOrder.back() && weatherOk;
-        weatherOk=Export(app.overlays[4].window,L"build\\qa\\weather-reordered.bmp") && weatherOk;
-        app.weatherOrder=originalOrder; SettingChanged();
-        for(int element=0;element<=WindDirectionOption;++element) {
-            const int before=HeightWithTitle(4);
-            app.weatherDisplay[element]=false; SettingChanged();
-            Load(); weatherOk=!app.weatherDisplay[element] && HeightWithTitle(4)==before-(element<WeatherCardCount?WeatherElements[element].height+8:0) && weatherOk;
-        }
-        weatherOk=!IsWindowVisible(app.overlays[4].window) && weatherOk;
-        app.weatherDisplay.fill(true); SettingChanged();
-        app.weatherDisplay={false,false,true,false,false,true}; Save(); UpdateOverlays();
-        weatherOk=Export(app.overlays[4].window,L"build\\qa\\weather-wind-only.bmp") && weatherOk;
-        app.weatherDisplay.fill(true); Save(); UpdateOverlays();
-        report<<"Weather card settings, card ordering, direction switch, persistence, compact layout and all-hidden visibility: "<<(weatherOk?"PASS":"FAIL")<<"\n"; ok=weatherOk && ok;
+        for(int module=0;module<WeatherModuleCount;++module) { app.weatherDisplay[module]=false; SettingChanged(); Load(); weatherOk=!app.weatherDisplay[module] && weatherOk; }
+        weatherOk=!IsWindowVisible(app.overlays[4].window) && BaseHeight(4)==40 && weatherOk;
+        app.weatherDisplay.fill(true); SettingChanged(); PreviewWeather(); UpdateOverlays();
+        weatherOk=IsWindowVisible(app.overlays[4].window) && BaseHeight(4)==36+84+36+62+76+108+32+32 && weatherOk;
+        weatherOk=Export(app.overlays[4].window,L"build\\qa\\weather-all.bmp") && weatherOk;
+        app.weatherStrip=true; SettingChanged(); Load();
+        weatherOk=app.weatherStrip && OverlayWidth(4)==WeatherStripCount()*WeatherStripCell && Export(app.overlays[4].window,L"build\\qa\\weather-strip.bmp") && weatherOk;
+        app.weatherStrip=false; SettingChanged();
+        report<<"Weather modules, strip layout, persistence and all-hidden visibility: "<<(weatherOk?"PASS":"FAIL")<<"\n"; ok=weatherOk && ok;
     }
     {
         const auto rosterSession=app.session; const auto rosterFrame=app.frame; const auto rosterOptions=app.standings;
@@ -315,7 +323,7 @@ int RunDiagnostics() {
         UpdateOverlays(); centerOk=Export(app.overlays[0].window,L"build\\qa\\relative-centered-alone.bmp") && centerOk;
         auto& overlay=app.overlays[0]; const int centerDpi=GetDpiForWindow(overlay.window),factor=centerDpi*overlay.place.scale;
         const int midY=MulDiv(TableRowsTop(0)+(app.rows/2)*27+13-(ShowOverlayHeader(0)?0:32),factor,9600);
-        centerOk=GetPixel(overlay.dc,MulDiv(8,factor,9600),midY)==RGB(54,49,30) && centerOk;
+        centerOk=GetPixel(overlay.dc,MulDiv(8,factor,9600),midY)==Ink::OwnRow && centerOk;
         app.frame=savedFrame; app.session=savedSession; app.session.type="Practice";
         app.frame.incidents=18; app.frame.incidentsKnown=true; app.session.incidentLimit=25; app.footers[0].metrics={1,0,2};
         UpdateOverlays(); centerOk=FooterValue(2)==L"18x" && centerOk;
@@ -365,27 +373,17 @@ int RunDiagnostics() {
             app.standings.ownClass=true; SettingChanged();
             ok=app.standings.ownClass && Rows(0).size()<=7 && ok;
         } else if(kind==FuelKind) {
-            app.fuelRows[1]=false; SettingChanged();
-            const int newElements=FuelElements[KeyNumbersElement].height+FuelElements[PitTimelineElement].height;
-            ok=!app.fuelRows[1] && BaseHeight(2)==(app.showTitleBar?524:492)+newElements && ok;
-            for(int i=0;i<FuelElementCount;++i) {
-                const int before=HeightWithTitle(2);
-                app.fuelDisplay[i]=false; SettingChanged();
-                ok=!app.fuelDisplay[i] && HeightWithTitle(2)==before-FuelElements[i].height && ok;
-            }
-            ok=HeightWithTitle(2)==213 && OverlayWidth(2)==365 && ok;
+            app.fuelRows[1]=false; SettingChanged(); ok=!app.fuelRows[1] && ok;
+            for(int i=0;i<FuelModuleCount;++i) { app.fuelDisplay[i]=false; SettingChanged(); }
+            ok=HeightWithTitle(2)==32+40 && OverlayWidth(2)==FuelPanelWidth && ok;
             Save(); Load();
             ok=std::none_of(app.fuelDisplay.begin(),app.fuelDisplay.end(),[](bool value){return value;}) && ok;
             ok=Export(app.overlays[2].window,L"build\\qa\\fuel-compact.bmp") && ok;
             app.fuelDisplay.fill(true); SettingChanged();
-            const auto originalOrder=app.fuelOrder;
-            const int table=static_cast<int>(std::find(app.fuelOrder.begin(),app.fuelOrder.end(),ConsumptionTableElement)-app.fuelOrder.begin());
-            ok=MoveInOrder(app.fuelOrder,ConsumptionTableElement,-1) && ok;
-            ok=table>0 && app.fuelOrder[table-1]==ConsumptionTableElement && ok;
-            Save(); Load(); ok=app.fuelOrder[table-1]==ConsumptionTableElement && ok;
-            UpdateOverlays();
-            ok=Export(app.overlays[2].window,L"build\\qa\\fuel-reordered.bmp") && ok;
-            app.fuelOrder=originalOrder; SettingChanged();
+            ok=HeightWithTitle(2)==32+36+112+52+104+92+46+16+4*24 && ok;
+            ok=Export(app.overlays[2].window,L"build\\qa\\fuel-all.bmp") && ok;
+            app.fuelStrip=true; SettingChanged(); ok=Export(app.overlays[2].window,L"build\\qa\\fuel-strip.bmp") && ok;
+            app.fuelStrip=false; SettingChanged();
             const auto savedFrame=app.frame; const double savedDistance=app.fuelPlan.lapsToFinish;
             app.frame.lapCompleted=7; app.frame.lapPct=.2; app.fuelPlan.lapsToFinish=12.02;
             ok=FuelFinishLap()==20 && ok;
@@ -698,7 +696,7 @@ int RunDiagnostics() {
 int RunTickBenchmark() {
     // Move mode drops WS_EX_TRANSPARENT so UpdateWindow paints synchronously instead of deferring to the message loop.
     app.preview=false; app.edit=true; app.hidden=false;
-    for(auto& o:app.overlays) { o.place.enabled=true; o.place.scale=100; }
+    for(auto& o:app.overlays) { o.place.enabled=true; o.place.scale=100; o.place.rate=DefaultRates[o.kind]; }
     app.weatherDisplay.fill(true); app.fuelDisplay.fill(true); app.fuelRows.fill(true);
     app.showInterval=true; app.driverColumns[1][0]=app.driverColumns[1][1]=app.driverColumns[0][4]=true;
     Session session=DemoSession(); session.drivers.clear(); session.key="benchmark"; session.number=0; session.trackMeters=7004;
@@ -711,6 +709,7 @@ int RunTickBenchmark() {
     LARGE_INTEGER frequency{},start{},end{}; QueryPerformanceFrequency(&frequency);
     FILETIME created{},exited{},kernelBefore{},userBefore{},kernelAfter{},userAfter{};
     constexpr int iterations=3000; double phases[3]{},paints[OverlayCount]{}; int changes[OverlayCount]{};
+    bool rated=false; // false: every overlay refreshes on every step; true: each at its own rate, steps 100 ms apart.
     auto step=[&](int t) {
         frame.time=1000+t*.1; frame.timeLeft=3600-t*.1;
         for(int i=0;i<60;++i) {
@@ -727,7 +726,7 @@ int RunTickBenchmark() {
         std::array<std::vector<DrawCommand>,OverlayCount> previous; for(const auto& o:app.overlays) previous[o.kind]=o.scene;
         LARGE_INTEGER a{},b{},c{},d{};
         QueryPerformanceCounter(&a); app.frame=frame; ProcessFrame(true);
-        QueryPerformanceCounter(&b); UpdateOverlays(); UpdateRaceControl();
+        QueryPerformanceCounter(&b); app.now=static_cast<ULONGLONG>(t)*100; app.timerMs=100; UpdateOverlays(!rated); UpdateRaceControl();
         for(const auto& o:app.overlays) changes[o.kind]+=!(o.scene==previous[o.kind]);
         QueryPerformanceCounter(&c);
         for(auto& o:app.overlays) { LARGE_INTEGER before{},after{}; QueryPerformanceCounter(&before); UpdateWindow(o.window); QueryPerformanceCounter(&after); paints[o.kind]+=after.QuadPart-before.QuadPart; }
@@ -753,5 +752,15 @@ int RunTickBenchmark() {
     // Page faults (almost all soft: memory already in RAM) and the working set it ran in.
     report<<"  page faults "<<static_cast<double>(memoryAfter.PageFaultCount-memoryBefore.PageFaultCount)/iterations<<" per refresh, working set "
         <<memoryAfter.WorkingSetSize/1024<<" KB, peak "<<memoryAfter.PeakWorkingSetSize/1024<<" KB"<<std::endl;
+    // The same race with each overlay at its default rate and telemetry at 10 Hz: CPU per second of racing.
+    rated=true; for(auto& o:app.overlays) o.due=0;
+    for(int t=0;t<100;++t) step(t);
+    GetThreadTimes(GetCurrentThread(),&created,&exited,&kernelBefore,&userBefore);
+    for(int t=100;t<100+iterations;++t) step(t);
+    GetThreadTimes(GetCurrentThread(),&created,&exited,&kernelAfter,&userAfter);
+    const double seconds=iterations/10.0;
+    report<<"Default rates (";
+    for(const auto& o:app.overlays) report<<(o.kind?", ":"")<<o.kind<<": "<<o.place.rate<<" Hz";
+    report<<"), telemetry 10 Hz: "<<(ticks(kernelBefore,kernelAfter)+ticks(userBefore,userAfter))/1000/seconds<<" ms CPU per second"<<std::endl;
     return 0;
 }
