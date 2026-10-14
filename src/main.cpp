@@ -596,7 +596,7 @@ constexpr COLORREF White=RGB(232,237,242), Muted=RGB(154,166,178), Label=RGB(135
 constexpr COLORREF Yellow=RGB(232,184,58), Orange=RGB(255,176,103), Red=RGB(255,122,107), Green=RGB(61,220,132), Purple=RGB(192,132,252), Wet=RGB(111,182,255);
 constexpr COLORREF LapsAhead=RGB(255,138,125), LapsBehind=RGB(127,191,255);
 constexpr COLORREF Value=RGB(195,204,213), Frame=RGB(46,49,53), IconBack=RGB(36,38,42), NeutralBadge=RGB(37,40,44), Brand=RGB(170,181,192);
-constexpr COLORREF BarBack=RGB(29,31,35), HatchFore=RGB(131,96,66), HatchBack=RGB(52,45,42), Missing=RGB(158,111,69);
+constexpr COLORREF BarBack=RGB(29,31,35), HatchFore=RGB(131,96,66), HatchBack=RGB(52,45,42), HatchGrey=RGB(78,82,88), Missing=RGB(158,111,69);
 constexpr COLORREF ChartBar=RGB(80,82,85), CautionBar=RGB(122,99,38), PitBar=RGB(40,43,47), WindowOpen=RGB(46,160,92), LapAhead=RGB(34,37,40), LapDone=RGB(52,55,60);
 }
 // A translucent ink pre-blended over a background.
@@ -773,7 +773,10 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         if(ProgressHeight(o.kind)) {
             // Like the fuel tank: the session done in the accent color on a dark track, the percentage after it.
             const double progress=SessionProgress(); const int left=px(14), right=width-px(58), top=px(39);
-            fill({left,top,right,top+px(10)},Ink::BarBack); fill({left,top,left+static_cast<int>((right-left)*progress),top+px(10)},Ink::Accent);
+            // The part still to drive is hatched, in neutral grey since it isn't a warning like missing fuel.
+            const int done=left+static_cast<int>((right-left)*progress);
+            fill({left,top,done,top+px(10)},Ink::Accent);
+            if(done<right) out.push_back({DrawCommand::Hatch,Regular,0,{done,top-titleOffset,right,top+px(10)-titleOffset},Ink::HatchGrey,{static_cast<float>(Ink::BarBack)}});
             label(Format(progress*100,0)+L" %",{right,px(32),width-px(14),px(56)},Ink::Muted,Small,DT_RIGHT);
         }
         if(app.columnHeaders[o.kind]) for(int id:columns) { label(id==GapColumn && o.kind==RelativeKind?L"GAP ≈":ColumnTitle(id),rect(headerX,34+ProgressHeight(o.kind),ColumnWidth(id,o.kind)-8,24),Ink::Label,Regular,Columns[id].align); headerX+=ColumnWidth(id,o.kind); }
