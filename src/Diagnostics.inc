@@ -261,6 +261,13 @@ int RunDiagnostics() {
         app.weatherDisplay.fill(true); SettingChanged(); PreviewWeather(); UpdateOverlays();
         weatherOk=IsWindowVisible(app.overlays[4].window) && BaseHeight(4)==36+84+36+62+76+108+32+32 && weatherOk;
         weatherOk=Export(app.overlays[4].window,L"build\\qa\\weather-all.bmp") && weatherOk;
+        // Only the wind rose: the overlay narrows to the ring.
+        const auto allModules=app.weatherDisplay;
+        app.weatherDisplay.fill(false); app.weatherDisplay[WindModule]=app.weatherDisplay[WindRose]=app.weatherDisplay[WindRelative]=true; SettingChanged(); Load();
+        weatherOk=WindRoseOnly() && OverlayWidth(4)==WindRoseWidth && BaseHeight(4)==108 && Export(app.overlays[4].window,L"build\\qa\\weather-wind-rose.bmp") && weatherOk;
+        app.weatherDisplay[WindRose]=false; app.weatherDisplay[WindText]=true; SettingChanged();
+        weatherOk=!WindRoseOnly() && OverlayWidth(4)==WeatherPanelWidth && BaseHeight(4)==76 && Export(app.overlays[4].window,L"build\\qa\\weather-wind-text.bmp") && weatherOk;
+        app.weatherDisplay=allModules; SettingChanged();
         app.weatherStrip=true; SettingChanged(); Load();
         weatherOk=app.weatherStrip && OverlayWidth(4)==WeatherStripCount()*WeatherStripCell && Export(app.overlays[4].window,L"build\\qa\\weather-strip.bmp") && weatherOk;
         app.weatherStrip=false; SettingChanged();

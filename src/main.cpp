@@ -110,9 +110,9 @@ constexpr int FuelBasis=static_cast<int>(FuelMetric::Average10);
 // Weather modules, top to bottom; the last two switch trend arrows and the wind relative to the car.
 enum WeatherModule {
     WeatherHeaderModule, ConditionModule, RainModule, TemperatureModule, TemperatureHistoryModule, WindModule, DetailsModule, UsageModule,
-    TrendArrows, WindRelative
+    TrendArrows, WindRelative, WindRose, WindText
 };
-constexpr int WeatherModuleCount=WindRelative+1, WeatherPanelCount=UsageModule+1;
+constexpr int WeatherModuleCount=WindText+1, WeatherPanelCount=UsageModule+1;
 constexpr ModuleInfo WeatherModules[]={
     {L"ShowHeader",L"Header",L"With DECLARED WET while rain tires are allowed",true},
     {L"ShowTrackWetness",L"Track condition",L"iRacing's seven levels from dry to extremely wet",true},
@@ -123,7 +123,10 @@ constexpr ModuleInfo WeatherModules[]={
     {L"ShowDetails",L"Details",L"Humidity, sky and fog",false},
     {L"ShowTrackUsage",L"Track usage",L"How much rubber is on the track",false},
     {L"ShowTrends",L"Trend arrows",L"Rising, falling or steady over the last 10 minutes",true},
-    {L"ShowWindDirection",L"Wind relative to the car",L"Arrow on the ring and crosswind text; needs your car's heading, so only while you drive",true}};
+    {L"ShowWindDirection",L"Wind relative to the car",L"Arrow on the ring and crosswind text; needs your car's heading, so only while you drive",true},
+    // Parts of the wind module, switched in its expanded row.
+    {L"ShowWindRose",L"Wind rose",L"The ring with the speed inside",true},
+    {L"ShowWindText",L"Wind text",L"Speed, compass direction and crosswind",true}};
 static_assert(std::size(WeatherModules)==WeatherModuleCount);
 const wchar_t* WetnessNames[]={L"—",L"Dry",L"Mostly Dry",L"Very Lightly Wet",L"Lightly Wet",L"Moderately Wet",L"Very Wet",L"Extremely Wet"};
 struct Placement { int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=true, growLeft=false, growUp=false; };
@@ -258,11 +261,17 @@ int StintCellCount() {
 }
 // Cells in the weather strip: condition, rain, both temperatures and wind (two cells wide).
 int WeatherStripCount() { const auto& d=app.weatherDisplay; return d[ConditionModule]+d[RainModule]+2*d[TemperatureModule]+2*d[WindModule]; }
-constexpr int WeatherPanelWidth=360, WeatherStripCell=112;
+constexpr int WeatherPanelWidth=360, WeatherStripCell=112, WindRoseWidth=124;
+// Only the wind rose: the overlay shrinks to the ring, small enough to sit in the middle of the screen.
+bool WindRoseOnly() {
+    const auto& d=app.weatherDisplay;
+    return d[WindModule] && d[WindRose] && !d[WindText] && std::count(d.begin(),d.begin()+WeatherPanelCount,true)==1;
+}
 int WeatherHeight() {
     if(app.weatherStrip) return 50;
-    const auto& d=app.weatherDisplay; constexpr int heights[]={36,84,36,62,76,108,32,32};
+    const auto& d=app.weatherDisplay; constexpr int heights[]={36,84,36,62,76,0,32,32};
     int h=0; for(int i=0;i<WeatherPanelCount;++i) if(d[i]) h+=heights[i];
+    if(d[WindModule]) h+=d[WindRose]?108:(d[WindText]?76:0);
     return std::max(h,40);
 }
 // Values in the strip layout: tank and range, the 10-lap average, refuel, latest stop and two targets.
@@ -282,7 +291,7 @@ int FuelHeight() {
 }
 int OverlayWidth(int kind) {
     if(IsTable(kind)) { int width=16; for(int id:VisibleColumns(kind)) width+=ColumnWidth(id,kind); return std::max(120,width); }
-    if(kind==WeatherKind) return app.weatherStrip?std::max(1,WeatherStripCount())*WeatherStripCell:WeatherPanelWidth;
+    if(kind==WeatherKind) return app.weatherStrip?std::max(1,WeatherStripCount())*WeatherStripCell:(WindRoseOnly()?WindRoseWidth:WeatherPanelWidth);
     if(kind==FuelKind) return app.fuelStrip?std::max(1,FuelStripCount())*FuelStripCell:FuelPanelWidth;
     return 365;
 }
@@ -1107,17 +1116,23 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                 }
                 y+=76;
             }
-            if(on[WindModule]) {
-                fill(rect(0,y,W,1),Ink::Line);
-                // Today's wind ring at 40 px radius: the arrow shows where the wind comes from relative to the car.
-                const float scale=static_cast<float>(dpi*o.place.scale)/9600, ring=scale*40/65, centerX=62*scale, centerY=(y+54)*scale-titleOffset, radius=40*scale;
-                const RECT bounds{static_cast<LONG>(centerX-radius-8*ring)-1,static_cast<LONG>(centerY-radius-8*ring)-1,static_cast<LONG>(centerX+radius+8*ring)+2,static_cast<LONG>(centerY+radius+8*ring)+2};
-                out.push_back({DrawCommand::WindRing,Regular,0,bounds,0,{centerX,centerY,radius,ring,std::isfinite(angle)?static_cast<float>(angle):-1.f}});
-                label(speed,rect(22,y+32,80,30),white,Hero,DT_CENTER); label(L"km/h",rect(22,y+60,80,14),Ink::Label,Small,DT_CENTER);
-                label(L"WIND",rect(124,y+20,W-140,16),Ink::Label,Small);
-                valueWithTrend(124,y+38,26,speed+L" km/h",Bold,white,from.empty()?Trend{}:Trend{L"from "+from,Ink::Muted},W-16);
-                if(!side.empty()) label(side,rect(124,y+64,W-140,22),Ink::Yellow,Regular);
-                y+=108;
+            if(on[WindModule] && (on[WindRose] || on[WindText])) {
+                if(y>32) fill(rect(0,y,W,1),Ink::Line);
+                int text=16, top=y+10;
+                if(on[WindRose]) {
+                    // Today's wind ring at 40 px radius: the arrow shows where the wind comes from relative to the car.
+                    const float scale=static_cast<float>(dpi*o.place.scale)/9600, ring=scale*40/65, centerX=62*scale, centerY=(y+54)*scale-titleOffset, radius=40*scale;
+                    const RECT bounds{static_cast<LONG>(centerX-radius-8*ring)-1,static_cast<LONG>(centerY-radius-8*ring)-1,static_cast<LONG>(centerX+radius+8*ring)+2,static_cast<LONG>(centerY+radius+8*ring)+2};
+                    out.push_back({DrawCommand::WindRing,Regular,0,bounds,0,{centerX,centerY,radius,ring,std::isfinite(angle)?static_cast<float>(angle):-1.f}});
+                    label(speed,rect(22,y+32,80,30),white,Hero,DT_CENTER); label(L"km/h",rect(22,y+60,80,14),Ink::Label,Small,DT_CENTER);
+                    text=124; top=y+20;
+                }
+                if(on[WindText]) {
+                    label(L"WIND",rect(text,top,W-text-16,16),Ink::Label,Small);
+                    valueWithTrend(text,top+18,26,speed+L" km/h",Bold,white,from.empty()?Trend{}:Trend{L"from "+from,Ink::Muted},W-16);
+                    if(!side.empty()) label(side,rect(text,top+44,W-text-16,22),Ink::Yellow,Regular);
+                }
+                y+=on[WindRose]?108:76;
             }
             if(on[DetailsModule]) {
                 fill(rect(0,y,W,32),Ink::Band); fill(rect(0,y,W,1),Ink::Line);

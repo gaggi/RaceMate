@@ -6,7 +6,7 @@ public:
     explicit ElementsPage(int kind) : PageWindow(ui.heading,ui.text), kind_(kind) {}
 private:
     enum class Key { None, Layout, Module, Info };
-    static constexpr int ListId=100, FuelRowEditId=200;
+    static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210;
     static constexpr wchar_t ExpandGlyph=L'', CollapseGlyph=L'';
 
     void OnCreate() override {
@@ -18,7 +18,9 @@ private:
 
     bool Fuel() const { return kind_==FuelKind; }
     const ModuleInfo* Modules() const { return Fuel()?FuelModules:WeatherModules; }
-    int ModuleCount() const { return Fuel()?FuelModuleCount:WeatherModuleCount; }
+    // Wind rose and wind text are switched in the wind module's expanded row, not as modules of their own.
+    int ModuleCount() const { return Fuel()?FuelModuleCount:WindRose; }
+    int Expandable() const { return Fuel()?FiguresModule:WindModule; }
     bool& Shown(int id) { return Fuel()?app.fuelDisplay[id]:app.weatherDisplay[id]; }
     bool& Strip() { return Fuel()?app.fuelStrip:app.weatherStrip; }
     static std::wstring FiguresDetail() {
@@ -52,12 +54,11 @@ private:
         for(int id=0;id<ModuleCount();++id) {
             if(!Fuel() && id==TrendArrows) header(L"Display");
             RowList::Row row; row.title=Modules()[id].title; row.detail=Fuel() && id==FiguresModule?FiguresDetail():Modules()[id].detail;
+            if(!Fuel() && id==WindModule) row.detail=app.weatherDisplay[WindRose] && app.weatherDisplay[WindText]?L"Wind rose and text":(app.weatherDisplay[WindRose]?L"Wind rose":(app.weatherDisplay[WindText]?L"Wind text":L"Nothing chosen"));
             row.toggle=Shown(id)?1:0; row.muted=!Shown(id);
-            if(Fuel()) {
-                // Same column for every row's button: the expand arrow or an empty slot.
-                const bool open=expanded_==id;
-                row.iconButtons={id==FiguresModule?(open?CollapseGlyph:ExpandGlyph):wchar_t{0}}; row.expandHeight=id==FiguresModule && open?120:0;
-            }
+            // Same column for every row's button: the expand arrow or an empty slot.
+            const bool open=expanded_==id;
+            row.iconButtons={id==Expandable()?(open?CollapseGlyph:ExpandGlyph):wchar_t{0}}; row.expandHeight=id==Expandable() && open?(Fuel()?120:48):0;
             push(std::move(row),Key::Module,id);
         }
         if(Fuel()) {
@@ -74,7 +75,8 @@ private:
         editors_.Clear();
         const int row=ExpandedRow(); if(row<0) return;
         syncing_=true; editors_.Begin(row);
-        for(int i=0;i<FuelMetricCount;++i) editors_.Check(FuelRowEditId+i,FuelFigures[i].title,app.fuelRows[i],(i%2)*260,4+(i/2)*28,250);
+        if(Fuel()) for(int i=0;i<FuelMetricCount;++i) editors_.Check(FuelRowEditId+i,FuelFigures[i].title,app.fuelRows[i],(i%2)*260,4+(i/2)*28,250);
+        else for(int i=0;i<2;++i) editors_.Check(WindPartEditId+i,WeatherModules[WindRose+i].title,app.weatherDisplay[WindRose+i],i*200,10,190);
         syncing_=false; editors_.Position();
     }
     void Expand(int id) {
@@ -85,6 +87,10 @@ private:
     void Changed() { SettingChanged(); Refresh(); }
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); return true; }
+        if(id==WindPartEditId || id==WindPartEditId+1) {
+            if(!syncing_ && code==BN_CLICKED) { app.weatherDisplay[WindRose+id-WindPartEditId]=editors_.Checked(id); Changed(); }
+            return true;
+        }
         if(id>=FuelRowEditId && id<FuelRowEditId+FuelMetricCount) {
             if(syncing_ || code!=BN_CLICKED) return true;
             app.fuelRows[id-FuelRowEditId]=editors_.Checked(id); Changed(); return true;
@@ -100,7 +106,7 @@ private:
         switch(keys_[row]) {
         case Key::Module:
             if(code==RowList::kToggled) { Shown(element)=on; Changed(); }
-            else if(Fuel() && element==FiguresModule && (glyph==ExpandGlyph || glyph==CollapseGlyph || code==RowList::kActivated)) Expand(element);
+            else if(element==Expandable() && (glyph==ExpandGlyph || glyph==CollapseGlyph || code==RowList::kActivated)) Expand(element);
             break;
         case Key::Layout:
             if(pressed) { const int choice=ChooseFromMenu({L"Panel",L"Strip"},Strip()?1:0); if(choice>=0) { Strip()=choice==1; Changed(); } }

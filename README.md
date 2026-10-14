@@ -79,6 +79,7 @@ Green when the limiter is on, red when it is off, gray when unknown. Shown while
 Modules, each with its own switch: a header with **DECLARED WET** while rain tires are allowed; the track condition in iRacing's seven levels; precipitation; track and air temperature; the track temperature of the last 20 minutes; wind speed, compass direction and the direction ring relative to your car (with "Crosswind from the left" and similar); humidity, sky and fog; track usage.
 
 - **Trend arrows** compare with ten minutes ago (from five minutes of history on): rising, falling or steady. iRacing publishes no forecast, so RaceMate samples the weather every 30 seconds itself.
+- The wind module shows the **wind rose** (the ring with the speed inside), the **wind text** or both. With only the wind rose switched on, the overlay shrinks to the ring.
 - Layout **Panel** or **Strip** (condition, rain, temperatures and wind in one line).
 
 ## Race Control
