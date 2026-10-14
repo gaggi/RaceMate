@@ -80,9 +80,9 @@ constexpr Slots DefaultHeader{OverlayNameMetric,SofMetric,IncidentsMetric,TimeRe
 // Fuel Calculator modules, top to bottom; each switch is stored under its key.
 enum FuelModule {
     FuelHeaderModule, TankModule, FiguresModule, HistoryModule, CautionMarks, RefuelCard, WindowCard, TimelineModule,
-    TargetRow, OneLongerRow, TwoLongerRow, OneShorterRow
+    OneShorterRow, TargetRow, OneLongerRow, TwoLongerRow
 };
-constexpr int FuelModuleCount=OneShorterRow+1;
+constexpr int FuelModuleCount=TwoLongerRow+1;
 struct ModuleInfo { const wchar_t* key; const wchar_t* title; const wchar_t* detail; bool on; };
 constexpr ModuleInfo FuelModules[]={
     {L"ShowHeader",L"Header",L"Current and final lap, and how many stops are needed",true},
@@ -93,10 +93,10 @@ constexpr ModuleInfo FuelModules[]={
     {L"ShowRefuel",L"Refuel to finish",L"Without a safety margin; green when it fits in the tank",true},
     {L"ShowPitWindow",L"Pit window",L"Earliest and latest lap to stop",true},
     {L"ShowTimeline",L"Pit window timeline",L"One block per lap of a full tank: window green, current lap yellow",true},
+    {L"ShowOneShorter",L"One lap shorter",L"Most fuel per lap for one lap less",true},
     {L"ShowTarget",L"Target",L"Most fuel per lap that still reaches the latest stop, or the finish",true},
     {L"ShowOneLonger",L"One lap longer",L"Most fuel per lap for one lap more",true},
-    {L"ShowTwoLonger",L"Two laps longer",L"Most fuel per lap for two laps more",false},
-    {L"ShowOneShorter",L"One lap shorter",L"Most fuel per lap for one lap less",false}};
+    {L"ShowTwoLonger",L"Two laps longer",L"Most fuel per lap for two laps more",false}};
 static_assert(std::size(FuelModules)==FuelModuleCount);
 // Consumption figures in display order; app.fuelRows follows this order.
 struct FigureInfo { int metric; const wchar_t* heading; const wchar_t* title; const wchar_t* key; bool on; };
@@ -1000,7 +1000,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             if(on[TargetRow] || on[OneLongerRow] || on[TwoLongerRow] || on[OneShorterRow]) {
                 fill({0,px(y),width,height+titleOffset},Ink::Band); fill(rect(0,y,W,1),Ink::Line); y+=8;
                 struct TargetInfo { int module, extra; const wchar_t* name; };
-                static constexpr TargetInfo targets[]={{TargetRow,0,L"Target"},{OneLongerRow,1,L"One lap longer"},{TwoLongerRow,2,L"Two laps longer"},{OneShorterRow,-1,L"One lap shorter"}};
+                static constexpr TargetInfo targets[]={{OneShorterRow,-1,L"One lap shorter"},{TargetRow,0,L"Target"},{OneLongerRow,1,L"One lap longer"},{TwoLongerRow,2,L"Two laps longer"}};
                 for(const auto& t:targets) if(on[t.module]) {
                     const double value=target(t.extra); const bool main=t.extra==0;
                     label(t.name,rect(16,y,150,24),main?white:Ink::Muted,main?Bold:Regular);
