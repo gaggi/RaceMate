@@ -175,6 +175,11 @@ int RunDiagnostics() {
             for(auto& on:app.extraColumns[kind]) on=true;
             app.driverColumns[kind][0]=app.driverColumns[kind][1]=app.driverColumns[kind][2]=true; app.tableHeaders[kind]=true; SettingChanged();
             columnsOk=OverlayWidth(kind)>before && Export(app.overlays[kind].window,L"build\\qa\\columns-all-"+std::to_wstring(kind)+L".bmp") && columnsOk;
+            const int both=OverlayWidth(kind);
+            app.brandNames[kind]=false; SettingChanged(); columnsOk=OverlayWidth(kind)<both && columnsOk;
+            columnsOk=Export(app.overlays[kind].window,L"build\\qa\\columns-logo-only-"+std::to_wstring(kind)+L".bmp") && columnsOk;
+            app.brandNames[kind]=true; app.brandLogos[kind]=false; SettingChanged(); Load(); columnsOk=!app.brandLogos[kind] && app.brandNames[kind] && OverlayWidth(kind)<both && columnsOk;
+            app.brandLogos[kind]=true; SettingChanged();
             app.classColors[kind]=false; SettingChanged();
             columnsOk=Export(app.overlays[kind].window,L"build\\qa\\columns-neutral-"+std::to_wstring(kind)+L".bmp") && columnsOk;
             Load(); columnsOk=!app.classColors[kind] && std::all_of(app.extraColumns[kind].begin(),app.extraColumns[kind].end(),[](bool on){return on;}) && columnsOk;

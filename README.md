@@ -43,7 +43,7 @@ Separate class sections or one combined order, optionally only the reference car
 - **Show Interval (INT)**: gap to the car directly ahead, including hidden rows.
 - **Live Positions / GAP / INT (estimated)**: ranks races by live track progress instead of the SDK's start/finish snapshots.
 - Optional **LAPS** (completed laps), **GAIN** (▲/▼ positions against the starting grid) and **STOPS** (pit stops seen in this race, `?` after joining late). The fastest lap of each class is purple.
-- **Session progress**: a thin bar under the header, by laps or by time.
+- **Session progress**: a bar under the header with the percentage done, by laps or by time.
 
 ### Columns, header and footer (Relative and Standings)
 
@@ -51,7 +51,7 @@ Both overlays offer the same options, configured separately.
 
 
 - The **status badge** after the driver's name shows one value, by priority: PIT > TOW > BLACK/DQ > REPAIR > SLOW > OUT. OUT lasts from an observed pit exit to the next line crossing. TOW uses the SDK for your car and is inferred for others from a direct return to the pit stall.
-- Optional: car brand with its logo (the initial for brands without one), tires as a ring with D (dry), W (wet) or the compound's initial, iRating (both with a short view), **iRating change** (estimated as if the race ended in the current class order), **laps since stop** (L12; L- until a stop or the start was seen), last pit lap, pit lane time and **PIT STOP** (estimated stationary time in the stall, marked ≈). A last lap equal to the car's best is green.
+- Optional: car brand as logo and/or name (the initial for brands without a logo), tires as a ring with D (dry), W (wet) or the compound's initial, iRating (both with a short view), **iRating change** (estimated as if the race ended in the current class order), **laps since stop** (L12; L- until a stop or the start was seen), last pit lap, pit lane time and **PIT STOP** (estimated stationary time in the stall, marked ≈). A last lap equal to the car's best is green.
 - **Class colors** puts the class color on the number box and a stripe on the left; switched off, numbers sit in a neutral box.
 - Every column is a row on the page: optional columns have a switch, all can move up and down, and the order is saved per overlay.
 - Header and footer each show up to four metrics, the first on the left and the others right-aligned: track, incidents (with the race's warning and disqualification limits), temperatures, session clocks, lap and finish forecasts, session type, wetness, wind, class SOF, position in class, brake bias or overlay name. Forecasts are marked `~`, missing data `—`.

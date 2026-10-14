@@ -176,7 +176,7 @@ struct App {
     std::array<std::array<bool,2>,2> driverShortView{};
     std::array<std::array<bool,3>,2> driverFlags{{{true,true,true},{true,true,true}}};
     std::array<std::array<bool,ExtraColumnCount>,2> extraColumns{};
-    std::array<bool,2> showDriver{true,true}, showStatus{true,true}, tableHeaders{}, columnHeaders{}, classColors{true,true};
+    std::array<bool,2> showDriver{true,true}, showStatus{true,true}, tableHeaders{}, columnHeaders{}, classColors{true,true}, brandLogos{true,true}, brandNames{true,true};
     bool lapColors=true; // Relative only: red for cars a lap ahead, blue a lap behind.
     bool standingsProgress=true; // Standings: session progress under the header.
     unsigned classBestVersion=~0u; std::vector<std::pair<int,double>> classBest;
@@ -241,6 +241,8 @@ bool ColumnVisible(int kind,int id) {
 // Without column headings, columns shrink to fit their values.
 int ColumnWidth(int id,int kind) {
     const bool compact=!app.columnHeaders[kind];
+    if(id==BrandColumn && !app.brandNames[kind]) return compact?30:44;
+    if(id==BrandColumn && !app.brandLogos[kind]) return compact?92:100;
     if(compact && id==DriverColumn && app.nameFormat[kind]!=0) return 150;
     if(compact && (id==LicenseColumn || id==IRatingColumn) && app.driverShortView[kind][id-LicenseColumn]) return 50;
     return compact?Columns[id].compactWidth:Columns[id].width;
@@ -301,7 +303,10 @@ std::wstring CompletedLaps(const Row& row) {
 }
 // Fuel Calculator and Weather draw their own header module instead of the title bar.
 bool ShowOverlayHeader(int kind) { return IsTable(kind)?app.tableHeaders[kind]:kind==PitLimiterKind && app.showTitleBar; }
-int TableRowsTop(int kind) { return 32+(app.columnHeaders[kind]?27:0); }
+double SessionProgress();
+// The Standings' session progress bar, a row of its own under the header while the session has a known length.
+int ProgressHeight(int kind) { return kind==StandingsKind && app.standingsProgress && SessionProgress()>=0?24:0; }
+int TableRowsTop(int kind) { return 32+ProgressHeight(kind)+(app.columnHeaders[kind]?27:0); }
 std::wstring DriverName(const Row& row,int kind) {
     auto name=Wide(row.driver.name); const auto first=name.find_first_not_of(L" \t\r\n");
     if(first==std::wstring::npos) return L"—"; name=name.substr(first,name.find_last_not_of(L" \t\r\n")-first+1);
@@ -378,6 +383,7 @@ void Load() {
         app.driverShortView[kind]={ReadBool(section,L"ShortLicenseView",false),ReadBool(section,L"ShortIRatingView",false)};
         for(int i=0;i<ExtraColumnCount;++i) app.extraColumns[kind][i]=ReadBool(section,ExtraColumnKeys[i],false);
         app.classColors[kind]=ReadBool(section,L"ShowClassColor",true);
+        app.brandLogos[kind]=ReadBool(section,L"ShowCarLogo",true); app.brandNames[kind]=ReadBool(section,L"ShowCarName",true);
         app.gapSigns[kind]=ReadBool(section,L"ShowGapSigns",false);
         app.driverFlags[kind]={ReadBool(section,L"ShowBlackFlag",true),ReadBool(section,L"ShowSlowdown",true),ReadBool(section,L"ShowRequiredRepairs",true)};
         app.showDriver[kind]=ReadBool(section,L"ShowDriver",true);
@@ -449,7 +455,7 @@ void Save() {
         for(int i=0;i<DriverColumnCount;++i) number(section,DriverColumnKeys[i],app.driverColumns[kind][i]);
         number(section,L"ShortLicenseView",app.driverShortView[kind][0]); number(section,L"ShortIRatingView",app.driverShortView[kind][1]);
         for(int i=0;i<ExtraColumnCount;++i) number(section,ExtraColumnKeys[i],app.extraColumns[kind][i]);
-        number(section,L"ShowClassColor",app.classColors[kind]);
+        number(section,L"ShowClassColor",app.classColors[kind]); number(section,L"ShowCarLogo",app.brandLogos[kind]); number(section,L"ShowCarName",app.brandNames[kind]);
         number(section,L"ShowBlackFlag",app.driverFlags[kind][0]); number(section,L"ShowSlowdown",app.driverFlags[kind][1]); number(section,L"ShowRequiredRepairs",app.driverFlags[kind][2]);
         number(section,L"ShowDriver",app.showDriver[kind]); number(section,L"ShowStatus",app.showStatus[kind]); number(section,L"DriverNameFormat",app.nameFormat[kind]);
         number(section,L"ShowColumnHeaders",app.columnHeaders[kind]); number(section,L"ShowGapSigns",app.gapSigns[kind]); number(section,L"ShowHeader",app.tableHeaders[kind]); number(section,L"ShowFooter",app.footers[kind].enabled);
@@ -690,12 +696,13 @@ const CellRenderer CellRenderers[]={
     +[](const Row& r,int kind,Cell& c) {
         c.text=OverlayStatus(r,kind);
         c.ink=c.text==L"BLACK" || c.text==L"DQ"?Ink::Red:(c.text==L"TOW" || c.text==L"REPAIR" || c.text==L"SLOW"?RGB(245,163,65):Ink::Yellow); },
-    +[](const Row& r,int,Cell& c) {
-        // The brand's logo, or its initial where there is none.
+    +[](const Row& r,int kind,Cell& c) {
+        // The brand's logo (its initial where there is none) and name, each with its own switch.
         auto brand=Wide(r.driver.brand); if(brand.empty()) { c.text=L"—"; c.ink=Ink::Muted; return; }
         CharUpperBuffW(brand.data(),static_cast<DWORD>(brand.size()));
-        c.logo=BrandLogo(r.driver.brand); if(c.logo<0) c.icon=brand.substr(0,1);
-        c.text=std::move(brand); c.font=SmallBold; c.ink=Ink::Brand; },
+        if(app.brandLogos[kind]) { c.logo=BrandLogo(r.driver.brand); if(c.logo<0) c.icon=brand.substr(0,1); }
+        if(app.brandNames[kind]) c.text=std::move(brand);
+        c.font=SmallBold; c.ink=Ink::Brand; },
     +[](const Row& r,int,Cell& c) {
         const int index=r.driver.index, change=index>=0 && index<MaxCars?RatingChanges()[index]:NoRatingChange;
         if(change==NoRatingChange) { c.text=L"—"; c.ink=Ink::Muted; return; }
@@ -760,13 +767,16 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             const auto mode=app.frame.replay?L"REPLAY":(!app.frame.onTrack?L"SPOTTING":Wide(app.session.type));
             if(o.kind!=WeatherKind) label(app.edit?L"MOVE":(app.preview?L"PREVIEW":mode),{width-px(145),0,width-px(12),px(32)},muted,Regular,DT_RIGHT);
         }
-        if(const double progress=o.kind==StandingsKind && app.standingsProgress?SessionProgress():-1; progress>=0) {
-            fill({0,px(29),width,px(32)},Ink::Line); fill({0,px(29),static_cast<int>(width*progress),px(32)},Ink::Accent);
-        }
     }
     if(IsTable(o.kind)) {
         const auto columns=VisibleColumns(o.kind); int headerX=12;
-        if(app.columnHeaders[o.kind]) for(int id:columns) { label(id==GapColumn && o.kind==RelativeKind?L"GAP ≈":ColumnTitle(id),rect(headerX,34,ColumnWidth(id,o.kind)-8,24),Ink::Label,Regular,Columns[id].align); headerX+=ColumnWidth(id,o.kind); }
+        if(ProgressHeight(o.kind)) {
+            // Like the fuel tank: the session done in the accent color on a dark track, the percentage after it.
+            const double progress=SessionProgress(); const int left=px(14), right=width-px(58), top=px(39);
+            fill({left,top,right,top+px(10)},Ink::BarBack); fill({left,top,left+static_cast<int>((right-left)*progress),top+px(10)},Ink::Accent);
+            label(Format(progress*100,0)+L" %",{right,px(32),width-px(14),px(56)},Ink::Muted,Small,DT_RIGHT);
+        }
+        if(app.columnHeaders[o.kind]) for(int id:columns) { label(id==GapColumn && o.kind==RelativeKind?L"GAP ≈":ColumnTitle(id),rect(headerX,34+ProgressHeight(o.kind),ColumnWidth(id,o.kind)-8,24),Ink::Label,Regular,Columns[id].align); headerX+=ColumnWidth(id,o.kind); }
         int y=TableRowsTop(o.kind);
         static const std::vector<Row> noRows; static const std::vector<StandingsGroup> noGroups;
         const auto& rows=o.kind==RelativeKind?RelativeRows():noRows;
@@ -1363,6 +1373,8 @@ void PreviewData(double time) {
     for(auto& d:app.session.drivers) { d.license="A 3.45"; d.licenseColor=0x55aaff; auto& c=app.frame.cars[d.index]; c.tireCompound=d.index%2; c.lastPitLap=8; c.lastPitDuration=42.3; c.lastPitStationary=21.6; }
     app.frame.cars[1].outLap=true; app.frame.cars[2].pit=true; app.frame.cars[2].pitStationary=8.4; app.frame.cars[5].surface=-1;
     for(int i=0;i<10;++i) { auto& c=app.frame.cars[i]; c.stintLaps=i==2?0:(i==6?-1:3+i); c.stops=i==6?-1:1; }
+    // Without it every car behind you is also behind on track, leaving the Relative's top row empty.
+    auto& lapped=app.frame.cars[9]; lapped.lap=7; lapped.pct=app.frame.cars[3].pct+.12; lapped.estTime=lapped.pct*138.2;
     PreviewWeather();
     for(auto& driver:app.session.drivers) if(driver.index>=6) {
         driver.classId=2; driver.className="GT4"; driver.classColor=0x67b7ff;

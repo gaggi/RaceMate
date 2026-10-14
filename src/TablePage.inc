@@ -5,7 +5,7 @@ public:
     explicit TablePage(int kind) : PageWindow(ui.heading,ui.text), kind_(kind) {}
 private:
     enum class Key { None, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, ClassView, OwnClass, LiveGaps, UntimedOrder, ClassColors, LapColors, Progress, Column, Header, Footer, ColumnHeadings };
-    static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, NameFormatEditId=201, FlagEditId=202, ShortViewEditId=205, SlotEditId=206;
+    static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, NameFormatEditId=201, FlagEditId=202, ShortViewEditId=205, SlotEditId=206, BrandLogoEditId=213, BrandNameEditId=214;
     static constexpr UINT_PTR TypingTimer=1;
     static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E', UpGlyph=L'\uE74A', DownGlyph=L'\uE74B';
     struct ColumnText { const wchar_t* name; const wchar_t* detail; };
@@ -34,7 +34,7 @@ private:
         if(id==BestColumn || id==LastColumn) return kind_==RelativeKind;
         return id==DriverColumn || id==StatusColumn || id==IntervalColumn || id==LapsColumn || id==GainedColumn || id>=LicenseColumn && id<=PitStopColumn || id>=BrandColumn;
     }
-    static bool HasOptions(int id) { return id==DriverColumn || id==StatusColumn || id==LicenseColumn || id==IRatingColumn; }
+    static bool HasOptions(int id) { return id==DriverColumn || id==StatusColumn || id==LicenseColumn || id==IRatingColumn || id==BrandColumn; }
     std::wstring ColumnDetail(int id) const {
         switch(id) {
         case DriverColumn: return NameFormats[app.nameFormat[kind_]];
@@ -44,6 +44,7 @@ private:
             for(int i=0;i<3;++i) if(app.driverFlags[kind_][i]) text+=std::wstring(L", ")+FlagNames[i];
             return text;
         }
+        case BrandColumn: return app.brandLogos[kind_] && app.brandNames[kind_]?L"Logo and name":(app.brandLogos[kind_]?L"Logo":(app.brandNames[kind_]?L"Name":L"Nothing chosen"));
         case LicenseColumn: case IRatingColumn: {
             const bool shortView=app.driverShortView[kind_][id-LicenseColumn];
             const std::wstring base=ColumnTexts[id].detail[0]?ColumnTexts[id].detail:L"Driver rating";
@@ -164,6 +165,9 @@ private:
             editors_.Combo(NameFormatEditId,std::vector<std::wstring>(std::begin(NameFormats),std::end(NameFormats)),app.nameFormat[kind_],94,10,200);
         } else if(expandedId_==StatusColumn) {
             for(int i=0;i<3;++i) editors_.Check(FlagEditId+i,FlagNames[i],app.driverFlags[kind_][i],i*170,10,160);
+        } else if(expandedId_==BrandColumn) {
+            editors_.Check(BrandLogoEditId,L"Show logo",app.brandLogos[kind_],0,10,160);
+            editors_.Check(BrandNameEditId,L"Show name",app.brandNames[kind_],170,10,160);
         } else if(expandedId_==LicenseColumn || expandedId_==IRatingColumn) {
             const int index=expandedId_-LicenseColumn;
             editors_.Check(ShortViewEditId,expandedId_==LicenseColumn?L"Short view: safety rating only (3,45)":L"Short view: thousands (2,4K)",app.driverShortView[kind_][index],0,10,360);
@@ -207,6 +211,10 @@ private:
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); return true; }
         if(id==RowsEditId || (id>=LeadersEditId && id<=BehindEditId)) { if(code==EN_CHANGE && !syncing_) { typing_=true; SetTimer(Handle(),TypingTimer,500,nullptr); } return true; }
+        if(id==BrandLogoEditId || id==BrandNameEditId) {
+            if(!syncing_ && code==BN_CLICKED) { (id==BrandLogoEditId?app.brandLogos:app.brandNames)[kind_]=editors_.Checked(id); Changed(); }
+            return true;
+        }
         if(id>=NameFormatEditId && id<SlotEditId+SlotCount) {
             if(syncing_) return true;
             if(id==NameFormatEditId && code==CBN_SELCHANGE) app.nameFormat[kind_]=std::max(0,editors_.Selection(id));
