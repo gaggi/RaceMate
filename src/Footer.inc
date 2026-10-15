@@ -22,12 +22,13 @@ int ClassSof(int classId,int& cars) {
 // A metric as alternating label and value parts ("Track " "24°C"); overlays draw labels muted and values bright.
 struct MetricText {
     std::array<std::wstring,4> parts;
+    COLORREF pill=CLR_INVALID; // Drawn as a pill of this color with the value only.
     MetricText(std::wstring value={}) { parts[1]=std::move(value); }
     MetricText(std::wstring label,std::wstring value,std::wstring label2={},std::wstring value2={}) : parts{std::move(label),std::move(value),std::move(label2),std::move(value2)} {}
     std::wstring Text() const { return parts[0]+parts[1]+parts[2]+parts[3]; }
 };
 MetricText Metric(int metric,const Overlay* o=nullptr) {
-    if(metric==OverlayNameMetric) return o && IsTable(o->kind)?Name(*o):std::wstring(L"—");
+    if(metric==OverlayNameMetric) return o?Name(*o):std::wstring(L"—");
     if(metric==NoMetric) return {};
     if(metric==LocalTimeMetric) { SYSTEMTIME time{}; GetLocalTime(&time); wchar_t text[20]; swprintf_s(text,L"%02d:%02d",time.wHour,time.wMinute); return std::wstring(text); }
     const auto& f=app.frame; const auto& s=app.session;
@@ -79,6 +80,14 @@ MetricText Metric(int metric,const Overlay* o=nullptr) {
         int cars=0; if(driver!=s.drivers.end()) ClassSof(driver->classId,cars);
         return {L"P ",car && car->classPosition>0 && cars>0?std::to_wstring(car->classPosition)+L"/"+std::to_wstring(cars):L"—"};
     }
+    case StopsNeededMetric: {
+        const auto window=FuelWindow(); MetricText text;
+        if(window.status==PitWindowStatus::NoStopNeeded) { text.parts[1]=L"NO STOP NEEDED"; text.pill=Ink::Green; }
+        else if(window.status==PitWindowStatus::Open) { text.parts[1]=std::to_wstring(window.stops)+(window.stops==1?L" STOP NEEDED":L" STOPS NEEDED"); text.pill=Ink::Orange; }
+        else if(window.status==PitWindowStatus::ExtraStopNeeded) { text.parts[1]=L"NO PIT WINDOW"; text.pill=Ink::Red; }
+        return text;
+    }
+    case DeclaredWetMetric: { MetricText text; if(f.declaredWet) { text.parts[1]=L"DECLARED WET"; text.pill=RGB(140,198,255); } return text; }
     case BrakeBiasMetric: return {L"BB ",reference==f.player && std::isfinite(f.brakeBias)?Format(f.brakeBias,1):L"—"};
     }
     return std::wstring(L"—");

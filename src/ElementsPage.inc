@@ -1,12 +1,12 @@
-// Pages that list what an overlay shows: Fuel Calculator and Weather choose a layout
-// and switch modules (the fuel consumption module expands to its values). Pit Limiter
-// has nothing to choose, so its page only explains when and how it shows.
+// Pages that list what an overlay shows: Fuel Calculator and Weather choose a layout,
+// switch modules (the fuel consumption module expands to its values) and set header and
+// footer. Pit Limiter has only its corners to choose; its page explains when and how it shows.
 class ElementsPage : public PageWindow {
 public:
     explicit ElementsPage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
-    enum class Key { None, Layout, Module, Info };
-    static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210;
+    enum class Key { None, Layout, Rounded, Module, Band, Info };
+    static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210, SlotEditId=230, HeaderRow=1000, FooterRow=1001;
     static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E';
 
     void OnCreate() override {
@@ -36,6 +36,8 @@ private:
             RowList::Row row; row.title=title; row.detail=detail; row.pill=pill; row.pillTone=tone; push(std::move(row),Key::Info);
         };
         if(o_.kind==PitLimiterKind) {
+            header(L"Layout");
+            push(RoundedRow(o_),Key::Rounded);
             header(L"When it shows");
             info(L"On pit approach and in the pit lane",L"Only while you drive your own car, not while spotting or in replays.");
             info(L"After pit exit",L"Stays until you switch the limiter off; with the limiter off it hides at pit exit.");
@@ -50,6 +52,7 @@ private:
         layout.detail=!Strip()?L"The modules below, one under the other"
             :(Fuel()?L"Tank, range, average, refuel, latest stop and targets in one line":L"Track condition, rain, temperatures and wind in one line");
         push(std::move(layout),Key::Layout);
+        push(RoundedRow(o_),Key::Rounded);
         header(L"Modules  \u00B7  top to bottom");
         for(int id=0;id<ModuleCount();++id) {
             if(!Fuel() && id==TrendArrows) header(L"Display");
@@ -61,6 +64,12 @@ private:
             row.iconButtons={id==Expandable()?(open?CollapseGlyph:ExpandGlyph):wchar_t{0}}; row.expandHeight=id==Expandable() && open?(Fuel()?120:48):0;
             push(std::move(row),Key::Module,id);
         }
+        header(L"Header and footer");
+        for(int id:{HeaderRow,FooterRow}) {
+            RowList::Row row=BandRow(o_,id==FooterRow); const bool open=expanded_==id;
+            row.iconButtons={open?CollapseGlyph:ExpandGlyph}; row.expandHeight=open?48:0;
+            push(std::move(row),Key::Band,id);
+        }
         if(Fuel()) {
             header(L"Learning");
             info(L"Which laps count",L"Whole laps at racing speed: caution laps, pit and out laps, refuels and the first partial lap never count. The 10-lap average drives range, pit window, refuel and targets.");
@@ -68,14 +77,15 @@ private:
         list_.SetRows(std::move(rows));
     }
     int ExpandedRow() const {
-        for(size_t i=0;i<keys_.size();++i) if(keys_[i]==Key::Module && ids_[i]==expanded_) return static_cast<int>(i);
+        for(size_t i=0;i<keys_.size();++i) if((keys_[i]==Key::Module || keys_[i]==Key::Band) && ids_[i]==expanded_) return static_cast<int>(i);
         return -1;
     }
     void BuildEditors() {
         editors_.Clear();
         const int row=ExpandedRow(); if(row<0) return;
         syncing_=true; editors_.Begin(row);
-        if(Fuel()) for(int i=0;i<FuelMetricCount;++i) editors_.Check(FuelRowEditId+i,FuelFigures[i].title,o_.fuel.figures[i],(i%2)*260,4+(i/2)*28,250);
+        if(expanded_==HeaderRow || expanded_==FooterRow) BandEditors(editors_,o_,expanded_==FooterRow,SlotEditId);
+        else if(Fuel()) for(int i=0;i<FuelMetricCount;++i) editors_.Check(FuelRowEditId+i,FuelFigures[i].title,o_.fuel.figures[i],(i%2)*260,4+(i/2)*28,250);
         else for(int i=0;i<2;++i) editors_.Check(WindPartEditId+i,WeatherModules[WindRose+i].title,o_.weather.display[WindRose+i],i*200,10,190);
         syncing_=false; editors_.Position();
     }
@@ -87,6 +97,10 @@ private:
     void Changed() { SettingChanged(); Refresh(); }
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); return true; }
+        if(id>=SlotEditId && id<SlotEditId+SlotCount) {
+            if(!syncing_ && code==CBN_SELCHANGE) { ApplyBandEditor(editors_,o_,expanded_==FooterRow,id,SlotEditId); Changed(); }
+            return true;
+        }
         if(id==WindPartEditId || id==WindPartEditId+1) {
             if(!syncing_ && code==BN_CLICKED) { o_.weather.display[WindRose+id-WindPartEditId]=editors_.Checked(id); Changed(); }
             return true;
@@ -108,6 +122,11 @@ private:
             if(code==RowList::kToggled) { Shown(element)=on; Changed(); }
             else if(element==Expandable() && (glyph==ExpandGlyph || glyph==CollapseGlyph || code==RowList::kActivated)) Expand(element);
             break;
+        case Key::Band:
+            if(code==RowList::kToggled) { SetBand(o_,element==FooterRow,on); Changed(); }
+            else if(glyph==ExpandGlyph || glyph==CollapseGlyph || code==RowList::kActivated) Expand(element);
+            break;
+        case Key::Rounded: if(code==RowList::kToggled) { SetRounded(o_,on); Changed(); } break;
         case Key::Layout:
             if(pressed) { const int choice=ChooseFromMenu({L"Panel",L"Strip"},Strip()?1:0); if(choice>=0) { Strip()=choice==1; Changed(); } }
             break;

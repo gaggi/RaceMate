@@ -1,7 +1,8 @@
 // Render checks and regression diagnostics; excluded from the production build.
 // Both tables' settings, saved and restored around checks that change many of them.
-std::array<TableSettings,2> Tables() { return {First(RelativeKind).table,First(StandingsKind).table}; }
-void RestoreTables(const std::array<TableSettings,2>& tables) { First(RelativeKind).table=tables[0]; First(StandingsKind).table=tables[1]; }
+struct TableSnapshot { TableSettings table; Bands bands; };
+std::array<TableSnapshot,2> Tables() { return {TableSnapshot{First(RelativeKind).table,First(RelativeKind).bands},TableSnapshot{First(StandingsKind).table,First(StandingsKind).bands}}; }
+void RestoreTables(const std::array<TableSnapshot,2>& tables) { for(int kind:{RelativeKind,StandingsKind}) { First(kind).table=tables[kind].table; First(kind).bands=tables[kind].bands; } }
 bool Export(HWND window,const std::wstring& path) {
     RECT r{}; GetClientRect(window,&r); const int w=r.right,h=r.bottom;
     BITMAPINFO info{}; info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER); info.bmiHeader.biWidth=w; info.bmiHeader.biHeight=-h;
@@ -87,7 +88,7 @@ int RunDiagnostics() {
         const auto savedFrame=app.frame; bool displayOk=true;
         app.frame.cars[1].outLap=true; app.frame.cars[1].sessionFlags=0x80000u; app.frame.cars[2].pit=true; app.frame.cars[2].sessionFlags=0x100000u;
         for(int kind=0;kind<2;++kind) {
-            First(kind).table.showDriver=First(kind).table.showStatus=First(kind).table.columnHeaders=true; First(kind).table.header=false; First(kind).table.footer.enabled=true; First(kind).table.nameFormat=0; Save(); UpdateOverlays();
+            First(kind).table.showDriver=First(kind).table.showStatus=First(kind).table.columnHeaders=true; First(kind).bands.header=false; First(kind).bands.footer.enabled=true; First(kind).table.nameFormat=0; Save(); UpdateOverlays();
             Row test; test.driver.name="Daniel Fischer";
             for(int format=0;format<3;++format) {
                 First(kind).table.nameFormat=format; SettingChanged();
@@ -103,9 +104,9 @@ int RunDiagnostics() {
             displayOk=OverlayStatus(status,First(kind).table)==L"OUT" && displayOk;
             First(kind).table.nameFormat=1; SettingChanged();
             int before=BaseHeight(First(kind));
-            First(kind).table.header=true; SettingChanged(); displayOk=BaseHeight(First(kind))==before+32 && displayOk;
-            First(kind).table.headerMetrics={OverlayNameMetric,TrackTempMetric,LocalTimeMetric}; SettingChanged();
-            Load(); displayOk=First(kind).table.headerMetrics==Slots{OverlayNameMetric,TrackTempMetric,LocalTimeMetric} && FooterValue(OverlayNameMetric,&First(kind))==Titles[kind] && First(kind).table.footer.metrics==savedTables[kind].footer.metrics && displayOk;
+            First(kind).bands.header=true; SettingChanged(); displayOk=BaseHeight(First(kind))==before+32 && displayOk;
+            First(kind).bands.headerMetrics={OverlayNameMetric,TrackTempMetric,LocalTimeMetric}; SettingChanged();
+            Load(); displayOk=First(kind).bands.headerMetrics==Slots{OverlayNameMetric,TrackTempMetric,LocalTimeMetric} && FooterValue(OverlayNameMetric,&First(kind))==Titles[kind] && First(kind).bands.footer.metrics==savedTables[kind].bands.footer.metrics && displayOk;
             OpenOverlay(First(kind)); Export(app.main,L"build\\qa\\integrated-settings-"+std::to_wstring(kind)+L".bmp"); Export(First(kind).window,L"build\\qa\\configured-header-status-"+std::to_wstring(kind)+L".bmp");
             const int expandedWidth=OverlayWidth(First(kind));
             First(kind).table.columnHeaders=false; SettingChanged(); displayOk=BaseHeight(First(kind))==before+5 && OverlayWidth(First(kind))<expandedWidth && displayOk;
@@ -114,9 +115,9 @@ int RunDiagnostics() {
             SetColumnVisible(First(kind),DriverColumn,false); displayOk=!ColumnVisible(First(kind),DriverColumn) && OverlayWidth(First(kind))==width-ColumnWidth(First(kind),DriverColumn) && displayOk;
             width=OverlayWidth(First(kind));
             SetColumnVisible(First(kind),StatusColumn,false); displayOk=!First(kind).table.showStatus && OverlayWidth(First(kind))==width && displayOk;
-            First(kind).table.footer.enabled=false; SettingChanged();
+            First(kind).bands.footer.enabled=false; SettingChanged();
             displayOk=BaseHeight(First(kind))==before+5-28 && displayOk;
-            Load(); displayOk=!First(kind).table.showDriver && !First(kind).table.showStatus && !First(kind).table.columnHeaders && First(kind).table.header && !First(kind).table.footer.enabled && First(kind).table.nameFormat==1 && displayOk;
+            Load(); displayOk=!First(kind).table.showDriver && !First(kind).table.showStatus && !First(kind).table.columnHeaders && First(kind).bands.header && !First(kind).bands.footer.enabled && First(kind).table.nameFormat==1 && displayOk;
         }
         RestoreTables(savedTables); app.frame=savedFrame; Save(); UpdateOverlays();
         report<<"Table page settings, name formats, single status priority, configurable headers and independent footer persistence: "<<(displayOk?"PASS":"FAIL")<<"\n"; ok=displayOk && ok;
@@ -176,7 +177,7 @@ int RunDiagnostics() {
         for(int kind=0;kind<2;++kind) {
             const int before=OverlayWidth(First(kind));
             for(auto& on:First(kind).table.extraColumns) on=true;
-            First(kind).table.driverColumns[0]=First(kind).table.driverColumns[1]=First(kind).table.driverColumns[2]=true; First(kind).table.header=true; SettingChanged();
+            First(kind).table.driverColumns[0]=First(kind).table.driverColumns[1]=First(kind).table.driverColumns[2]=true; First(kind).bands.header=true; SettingChanged();
             columnsOk=OverlayWidth(First(kind))>before && Export(First(kind).window,L"build\\qa\\columns-all-"+std::to_wstring(kind)+L".bmp") && columnsOk;
             const int both=OverlayWidth(First(kind));
             First(kind).table.brandName=false; SettingChanged(); columnsOk=OverlayWidth(First(kind))<both && columnsOk;
@@ -218,14 +219,14 @@ int RunDiagnostics() {
         const Frame originalFrame=app.frame; const Session originalSession=app.session;
         bool footerOk=true;
         for(int kind=0;kind<2;++kind) {
-            First(kind).table.footer.metrics={TrackTempMetric,CurrentLapMetric,TimeRemainingMetric}; SettingChanged();
-            Save(); Load(); footerOk=First(kind).table.footer.metrics==Slots{TrackTempMetric,CurrentLapMetric,TimeRemainingMetric} && footerOk;
+            First(kind).bands.footer.metrics={TrackTempMetric,CurrentLapMetric,TimeRemainingMetric}; SettingChanged();
+            Save(); Load(); footerOk=First(kind).bands.footer.metrics==Slots{TrackTempMetric,CurrentLapMetric,TimeRemainingMetric} && footerOk;
             footerOk=Export(First(kind).window,L"build\\qa\\footer-custom-"+std::to_wstring(kind)+L".bmp") && footerOk;
             const int before=HeightWithTitle(First(kind));
-            First(kind).table.footer.enabled=false; SettingChanged();
-            Load(); footerOk=!First(kind).table.footer.enabled && HeightWithTitle(First(kind))==before-28 && footerOk;
+            First(kind).bands.footer.enabled=false; SettingChanged();
+            Load(); footerOk=!First(kind).bands.footer.enabled && HeightWithTitle(First(kind))==before-28 && footerOk;
             footerOk=Export(First(kind).window,L"build\\qa\\footer-hidden-"+std::to_wstring(kind)+L".bmp") && footerOk;
-            First(kind).table.footer={}; SettingChanged();
+            First(kind).bands.footer={}; SettingChanged();
         }
         footerOk=FooterValue(9)==L"Lap 8 / ~20" && FooterValue(10)==L"~12.6 laps" && FooterValue(16).find(L"SOF ")==0 && footerOk;
         for(int metric=1;metric<MetricCount;++metric) footerOk=!FooterValue(metric).empty() && footerOk;
@@ -245,7 +246,7 @@ int RunDiagnostics() {
     }
     {
         const auto saved=app.frame; constexpr double pi=3.141592653589793;
-        PreviewWeather(); bool windOk=OverlayWidth(First(4))==WeatherPanelWidth && BaseHeight(First(4))==WeatherHeight(First(WeatherKind));
+        PreviewWeather(); bool windOk=OverlayWidth(First(4))==WeatherPanelWidth && BaseHeight(First(4))==32+WeatherHeight(First(WeatherKind));
         for(int direction=0;direction<5;++direction) {
             const double angle=direction==4?25*pi/180:direction*pi/2;
             app.frame.yawNorth=.4; app.frame.windDirection=.4+angle; app.frame.windSpeed=5;
@@ -260,20 +261,24 @@ int RunDiagnostics() {
         bool weatherOk=true; OpenOverlay(First(WeatherKind));
         weatherOk=Export(app.main,L"build\\qa\\weather-settings.bmp") && weatherOk;
         for(int module=0;module<WeatherModuleCount;++module) { First(WeatherKind).weather.display[module]=false; SettingChanged(); Load(); weatherOk=!First(WeatherKind).weather.display[module] && weatherOk; }
+        First(WeatherKind).bands.header=false; SettingChanged();
         weatherOk=!IsWindowVisible(First(4).window) && BaseHeight(First(4))==40 && weatherOk;
         First(WeatherKind).weather.display.fill(true); SettingChanged(); PreviewWeather(); UpdateOverlays();
-        weatherOk=IsWindowVisible(First(4).window) && BaseHeight(First(4))==36+84+36+62+76+108+32+32 && weatherOk;
+        weatherOk=IsWindowVisible(First(4).window) && BaseHeight(First(4))==84+36+62+76+108+32+32 && weatherOk;
+        First(WeatherKind).bands.header=true; First(WeatherKind).bands.footer.enabled=true; SettingChanged();
+        weatherOk=BaseHeight(First(4))==32+84+36+62+76+108+32+32+28 && Export(First(4).window,L"build\\qa\\weather-header-footer.bmp") && weatherOk;
+        First(WeatherKind).bands=DefaultBands(WeatherKind); SettingChanged();
         weatherOk=Export(First(4).window,L"build\\qa\\weather-all.bmp") && weatherOk;
         // Only the wind rose: the overlay narrows to the ring.
         const auto allModules=First(WeatherKind).weather.display;
-        First(WeatherKind).weather.display.fill(false); First(WeatherKind).weather.display[WindModule]=First(WeatherKind).weather.display[WindRose]=First(WeatherKind).weather.display[WindRelative]=true; SettingChanged(); Load();
+        First(WeatherKind).weather.display.fill(false); First(WeatherKind).weather.display[WindModule]=First(WeatherKind).weather.display[WindRose]=First(WeatherKind).weather.display[WindRelative]=true; First(WeatherKind).bands.header=false; SettingChanged(); Load();
         weatherOk=WindRoseOnly(First(WeatherKind)) && OverlayWidth(First(4))==WindRoseWidth && BaseHeight(First(4))==108 && Export(First(4).window,L"build\\qa\\weather-wind-rose.bmp") && weatherOk;
         First(WeatherKind).weather.display[WindRose]=false; First(WeatherKind).weather.display[WindText]=true; SettingChanged();
         weatherOk=!WindRoseOnly(First(WeatherKind)) && OverlayWidth(First(4))==WeatherPanelWidth && BaseHeight(First(4))==76 && Export(First(4).window,L"build\\qa\\weather-wind-text.bmp") && weatherOk;
-        First(WeatherKind).weather.display=allModules; SettingChanged();
-        First(WeatherKind).weather.strip=true; SettingChanged(); Load();
+        First(WeatherKind).weather.display=allModules; First(WeatherKind).bands=DefaultBands(WeatherKind); SettingChanged();
+        First(WeatherKind).bands.header=false; First(WeatherKind).weather.strip=true; SettingChanged(); Load();
         weatherOk=First(WeatherKind).weather.strip && OverlayWidth(First(4))==WeatherStripCount(First(WeatherKind))*WeatherStripCell && Export(First(4).window,L"build\\qa\\weather-strip.bmp") && weatherOk;
-        First(WeatherKind).weather.strip=false; SettingChanged();
+        First(WeatherKind).weather.strip=false; First(WeatherKind).bands=DefaultBands(WeatherKind); SettingChanged();
         report<<"Weather modules, strip layout, persistence and all-hidden visibility: "<<(weatherOk?"PASS":"FAIL")<<"\n"; ok=weatherOk && ok;
     }
     {
@@ -281,7 +286,7 @@ int RunDiagnostics() {
         bool instancesOk=true;
         auto& wind=NewInstance(WeatherKind,&First(WeatherKind));
         instancesOk=InstanceCount(WeatherKind)==2 && wind.number==2 && Name(wind)==L"Weather 2" && wind.window && wind.weather.display==First(WeatherKind).weather.display && instancesOk;
-        wind.weather.display.fill(false); wind.weather.display[WindModule]=wind.weather.display[WindRose]=true; SettingChanged();
+        wind.weather.display.fill(false); wind.weather.display[WindModule]=wind.weather.display[WindRose]=true; wind.bands.header=false; SettingChanged();
         instancesOk=OverlayWidth(wind)==WindRoseWidth && OverlayWidth(First(WeatherKind))==WeatherPanelWidth && instancesOk;
         auto& second=NewInstance(RelativeKind);
         instancesOk=second.table.columnOrder==DefaultColumns[RelativeKind] && second.table.rows==7 && !Rows(second).empty() && instancesOk;
@@ -379,7 +384,7 @@ int RunDiagnostics() {
         const int midY=MulDiv(TableRowsTop(First(0))+(First(RelativeKind).table.rows/2)*27+13-(ShowOverlayHeader(First(0))?0:32),factor,9600);
         centerOk=GetPixel(overlay.dc,MulDiv(8,factor,9600),midY)==Ink::OwnRow && centerOk;
         app.frame=savedFrame; app.session=savedSession; app.session.type="Practice";
-        app.frame.incidents=18; app.frame.incidentsKnown=true; app.session.incidentLimit=25; First(0).table.footer.metrics={1,0,2};
+        app.frame.incidents=18; app.frame.incidentsKnown=true; app.session.incidentLimit=25; First(0).bands.footer.metrics={1,0,2};
         UpdateOverlays(); centerOk=FooterValue(2)==L"18x" && centerOk;
         centerOk=Export(First(0).window,L"build\\qa\\relative-practice-colors.bmp") && centerOk;
         First(RelativeKind).table.rows=savedRows; First(RelativeKind).table.hidePit=savedHide; app.frame=savedFrame; app.session=savedSession; Save(); UpdateOverlays();
@@ -390,6 +395,13 @@ int RunDiagnostics() {
     auto fuelSummary=CalculatePitWindow(app.session,app.frame,Plan().lapsToFinish,Plan().estimates[5].consumption,Plan().prediction.ownPace);
     ok=fuelSummary.openNow && fuelSummary.timeEmpty>0 && fuelSummary.fuelAtEnd<0 && ok;
     ok=Export(First(2).window,L"build\\qa\\fuel-open.bmp") && ok;
+    {
+        // The footer adds its band below the target rows.
+        const int before=BaseHeight(First(FuelKind));
+        First(FuelKind).bands.footer.enabled=true; SettingChanged();
+        ok=BaseHeight(First(FuelKind))==before+FooterHeight(First(FuelKind)) && Export(First(2).window,L"build\\qa\\fuel-footer.bmp") && ok;
+        First(FuelKind).bands.footer.enabled=false; SettingChanged();
+    }
     app.frame.fuel=50; UpdateOverlays();
     fuelSummary=CalculatePitWindow(app.session,app.frame,Plan().lapsToFinish,Plan().estimates[5].consumption);
     ok=fuelSummary.stops==0 && fuelSummary.fuelAtEnd>0 && ok;
@@ -434,7 +446,7 @@ int RunDiagnostics() {
             ok=std::none_of(First(FuelKind).fuel.display.begin(),First(FuelKind).fuel.display.end(),[](bool value){return value;}) && ok;
             ok=Export(First(2).window,L"build\\qa\\fuel-compact.bmp") && ok;
             First(FuelKind).fuel.display.fill(true); SettingChanged();
-            ok=HeightWithTitle(First(2))==32+36+112+52+104+92+46+16+4*24 && ok;
+            ok=HeightWithTitle(First(2))==32+112+52+104+92+46+16+4*24 && BaseHeight(First(2))==HeightWithTitle(First(2)) && ok;
             ok=Export(First(2).window,L"build\\qa\\fuel-all.bmp") && ok;
             First(FuelKind).fuel.strip=true; SettingChanged(); ok=Export(First(2).window,L"build\\qa\\fuel-strip.bmp") && ok;
             First(FuelKind).fuel.strip=false; SettingChanged();

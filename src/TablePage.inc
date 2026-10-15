@@ -4,7 +4,7 @@ class TablePage : public PageWindow {
 public:
     explicit TablePage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
-    enum class Key { None, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, ClassView, OwnClass, LiveGaps, UntimedOrder, ClassColors, LapColors, Progress, Column, Header, Footer, ColumnHeadings };
+    enum class Key { None, Rounded, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, ClassView, OwnClass, LiveGaps, UntimedOrder, ClassColors, LapColors, Progress, Column, Header, Footer, ColumnHeadings };
     static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, NameFormatEditId=201, FlagEditId=202, ShortViewEditId=205, SlotEditId=206, BrandLogoEditId=213, BrandNameEditId=214;
     static constexpr UINT_PTR TypingTimer=1;
     static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E', UpGlyph=L'\uE74A', DownGlyph=L'\uE74B';
@@ -53,11 +53,6 @@ private:
         default: return ColumnTexts[id].detail;
         }
     }
-    static std::wstring SlotsText(const Slots& metrics) {
-        std::wstring text;
-        for(int slot=0;slot<SlotCount;++slot) text+=(slot?L"  \u00B7  ":L"")+std::wstring(metrics[slot]==NoMetric?L"\u2014":MetricTitles[metrics[slot]]);
-        return text;
-    }
     void Refresh() {
         std::vector<RowList::Row> rows; keys_.clear(); ids_.clear();
         auto push=[&](RowList::Row row,Key key,int id=-1) { rows.push_back(std::move(row)); keys_.push_back(key); ids_.push_back(id); };
@@ -67,6 +62,8 @@ private:
             const bool open=expandedKey_==key && expandedId_==id;
             row.iconButtons.insert(row.iconButtons.begin(),open?CollapseGlyph:ExpandGlyph); row.expandHeight=open?height:0;
         };
+        header(L"Layout");
+        push(RoundedRow(o_),Key::Rounded);
         if(o_.kind==RelativeKind) {
             header(L"Rows");
             RowList::Row count; count.title=L"Rows"; count.detail=std::to_wstring(o_.table.rows)+L" rows including your car, which stays in the middle";
@@ -126,10 +123,8 @@ private:
             push(std::move(row),Key::Column,id);
         }
         header(L"Header and footer");
-        RowList::Row head; head.title=L"Header"; head.detail=SlotsText(o_.table.headerMetrics); head.toggle=o_.table.header?1:0;
-        expandable(head,Key::Header,-1,48); push(std::move(head),Key::Header);
-        RowList::Row foot; foot.title=L"Footer"; foot.detail=SlotsText(o_.table.footer.metrics); foot.toggle=o_.table.footer.enabled?1:0;
-        expandable(foot,Key::Footer,-1,48); push(std::move(foot),Key::Footer);
+        RowList::Row head=BandRow(o_,false); expandable(head,Key::Header,-1,48); push(std::move(head),Key::Header);
+        RowList::Row foot=BandRow(o_,true); expandable(foot,Key::Footer,-1,48); push(std::move(foot),Key::Footer);
         RowList::Row headings; headings.title=L"Column headings"; headings.detail=L"Without them, columns shrink to their values."; headings.toggle=o_.table.columnHeaders?1:0;
         push(std::move(headings),Key::ColumnHeadings);
         list_.SetRows(std::move(rows));
@@ -156,10 +151,7 @@ private:
             }
             editors_.Label(L"0 to 128 each",450,10,0);
         } else if(expandedKey_==Key::Header || expandedKey_==Key::Footer) {
-            const Slots& metrics=expandedKey_==Key::Header?o_.table.headerMetrics:o_.table.footer.metrics;
-            const std::vector<std::wstring> titles(std::begin(MetricTitles),std::end(MetricTitles));
-            const wchar_t* labels[]={L"Left",L"Right 1",L"Right 2",L"Right 3"};
-            for(int slot=0;slot<SlotCount;++slot) { editors_.Label(labels[slot],slot*184,10,56); editors_.Combo(SlotEditId+slot,titles,metrics[slot],slot*184+58,10,118); }
+            BandEditors(editors_,o_,expandedKey_==Key::Footer,SlotEditId);
         } else if(expandedId_==DriverColumn) {
             editors_.Label(L"Name format",0,10,90);
             editors_.Combo(NameFormatEditId,std::vector<std::wstring>(std::begin(NameFormats),std::end(NameFormats)),o_.table.nameFormat,94,10,200);
@@ -220,10 +212,7 @@ private:
             if(id==NameFormatEditId && code==CBN_SELCHANGE) o_.table.nameFormat=std::max(0,editors_.Selection(id));
             else if(id>=FlagEditId && id<FlagEditId+3 && code==BN_CLICKED) o_.table.driverFlags[id-FlagEditId]=editors_.Checked(id);
             else if(id==ShortViewEditId && code==BN_CLICKED) o_.table.driverShortView[expandedId_-LicenseColumn]=editors_.Checked(id);
-            else if(id>=SlotEditId && code==CBN_SELCHANGE) {
-                auto& metrics=expandedKey_==Key::Header?o_.table.headerMetrics:o_.table.footer.metrics;
-                metrics[id-SlotEditId]=std::clamp(editors_.Selection(id),0,MetricCount-1);
-            }
+            else if(id>=SlotEditId && code==CBN_SELCHANGE) ApplyBandEditor(editors_,o_,expandedKey_==Key::Footer,id,SlotEditId);
             else return true;
             Changed(); return true;
         }
@@ -260,9 +249,10 @@ private:
             else if(toggleExpand && HasOptions(column)) Expand(key,column);
             break;
         case Key::Header: case Key::Footer:
-            if(code==RowList::kToggled) { (key==Key::Header?o_.table.header:o_.table.footer.enabled)=on; Changed(); }
+            if(code==RowList::kToggled) { SetBand(o_,key==Key::Footer,on); Changed(); }
             else if(toggleExpand) Expand(key,-1);
             break;
+        case Key::Rounded: if(code==RowList::kToggled) { SetRounded(o_,on); Changed(); } break;
         case Key::ColumnHeadings: if(code==RowList::kToggled) { o_.table.columnHeaders=on; Changed(); } break;
         default: break;
         }

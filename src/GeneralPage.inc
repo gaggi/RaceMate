@@ -29,7 +29,7 @@ private:
         header(L"Overlays");
         RowList::Row rate; rate.title=L"Telemetry rate"; rate.detail=std::to_wstring(app.rate)+L" Hz  \u00B7  how often RaceMate reads iRacing; an overlay set to update faster raises it"; rate.button=L"Choose...";
         push(std::move(rate),Key::RefreshRate);
-        toggle(Key::TitleBar,L"Title bar",L"Shows a title above the Pit Limiter and switches the Relative and Standings headers; Fuel Calculator and Weather have their own.",app.showTitleBar);
+        toggle(Key::TitleBar,L"Title bar",L"Shows a title above the Pit Limiter and switches the headers of all other overlays.",app.showTitleBar);
         header(L"Shortcuts  \u00B7  work in every program");
         const wchar_t* names[]={L"Move overlays",L"Hide all overlays",L"Open RaceMate"};
         for(int i=0;i<HotkeyCount;++i) {

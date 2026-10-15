@@ -25,7 +25,7 @@ Overlays stay visible during spotting, replays and paused playback, and follow t
 
 ## Overlays
 
-On the Overlays page, each overlay's row expands to its size, opacity, **fixed corner**, **rounded corners** and **update rate** (1–20 Hz; default 10 Hz for Relative and Pit Limiter, 1 Hz for Standings, Fuel Calculator and Weather). The fixed corner stays in place when the overlay grows or shrinks (more rows, extra columns, header or footer). **Settings** in the row opens the overlay's own page.
+On the Overlays page, each overlay's row expands to its size, opacity, **fixed corner** and **update rate** (1–20 Hz; default 10 Hz for Relative and Pit Limiter, 1 Hz for Standings, Fuel Calculator and Weather). The fixed corner stays in place when the overlay grows or shrinks (more rows, extra columns, header or footer). **Settings** in the row opens the overlay's own page; its **Layout** section switches **rounded corners** (default square).
 
 **Add overlay** adds another Relative, Standings, Fuel Calculator or Weather with its own settings and place, for example a second Weather that shows only the wind rose in the middle of the screen. The copy button in an overlay's row adds one with the same settings; the bin removes an added overlay with its settings. Added overlays are numbered (Weather 2) and saved in their own section of `settings.ini`. While an overlay's own page is open, it has a red border; while overlays can be moved, all have a dashed yellow border.
 
@@ -47,7 +47,11 @@ Separate class sections or one combined order, optionally only the reference car
 - Optional **LAPS** (completed laps), **GAIN** (▲/▼ positions against the starting grid) and **STOPS** (pit stops seen in this race, `?` after joining late). The fastest lap of each class is purple.
 - **Session progress**: a bar under the header with the percentage done, by laps or by time.
 
-### Columns, header and footer (Relative and Standings)
+### Header and footer
+
+Relative, Standings, Fuel Calculator and Weather each have a header and a footer with up to four metrics, switched and chosen on the overlay's page. Footers are off by default. Fuel Calculator's header shows its name, current and expected final lap and the stops needed as a colored pill; Weather's shows its name and **DECLARED WET** while rain tires are allowed. The **Title bar** setting switches all headers at once.
+
+### Columns (Relative and Standings)
 
 Both overlays offer the same options, configured separately.
 
@@ -56,13 +60,12 @@ Both overlays offer the same options, configured separately.
 - Optional: car brand as logo and/or name (the initial for brands without a logo), tires as a ring with D (dry), W (wet) or the compound's initial, iRating (both with a short view), **iRating change** (estimated as if the race ended in the current class order), **laps since stop** (L12; L- until a stop or the start was seen), last pit lap, pit lane time and **PIT STOP** (estimated stationary time in the stall, marked ≈). A last lap equal to the car's best is green.
 - **Class colors** puts the class color on the number box and a stripe on the left; switched off, numbers sit in a neutral box.
 - Every column is a row on the page: optional columns have a switch, all can move up and down, and the order is saved per overlay.
-- Header and footer each show up to four metrics, the first on the left and the others right-aligned: track, incidents (with the race's warning and disqualification limits), temperatures, session clocks, lap and finish forecasts, session type, wetness, wind, class SOF, position in class, brake bias or overlay name. Forecasts are marked `~`, missing data `—`.
+- Header and footer each show up to four metrics, the first on the left and the others right-aligned: track, incidents (with the race's warning and disqualification limits), temperatures, session clocks, lap and finish forecasts, session type, wetness, wind, class SOF, position in class, brake bias, stops needed, declared wet or overlay name. Forecasts are marked `~`, missing data `—`.
 
 ### Fuel Calculator
 
 RaceMate learns consumption between line crossings. Only whole laps at racing speed count: caution laps, pit and out laps, refuels, the first partial lap and replays never do. History resets when the session or car changes. The average of the last 10 counted laps drives range, pit window, refuel and targets.
 
-- **Header**: current and expected final lap, and how many stops are needed.
 - **Tank**: fuel, range in laps and a bar of the tank with the fuel missing to the finish (hatched) and the finish mark.
 - **Consumption**: last lap, averages of 3, 10 and 5 laps, race average, minimum and maximum, each with its own switch.
 - **Last 10 laps**: every whole lap's fuel against the 10-lap average; caution laps can be marked.
@@ -78,7 +81,7 @@ Green when the limiter is on, red when it is off, gray when unknown. Shown while
 
 ### Weather
 
-Modules, each with its own switch: a header with **DECLARED WET** while rain tires are allowed; the track condition in iRacing's seven levels; precipitation; track and air temperature; the track temperature of the last 20 minutes; wind speed, compass direction and the direction ring relative to your car (with "Crosswind from the left" and similar); humidity, sky and fog; track usage.
+Modules, each with its own switch: the track condition in iRacing's seven levels; precipitation; track and air temperature; the track temperature of the last 20 minutes; wind speed, compass direction and the direction ring relative to your car (with "Crosswind from the left" and similar); humidity, sky and fog; track usage.
 
 - **Trend arrows** compare with ten minutes ago (from five minutes of history on): rising, falling or steady. iRacing publishes no forecast, so RaceMate samples the weather every 30 seconds itself.
 - The wind module shows the **wind rose** (the ring with the speed inside), the **wind text** or both. With only the wind rose switched on, the overlay shrinks to the ring.
