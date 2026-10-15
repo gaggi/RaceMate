@@ -130,12 +130,12 @@ constexpr ModuleInfo WeatherModules[]={
     {L"ShowWindText",L"Wind text",L"Speed, compass direction and crosswind",true}};
 static_assert(std::size(WeatherModules)==WeatherModuleCount);
 const wchar_t* WetnessNames[]={L"—",L"Dry",L"Mostly Dry",L"Very Lightly Wet",L"Lightly Wet",L"Moderately Wet",L"Very Wet",L"Extremely Wet"};
-struct Placement { int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=true, growLeft=false, growUp=false; };
+struct Placement { int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=true, growLeft=false, growUp=false, rounded=true; };
 enum FontId : unsigned char { Regular, Bold, Large, Small, Hero, SmallBold, FontCount };
 struct DrawCommand {
     enum Type : unsigned char { Fill, Text, DottedLine, WindRing, Outline, RoundFill, Ring, Hatch, Sparkline, Logo };
     Type type=Fill; FontId font=Regular; UINT align=DT_LEFT; RECT r{}; COLORREF color=0;
-    std::array<float,5> shape{}; // Wind ring: center x/y, radius, scale, bearing (negative without direction). Outline and RoundFill: corner radius. Ring: stroke width. Hatch: background color. Sparkline: stroke width; its text holds the points, 1 + 0..1000 from bottom to top. Logo: atlas cell.
+    std::array<float,5> shape{}; // Wind ring: center x/y, radius, scale, bearing (negative without direction). Outline: corner radius, line width (1 when 0), dashed when 1. RoundFill: corner radius. Ring: stroke width. Hatch: background color. Sparkline: stroke width; its text holds the points, 1 + 0..1000 from bottom to top. Logo: atlas cell.
     std::wstring text;
     bool operator==(const DrawCommand& o) const {
         return type==o.type && font==o.font && align==o.align && r.left==o.r.left && r.top==o.r.top && r.right==o.r.right && r.bottom==o.r.bottom
@@ -445,6 +445,7 @@ void ReadInstance(Overlay& o) {
     const int rate=ReadInt(section.c_str(),L"RefreshHz",DefaultRates[kind]);
     p.rate=*std::find_if(std::begin(OverlayRates),std::end(OverlayRates)-1,[&](int choice){return choice>=rate;});
     p.enabled=ReadBool(section.c_str(),L"Enabled",true); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
+    p.rounded=ReadBool(section.c_str(),L"RoundCorners",true);
     if(IsTable(kind)) ReadTable(section.c_str(),kind,o.table);
     for(int i=0;i<FuelModuleCount;++i) o.fuel.display[i]=ReadBool(section.c_str(),FuelModules[i].key,FuelModules[i].on);
     for(int i=0;i<FuelMetricCount;++i) o.fuel.figures[i]=ReadBool(section.c_str(),FuelFigures[i].key,FuelFigures[i].on);
@@ -493,7 +494,7 @@ void Save() {
     for(const auto& o:app.overlays) {
         const auto name=Section(o); const auto* section=name.c_str(); const auto& p=o.place;
         number(section,L"X",p.x); number(section,L"Y",p.y); number(section,L"Scale",p.scale); number(section,L"Opacity",p.opacity);
-        number(section,L"RefreshHz",p.rate); number(section,L"Enabled",p.enabled); number(section,L"GrowLeft",p.growLeft); number(section,L"GrowUp",p.growUp);
+        number(section,L"RefreshHz",p.rate); number(section,L"Enabled",p.enabled); number(section,L"GrowLeft",p.growLeft); number(section,L"GrowUp",p.growUp); number(section,L"RoundCorners",p.rounded);
         if(IsTable(o.kind)) {
             const auto& t=o.table;
             order(section,L"ColumnOrder",t.columnOrder);
@@ -781,6 +782,7 @@ const CellRenderer CellRenderers[]={
         c.text=r.car.stintLaps>=0?L"L"+std::to_wstring(r.car.stintLaps):L"L-"; },
     +[](const Row& r,const Overlay&,Cell& c) { c.text=r.car.stops>=0?std::to_wstring(r.car.stops):L"?"; c.ink=r.car.stops>=0?Ink::Value:Ink::Muted; }};
 static_assert(std::size(CellRenderers)==ColumnCount);
+bool Editing(const Overlay& o); // Its own page is open in the visible main window.
 // Describes an overlay in physical pixels. Comparing it with the previous scene yields the exact changed areas.
 void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCommand>& out) {
     out.clear();
@@ -1213,8 +1215,12 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         fill({0,px(32),width,height+titleOffset},!known?RGB(95,100,110):(app.frame.limiter?RGB(27,135,68):RGB(182,41,44)));
         label(!known?L"PIT LIMITER STATUS UNKNOWN":(app.frame.limiter?L"PIT LIMITER ACTIVE":L"PIT LIMITER NOT ACTIVE"),{px(12),px(38),width-px(12),height+titleOffset-px(6)},RGB(255,255,255),Bold,DT_CENTER);
     }
-    // The panel's 1 px border, last so it stays on top; the window region rounds the same corners.
-    out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{static_cast<float>(px(CornerRadius))}});
+    // The border, last so it stays on top; the window region rounds the same corners. Red marks the overlay whose
+    // settings are open, dashed yellow every overlay while they can be moved. The Pit Limiter's color needs no border.
+    const float radius=static_cast<float>(o.place.rounded?px(CornerRadius):0), thick=static_cast<float>(std::max(2,px(2)));
+    if(Editing(o)) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},RGB(235,64,52),{radius,thick}});
+    else if(app.edit) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Yellow,{radius,thick,1}});
+    else if(o.kind!=PitLimiterKind) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{radius}});
 }
 // DrawTextW costs about three times as much as measuring and ExtTextOutW; it remains only for ellipsis.
 void DrawLabel(HDC dc,const DrawCommand& c) {
@@ -1322,9 +1328,20 @@ void PaintScene(Overlay& o,HRGN dirty) {
             RoundRect(dc,c.r.left,c.r.top,c.r.right+1,c.r.bottom+1,diameter,diameter); break;
         }
         case DrawCommand::Outline: {
-            const int diameter=2*static_cast<int>(c.shape[0]);
-            SelectObject(dc,GetStockObject(DC_PEN)); SetDCPenColor(dc,c.color); const auto brush=SelectObject(dc,GetStockObject(NULL_BRUSH));
-            RoundRect(dc,c.r.left,c.r.top,c.r.right,c.r.bottom,diameter,diameter); SelectObject(dc,brush); break;
+            const int diameter=2*static_cast<int>(c.shape[0]), thick=std::max(1,static_cast<int>(c.shape[1]));
+            const auto brush=SelectObject(dc,GetStockObject(NULL_BRUSH));
+            if(thick==1 && c.shape[2]==0) {
+                SelectObject(dc,GetStockObject(DC_PEN)); SetDCPenColor(dc,c.color);
+                RoundRect(dc,c.r.left,c.r.top,c.r.right,c.r.bottom,diameter,diameter);
+            } else {
+                // A wider line runs inside the edge; dashes are three line widths long.
+                LOGBRUSH ink{BS_SOLID,c.color,0}; const DWORD dashes[]={static_cast<DWORD>(3*thick),static_cast<DWORD>(2*thick)};
+                HPEN pen=ExtCreatePen(PS_GEOMETRIC|(c.shape[2]!=0?PS_USERSTYLE:PS_SOLID)|PS_ENDCAP_FLAT|PS_JOIN_ROUND,thick,&ink,c.shape[2]!=0?2:0,c.shape[2]!=0?dashes:nullptr);
+                const auto old=SelectObject(dc,pen); const int inset=thick/2;
+                RoundRect(dc,c.r.left+inset,c.r.top+inset,c.r.right-inset+(thick%2?0:1),c.r.bottom-inset+(thick%2?0:1),diameter,diameter);
+                SelectObject(dc,old); DeleteObject(pen);
+            }
+            SelectObject(dc,brush); break;
         }
         }
     }
@@ -1401,7 +1418,7 @@ void Fit(Overlay& o,bool recover=false) {
     o.Free(); InvalidateRect(o.window,nullptr,FALSE);
     SetLayeredWindowAttributes(o.window,0,static_cast<BYTE>(o.place.opacity*255/100),LWA_ALPHA);
     const int diameter=2*MulDiv(CornerRadius,dpi*o.place.scale,9600);
-    SetWindowRgn(o.window,CreateRoundRectRgn(0,0,w+1,h+1,diameter,diameter),TRUE);
+    SetWindowRgn(o.window,o.place.rounded?CreateRoundRectRgn(0,0,w+1,h+1,diameter,diameter):nullptr,TRUE);
 }
 void CreateOverlayWindow(Overlay& o) {
     CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_LAYERED|WS_EX_TRANSPARENT,L"RaceMate.Overlay",Name(o).c_str(),WS_POPUP,o.place.x,o.place.y,365,200,nullptr,nullptr,app.instance,&o);
@@ -1409,6 +1426,7 @@ void CreateOverlayWindow(Overlay& o) {
 }
 // Ticks refresh each overlay at its own rate; everything else (settings, hide, diagnostics) forces a refresh.
 void UpdateOverlays(bool force=true) {
+    if(!app.overlayClass) return;
     InvalidateModel();
     const bool pitVisible=app.pitVisibility.Update(app.session,app.frame);
     for(auto& o:app.overlays) {
@@ -1477,9 +1495,9 @@ void Tick() {
     else ProcessFrame(app.telemetry.Read(app.frame,app.session));
     UpdateStatus(); UpdateOverlays(false); UpdateRaceControl(); PollUpdates(); Timer();
 }
-void ShowSettings() { ShowWindow(app.main,IsIconic(app.main)?SW_RESTORE:SW_SHOW); SetForegroundWindow(app.main); }
+void ShowSettings() { ShowWindow(app.main,IsIconic(app.main)?SW_RESTORE:SW_SHOW); SetForegroundWindow(app.main); UpdateOverlays(); }
 void TogglePreview() { app.preview=!app.preview; app.frame={}; app.session={}; app.weatherHistory.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.telemetry.Close(); app.events.Reset(); Tick(); RefreshPage(); }
-void ToggleEdit() { app.edit=!app.edit; Tick(); RefreshPage(); }
+void ToggleEdit() { app.edit=!app.edit; Tick(); UpdateOverlays(); RefreshPage(); }
 void ToggleHidden() { app.hidden=!app.hidden; UpdateOverlays(); RefreshPage(); }
 LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     auto* o=reinterpret_cast<Overlay*>(GetWindowLongPtrW(w,GWLP_USERDATA));
@@ -1543,9 +1561,10 @@ LRESULT CALLBACK MainProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     case WM_TIMER: if(wp==2) DestroyWindow(w); else Tick(); return 0;
     case WM_CLOSE:
         if(!app.trayAvailable && !app.diagnostics) { DestroyWindow(w); return 0; }
-        ShowWindow(w,SW_HIDE); return 0;
+        ShowWindow(w,SW_HIDE); UpdateOverlays(); return 0;
     case WM_SIZE:
-        if(wp==SIZE_MINIMIZED) { if(app.trayAvailable || app.diagnostics) ShowWindow(w,SW_HIDE); }
+        // The edited overlay's red border shows only while the window does.
+        if(wp==SIZE_MINIMIZED) { if(app.trayAvailable || app.diagnostics) ShowWindow(w,SW_HIDE); UpdateOverlays(); }
         else { LayoutMain(); if(wp==SIZE_MAXIMIZED) { RememberWindowPlacement(); Save(); } }
         return 0;
     case WM_EXITSIZEMOVE: RememberWindowPlacement(); Save(); return 0;

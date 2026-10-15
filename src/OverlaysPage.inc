@@ -6,8 +6,8 @@ public:
     OverlaysPage() : PageWindow(ui.heading,ui.text) {}
 private:
     enum class Key { None, Instance, Add, Preview, Move, Hide, Reset };
-    static constexpr int ListId=100, ScaleId=200, OpacityId=201, CornerId=202, RateId=203;
-    static constexpr wchar_t ExpandGlyph=L'', CollapseGlyph=L'', CopyGlyph=L'', RemoveGlyph=L'';
+    static constexpr int ListId=100, ScaleId=200, OpacityId=201, CornerId=202, RateId=203, RoundedId=204;
+    static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E', CopyGlyph=L'\uE8C8', RemoveGlyph=L'\uE74D';
     static constexpr const wchar_t* Corners[]={L"Top left",L"Top right",L"Bottom left",L"Bottom right"};
 
     void OnCreate() override {
@@ -19,7 +19,8 @@ private:
 
     static int Corner(const Placement& place) { return (place.growLeft?1:0)+(place.growUp?2:0); }
     static std::wstring Summary(const Overlay& o) {
-        std::wstring text=std::to_wstring(o.place.scale)+L" %  ·  opacity "+std::to_wstring(o.place.opacity)+L" %  ·  "+Corners[Corner(o.place)]+L"  ·  "+std::to_wstring(o.place.rate)+L" Hz";
+        std::wstring text=std::to_wstring(o.place.scale)+L" %  \u00B7  opacity "+std::to_wstring(o.place.opacity)+L" %  \u00B7  "+Corners[Corner(o.place)]+L"  \u00B7  "+std::to_wstring(o.place.rate)+L" Hz";
+        if(!o.place.rounded) text+=L"  \u00B7  square corners";
         return text;
     }
     void Refresh() {
@@ -32,7 +33,7 @@ private:
             row.toggle=o.place.enabled?1:0; row.button=L"Settings";
             // Right to left: expand, duplicate (not the Pit Limiter), remove (added instances only); empty slots keep them in line.
             row.iconButtons={&o==expanded_?CollapseGlyph:ExpandGlyph,o.kind==PitLimiterKind?wchar_t{0}:CopyGlyph,o.number>1?RemoveGlyph:wchar_t{0}};
-            row.expandHeight=&o==expanded_?48:0;
+            row.expandHeight=&o==expanded_?84:0;
             push(std::move(row),Key::Instance,&o);
         }
         RowList::Row add; add.title=L"Add overlay"; add.detail=L"Another Relative, Standings, Fuel Calculator or Weather with its own settings and place."; add.button=L"Add...";
@@ -42,8 +43,8 @@ private:
             RowList::Row row; row.title=title; row.detail=std::move(detail); row.toggle=on?1:0; push(std::move(row),key);
         };
         toggle(Key::Preview,L"Preview with sample data",L"Shows every overlay with made-up data, without iRacing.",app.preview);
-        toggle(Key::Move,L"Move overlays",L"Drag overlays with the mouse.  ·  "+HotkeyText(app.hotkeys[0]),app.edit);
-        toggle(Key::Hide,L"Hide all overlays",L"Keeps their settings.  ·  "+HotkeyText(app.hotkeys[1]),app.hidden);
+        toggle(Key::Move,L"Move overlays",L"Drag overlays with the mouse.  \u00B7  "+HotkeyText(app.hotkeys[0]),app.edit);
+        toggle(Key::Hide,L"Hide all overlays",L"Keeps their settings.  \u00B7  "+HotkeyText(app.hotkeys[1]),app.hidden);
         RowList::Row reset; reset.title=L"Reset positions"; reset.detail=L"Puts every overlay back in its default place on the main monitor."; reset.button=L"Reset";
         push(std::move(reset),Key::Reset);
         list_.SetRows(std::move(rows));
@@ -66,6 +67,7 @@ private:
         editors_.Label(L"Opacity",152,10,56); editors_.Combo(OpacityId,opacities,(place.opacity-40)/10,210,10,90);
         editors_.Label(L"Fixed corner",318,10,84); editors_.Combo(CornerId,corners,Corner(place),404,10,130);
         editors_.Label(L"Updates",548,10,56); editors_.Combo(RateId,rates,rate,606,10,80);
+        editors_.Check(RoundedId,L"Rounded corners",place.rounded,0,48,200);
         syncing_=false; editors_.Position();
     }
     void Expand(Overlay* o) {
@@ -97,6 +99,10 @@ private:
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); return true; }
         if(id==ScaleId || id==OpacityId || id==CornerId || id==RateId) { if(!syncing_ && code==CBN_SELCHANGE) ApplyEditor(id); return true; }
+        if(id==RoundedId) {
+            if(!syncing_ && code==BN_CLICKED && expanded_) { expanded_->place.rounded=editors_.Checked(id); Fit(*expanded_); SettingChanged(); Refresh(); }
+            return true;
+        }
         if(id!=ListId) return false;
         if(code==RowList::kLayoutChanged) { editors_.Position(); return true; }
         const int row=list_.NotifiedRow();

@@ -297,6 +297,20 @@ int RunDiagnostics() {
         report<<"Further instances: copy, defaults, own size, persistence, removal of settings: "<<(instancesOk?"PASS":"FAIL")<<"\n"; ok=instancesOk && ok;
     }
     {
+        // Borders: red on the overlay whose page is open, dashed yellow while moving, none on the Pit Limiter; square corners on request.
+        bool bordersOk=true; auto& relative=First(RelativeKind);
+        OpenOverlay(relative); UpdateWindow(app.main);
+        bordersOk=Editing(relative) && !Editing(First(StandingsKind)) && Export(relative.window,L"build\\qa\\border-editing.bmp") && bordersOk;
+        ShowPage(Page::Overlays); bordersOk=!Editing(relative) && bordersOk;
+        app.edit=true; UpdateOverlays(); bordersOk=Export(relative.window,L"build\\qa\\border-moving.bmp") && bordersOk;
+        app.edit=false; UpdateOverlays();
+        bordersOk=Export(First(PitLimiterKind).window,L"build\\qa\\border-pit-limiter.bmp") && bordersOk;
+        relative.place.rounded=false; Fit(relative); SettingChanged(); Load(); bordersOk=!relative.place.rounded && bordersOk;
+        bordersOk=Export(relative.window,L"build\\qa\\border-square.bmp") && bordersOk;
+        relative.place.rounded=true; Fit(relative); SettingChanged();
+        report<<"Overlay borders while editing and moving, Pit Limiter without border, square corners: "<<(bordersOk?"PASS":"FAIL")<<"\n"; ok=bordersOk && ok;
+    }
+    {
         const auto rosterSession=app.session; const auto rosterFrame=app.frame; const auto rosterOptions=First(StandingsKind).table.standings;
         app.session.type="Qualify"; app.session.results={}; for(auto& car:app.frame.cars) car=Car{};
         app.frame.camera=-1; app.frame.onTrack=true; First(StandingsKind).table.standings.ownClass=false; First(StandingsKind).table.standings.leaders=MaxCars;

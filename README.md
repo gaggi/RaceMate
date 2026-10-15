@@ -25,9 +25,9 @@ Overlays stay visible during spotting, replays and paused playback, and follow t
 
 ## Overlays
 
-On the Overlays page, each overlay's row expands to its size, opacity, **fixed corner** and **update rate** (1–20 Hz; default 10 Hz for Relative and Pit Limiter, 1 Hz for Standings, Fuel Calculator and Weather). The fixed corner stays in place when the overlay grows or shrinks (more rows, extra columns, header or footer). **Settings** in the row opens the overlay's own page.
+On the Overlays page, each overlay's row expands to its size, opacity, **fixed corner**, **rounded corners** and **update rate** (1–20 Hz; default 10 Hz for Relative and Pit Limiter, 1 Hz for Standings, Fuel Calculator and Weather). The fixed corner stays in place when the overlay grows or shrinks (more rows, extra columns, header or footer). **Settings** in the row opens the overlay's own page.
 
-**Add overlay** adds another Relative, Standings, Fuel Calculator or Weather with its own settings and place, for example a second Weather that shows only the wind rose in the middle of the screen. The copy button in an overlay's row adds one with the same settings; the bin removes an added overlay with its settings. Added overlays are numbered (Weather 2) and saved in their own section of `settings.ini`.
+**Add overlay** adds another Relative, Standings, Fuel Calculator or Weather with its own settings and place, for example a second Weather that shows only the wind rose in the middle of the screen. The copy button in an overlay's row adds one with the same settings; the bin removes an added overlay with its settings. Added overlays are numbered (Weather 2) and saved in their own section of `settings.ini`. While an overlay's own page is open, it has a red border; while overlays can be moved, all have a dashed yellow border.
 
 ### Relative
 

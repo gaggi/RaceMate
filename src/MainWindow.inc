@@ -91,12 +91,14 @@ void ShowPage(Page page,Overlay* overlay=nullptr) {
             :L"Startup, refresh rate and keyboard shortcuts.");
     }
     ShowWindow(ui.back,page==Page::Overlay?SW_SHOW:SW_HIDE);
+    UpdateOverlays(); // The edited overlay's border follows the page.
     ui.nav.SetSelected(page==Page::Settings?NavSettingsId:(page==Page::RaceControl?NavRaceControlId:NavOverlaysId));
     const HWND host=ui.host.Handle();
     ui.host.SetContent(page==Page::Overlays?CreateOverlaysPage(host):page==Page::RaceControl?CreateRaceControlPage(host):(page==Page::Settings?CreateGeneralPage(host):(IsTable(ui.overlay->kind)?CreateTablePage(host,*ui.overlay):CreateElementsPage(host,*ui.overlay))));
     LayoutMain();
 }
 void OpenOverlay(Overlay& o) { ShowPage(Page::Overlay,&o); }
+bool Editing(const Overlay& o) { return ui.page==Page::Overlay && ui.overlay==&o && IsWindowVisible(app.main) && !IsIconic(app.main); }
 void ShowRaceControlPage() { ShowSettings(); ShowPage(Page::RaceControl); }
 void CreateMainUi() {
     CreateUiFonts();

@@ -7,7 +7,7 @@ public:
 private:
     enum class Key { None, Layout, Module, Info };
     static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210;
-    static constexpr wchar_t ExpandGlyph=L'', CollapseGlyph=L'';
+    static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E';
 
     void OnCreate() override {
         list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont());
@@ -50,7 +50,7 @@ private:
         layout.detail=!Strip()?L"The modules below, one under the other"
             :(Fuel()?L"Tank, range, average, refuel, latest stop and targets in one line":L"Track condition, rain, temperatures and wind in one line");
         push(std::move(layout),Key::Layout);
-        header(L"Modules  ·  top to bottom");
+        header(L"Modules  \u00B7  top to bottom");
         for(int id=0;id<ModuleCount();++id) {
             if(!Fuel() && id==TrendArrows) header(L"Display");
             RowList::Row row; row.title=Modules()[id].title; row.detail=Fuel() && id==FiguresModule?FiguresDetail():Modules()[id].detail;
