@@ -20,7 +20,7 @@ SimMessage ReplayMessage(int session,double time,int lead) {
 void EventRecorder::Add(const Session&,const Frame& f,const Driver& d,EventType type,double time,const std::string& detail,bool estimated) {
     RaceEvent event; event.id=next_++; event.type=type; event.session=f.session; event.car=d.index;
     event.lap=f.cars[d.index].lap; event.time=time; event.number=d.number; event.driver=d.name; event.detail=detail; event.estimated=estimated;
-    events_.push_back(std::move(event));
+    events_.push_back(std::move(event)); ++revision_;
     if(events_.size()>2000) events_.erase(events_.begin(),events_.begin()+100);
 }
 void EventRecorder::Update(const Session& s,const Frame& f) {
@@ -66,7 +66,7 @@ void EventRecorder::Update(const Session& s,const Frame& f) {
             if(!car.pit && previous.pit && previous.pitTime>=0) {
                 Add(s,f,d,EventType::PitStop,previous.pitTime,"Pit lane visit: "+std::to_string(static_cast<int>(std::round(f.time-previous.pitTime)))+" s");
                 if(car.lastPitStationary>=0) events_.back().detail+="; stationary: ~"+std::to_string(static_cast<int>(std::round(car.lastPitStationary)))+" s";
-                events_.back().lap=previous.lap; previous.pitTime=-1;
+                events_.back().lap=previous.lap; previous.pitTime=-1; ++revision_;
             }
         } else previous.pitTime=-1;
         // Keep previous positions until pair-wise pass detection has finished.

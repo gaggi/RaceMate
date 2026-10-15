@@ -143,7 +143,7 @@ void SettingChanged() { Save(); UpdateOverlays(); }
 Overlay& NewInstance(int kind,const Overlay* copy=nullptr) {
     auto& o=AddInstance(kind,InstanceCount(kind)+1);
     ReadInstance(o); // A removed instance's section is gone, so this gives the defaults.
-    if(copy) { o.table=copy->table; o.fuel=copy->fuel; o.weather=copy->weather; o.place=copy->place; o.place.x+=30; o.place.y+=30; }
+    if(copy) { o.bands=copy->bands; o.table=copy->table; o.fuel=copy->fuel; o.weather=copy->weather; o.place=copy->place; o.place.x+=30; o.place.y+=30; }
     CreateOverlayWindow(o); SettingChanged(); return o;
 }
 // Moves an ID one place up (-1) or down (+1); false at either end.

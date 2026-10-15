@@ -13,7 +13,7 @@ struct RaceControlWindow {
     // What a double-click does: 0 watch live, 1 replay from 5 s before, 2 from 10 s before.
     int replayMode=1; bool onTop=false;
     std::vector<CameraGroup> cameras; std::wstring cameraName;
-    std::wstring signature, message;
+    std::wstring signature, message, feedKey; size_t total=0;
     ULONGLONG updated=0;
     std::string pendingNumber; int pendingGroup=1;
 } raceControl;
@@ -312,22 +312,27 @@ void UpdateRaceControl(bool force) {
         }
     }
     SortRaceRows(rows);
-    std::vector<RaceEvent> all;
-    if(app.preview) {
-        const EventType types[]={EventType::Offtrack,EventType::Incident,EventType::Crash,EventType::PitEntry,EventType::PitStop,EventType::Overtake};
-        for(int i=5;i>=0;--i) {
-            const auto& driver=app.session.drivers[i]; RaceEvent e;
-            e.id=i+1; e.type=types[i]; e.session=0; e.car=driver.index; e.time=600+i*42; e.number=driver.number; e.driver=driver.name;
-            e.estimated=i==2 || i==5; e.detail=i==2?"New repair flag; possible crash":(i==4?"Pit lane visit: 42 s":(i==5?"Passed #12 Luca Weber":"Observed during this session"));
-            all.push_back(e);
-        }
-    } else { const auto& recorded=app.events.Events(); all.assign(recorded.rbegin(),recorded.rend()); }
-    std::vector<RaceEvent> events;
-    for(const auto& e:all) if((raceControl.category==0 || EventCategory(e.type)==raceControl.category) && (raceControl.car<0 || e.car==raceControl.car)) events.push_back(e);
-    SortRaceEvents(events);
+    // The feed is filtered and sorted again only when the events, the filter or the sort change.
+    const std::wstring feedKey=std::to_wstring(app.preview?0:app.events.Revision()+1)+L":"+std::to_wstring(raceControl.category)+L":"+std::to_wstring(raceControl.car)+L":"+std::to_wstring(raceControl.eventSortColumn)+std::to_wstring(raceControl.eventSortDescending);
+    if(force || feedKey!=raceControl.feedKey) {
+        std::vector<RaceEvent> all;
+        if(app.preview) {
+            const EventType types[]={EventType::Offtrack,EventType::Incident,EventType::Crash,EventType::PitEntry,EventType::PitStop,EventType::Overtake};
+            for(int i=5;i>=0;--i) {
+                const auto& driver=app.session.drivers[i]; RaceEvent e;
+                e.id=i+1; e.type=types[i]; e.session=0; e.car=driver.index; e.time=600+i*42; e.number=driver.number; e.driver=driver.name;
+                e.estimated=i==2 || i==5; e.detail=i==2?"New repair flag; possible crash":(i==4?"Pit lane visit: 42 s":(i==5?"Passed #12 Luca Weber":"Observed during this session"));
+                all.push_back(e);
+            }
+        } else { const auto& recorded=app.events.Events(); all.assign(recorded.rbegin(),recorded.rend()); }
+        auto& events=raceControl.events; events.clear();
+        for(const auto& e:all) if((raceControl.category==0 || EventCategory(e.type)==raceControl.category) && (raceControl.car<0 || e.car==raceControl.car)) events.push_back(e);
+        SortRaceEvents(events); raceControl.total=all.size(); raceControl.feedKey=feedKey;
+    }
+    const auto& events=raceControl.events;
     std::vector<int> columns; for(int id:RaceFieldOrder) if(raceControl.fields[id]) columns.push_back(id);
     std::vector<int> feedColumns; for(int id=FirstEventField;id<RaceEventFieldCount;++id) if(raceControl.eventFields[id]) feedColumns.push_back(id);
-    const std::wstring count=std::to_wstring(events.size())+L" of "+std::to_wstring(all.size())+L" events";
+    const std::wstring count=std::to_wstring(events.size())+L" of "+std::to_wstring(raceControl.total)+L" events";
     SetRaceText(RaceItem(RaceCountId),count);
     const bool pill=raceControl.car>=0;
     if(pill!=(IsWindowVisible(RaceItem(RaceCarPillId))!=FALSE)) { ShowWindow(RaceItem(RaceCarPillId),pill?SW_SHOW:SW_HIDE); LayoutRaceControl(); }
@@ -335,7 +340,7 @@ void UpdateRaceControl(bool force) {
     std::wstring signature=std::to_wstring(raceControl.car)+L":"+std::to_wstring(raceControl.category)+L":"+std::to_wstring(raceControl.sortColumn)+std::to_wstring(raceControl.sortDescending)+std::to_wstring(raceControl.eventSortColumn)+std::to_wstring(raceControl.eventSortDescending)+std::to_wstring(First(StandingsKind).table.standings.separateClasses)+std::to_wstring(app.frame.connected)+std::to_wstring(app.frame.onTrack);
     for(int col:columns) signature+=L"|"+std::to_wstring(col); for(int col:feedColumns) signature+=L"E"+std::to_wstring(col);
     for(const auto& row:rows) { signature+=std::to_wstring(row.driver.index); for(int col:columns) signature+=L"|"+RaceStandingCell(row,col); }
-    for(const auto& event:events) signature+=L"|"+std::to_wstring(event.id);
+    signature+=L"#"+feedKey;
     if(!force && signature==raceControl.signature) return;
     raceControl.signature=std::move(signature);
     const int oldRow=SelectedRowIndex();
@@ -360,7 +365,7 @@ void UpdateRaceControl(bool force) {
         raceControl.feedColumns=feedColumns;
     }
     UpdateRaceSortIndicators();
-    raceControl.rows=std::move(rows); raceControl.events=std::move(events);
+    raceControl.rows=std::move(rows);
     ListView_SetItemCountEx(raceControl.standings,static_cast<int>(raceControl.rows.size()),LVSICF_NOSCROLL);
     ListView_SetItemCountEx(raceControl.feed,static_cast<int>(raceControl.events.size()),LVSICF_NOSCROLL);
     ListView_SetItemState(raceControl.standings,-1,0,LVIS_SELECTED); ListView_SetItemState(raceControl.feed,-1,0,LVIS_SELECTED);
@@ -532,7 +537,7 @@ LRESULT CALLBACK RaceControlProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
         // The controls own windows; reset the plain data and leave the control objects to their windows.
         raceControl.window=raceControl.standings=raceControl.feed=raceControl.status=nullptr; raceControl.font=raceControl.heading=nullptr;
         raceControl.rows.clear(); raceControl.events.clear(); raceControl.columns.clear(); raceControl.feedColumns.clear(); raceControl.cameras.clear();
-        raceControl.signature.clear(); raceControl.message.clear(); raceControl.pendingNumber.clear(); raceControl.car=-1; raceControl.selectedEvent=0;
+        raceControl.signature.clear(); raceControl.feedKey.clear(); raceControl.message.clear(); raceControl.pendingNumber.clear(); raceControl.car=-1; raceControl.selectedEvent=0;
         return 0;
     }
     return DefWindowProcW(w,m,wp,lp);

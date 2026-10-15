@@ -25,7 +25,7 @@ Overlays stay visible during spotting, replays and paused playback, and follow t
 
 ## Overlays
 
-On the Overlays page, each overlay's row expands to its size, opacity, **fixed corner** and **update rate** (1–20 Hz; default 10 Hz for Relative and Pit Limiter, 1 Hz for Standings, Fuel Calculator and Weather). The fixed corner stays in place when the overlay grows or shrinks (more rows, extra columns, header or footer). **Settings** in the row opens the overlay's own page; its **Layout** section switches **rounded corners** (default square).
+The Overlays page starts with **Preview**, **Move overlays** and **Hide all overlays**, so they stay in view with many overlays. In all lists, Space switches a row and Enter opens its settings or expands it. Each overlay's row expands to its size, opacity, **fixed corner** and **update rate** (1–20 Hz; default 10 Hz for Relative and Pit Limiter, 1 Hz for Standings, Fuel Calculator and Weather). The fixed corner stays in place when the overlay grows or shrinks (more rows, extra columns, header or footer). **Settings** in the row opens the overlay's own page; its **Layout** section switches **rounded corners** (default square).
 
 **Add overlay** adds another Relative, Standings, Fuel Calculator or Weather with its own settings and place, for example a second Weather that shows only the wind rose in the middle of the screen. The copy button in an overlay's row adds one with the same settings; the bin removes an added overlay with its settings. Added overlays are numbered (Weather 2) and saved in their own section of `settings.ini`. While an overlay's own page is open, it has a red border; while overlays can be moved, all have a dashed yellow border.
 
@@ -74,7 +74,8 @@ RaceMate learns consumption between line crossings. Only whole laps at racing sp
 - **Targets**: the most fuel per lap that still reaches the latest stop (or the finish without a stop), and the same for one lap longer, two laps longer or one lap shorter.
 - The finish forecast projects the overall leader to the flag and then your own first crossing after it, using observed pace and track position. Lapping by faster classes is included; future pit stops are not.
 - The arrows on the overlay's page order the modules; adjacent target rows share one band.
-- Layout **Panel** shows the modules one under the other; **Strip** shows tank, range, average, refuel, latest stop and targets in one line, in the same order.
+- Layout **Panel** shows the modules one under the other; **Strip** shows tank, range, average, refuel, latest stop and targets in one line, in the same order. Modules the strip leaves out are marked **Panel only** on the page.
+- An average over fewer laps than its name shows how many it has so far, e.g. **AVG 10 (3)**, in gray.
 
 ### Pit Limiter
 
@@ -86,7 +87,8 @@ Modules, each with its own switch and ordered with the arrows on the overlay's p
 
 - **Trend arrows** compare with ten minutes ago (from five minutes of history on): rising, falling or steady. iRacing publishes no forecast, so RaceMate samples the weather every 30 seconds itself.
 - The wind module shows the **wind rose** (the ring with the speed inside), the **wind text** or both. With only the wind rose switched on, the overlay shrinks to the ring.
-- Layout **Panel** or **Strip** (condition, rain, temperatures and wind in one line).
+- Layout **Panel** or **Strip** (condition, rain, temperatures and wind in one line; the others are marked **Panel only**).
+- Trends compare with 10 minutes ago and pause while old footage plays; the temperature history is recorded while you drive or watch live and says how many minutes it holds so far. Precipitation is the current rain, not a forecast.
 
 ## Race Control
 

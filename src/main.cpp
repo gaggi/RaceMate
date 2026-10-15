@@ -293,6 +293,11 @@ int WeatherHeight(const Overlay& o) {
 // Values in the strip layout: tank and range, the 10-lap average, refuel, latest stop and two targets.
 int FuelStripCount(const Overlay& o) { const auto& d=o.fuel.display; return 2*d[TankModule]+d[FiguresModule]+d[RefuelCard]+d[WindowCard]+d[TargetRow]+d[OneLongerRow]; }
 constexpr int FuelPanelWidth=440, FuelStripCell=86;
+// Whether the strip layout shows a module or uses an option; the page marks the others "Panel only".
+bool InStrip(int kind,int id) {
+    if(kind==FuelKind) return id==TankModule || id==FiguresModule || id==RefuelCard || id==WindowCard || id==TargetRow || id==OneLongerRow;
+    return id==ConditionModule || id==RainModule || id==TemperatureModule || id==WindModule || id==TrendArrows || id==WindRelative;
+}
 // The panel's modules that show, in their order. Refuel and pit window share a row when
 // adjacent here; adjacent target rows share one band.
 std::vector<int> FuelShown(const Overlay& o) {
@@ -1024,8 +1029,10 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                         const int left=W*index/figures,cell=W*(index+1)/figures-left; ++index;
                         if(left) fill(rect(left,y+1,1,50),Ink::Line);
                         const COLORREF ink=figure.metric==FuelBasis?Ink::Accent:(figure.metric==static_cast<int>(FuelMetric::Minimum)?Ink::Green:(figure.metric==static_cast<int>(FuelMetric::Maximum)?Ink::Red:white));
-                        label(figure.heading,rect(left,y+7,cell,16),Ink::Label,Small,DT_CENTER);
-                        label(estimate.samples?Format(estimate.consumption,2):L"—",rect(left,y+23,cell,22),ink,Bold,DT_CENTER);
+                        static constexpr int laps[]={0,10,5,0,0,0,3};
+                        const bool partial=estimate.samples>0 && estimate.samples<laps[figure.metric];
+                        label(partial?std::wstring(figure.heading)+L" ("+std::to_wstring(estimate.samples)+L")":figure.heading,rect(left,y+7,cell,16),Ink::Label,Small,DT_CENTER);
+                        label(estimate.samples?Format(estimate.consumption,2):L"—",rect(left,y+23,cell,22),partial?Ink::Muted:ink,Bold,DT_CENTER);
                     }
                     fill(rect(0,y+51,W,1),Ink::Line); y+=52;
                 }
@@ -1120,15 +1127,17 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         const COLORREF wetInk=RGB(140,198,255);
         auto degrees=[](double value){ if(!std::isfinite(value)) return std::wstring(L"—"); wchar_t text[24]; swprintf_s(text,L"%.1f°",value); return std::wstring(text); };
         auto percent=[](double fraction){ return std::isfinite(fraction) && fraction>=0?Format(fraction*100,0)+L" %":std::wstring(L"—"); };
-        // Trend arrows over the last ten minutes; nothing while unknown or switched off.
+        // Trend arrows over the last ten minutes; nothing while unknown, switched off or while old
+        // footage plays, as the history is the live session's.
+        const bool trends=on[TrendArrows] && View(f)!=ViewMode::Replay;
         using Trend=std::pair<std::wstring,COLORREF>;
         auto trend=[&](double change,double steady,int decimals,const wchar_t* unit,COLORREF rising,COLORREF falling) {
-            if(!on[TrendArrows] || !std::isfinite(change)) return Trend{};
+            if(!trends || !std::isfinite(change)) return Trend{};
             if(std::abs(change)<steady) return Trend{L"→",Ink::Muted};
             return Trend{(change>0?L"↑ +":L"↓ −")+Format(std::abs(change),decimals)+unit,change>0?rising:falling};
         };
         const double wetChange=history.Change(&WeatherHistory::Sample::wetness);
-        const Trend wetTrend=!on[TrendArrows] || !std::isfinite(wetChange)?Trend{}:(wetChange>=1?Trend{L"↗ getting wetter",wetInk}:(wetChange<=-1?Trend{L"↘ drying",Ink::Value}:Trend{L"→ steady",Ink::Muted}));
+        const Trend wetTrend=!trends || !std::isfinite(wetChange)?Trend{}:(wetChange>=1?Trend{L"↗ getting wetter",wetInk}:(wetChange<=-1?Trend{L"↘ drying",Ink::Value}:Trend{L"→ steady",Ink::Muted}));
         const Trend rainTrend=trend(history.Change(&WeatherHistory::Sample::rain)*100,2,0,L" %",wetInk,Ink::Muted);
         const Trend trackTrend=trend(history.Change(&WeatherHistory::Sample::track),.3,1,L"",Ink::Orange,Ink::Wet), airTrend=trend(history.Change(&WeatherHistory::Sample::air),.3,1,L"",Ink::Orange,Ink::Wet);
         // Wind: compass direction it comes from, and where it hits the car.
@@ -1178,7 +1187,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                 }
                 if(id==RainModule) {
                     fill(rect(0,y,W,1),Ink::Line);
-                    label(L"PRECIPITATION",rect(16,y,W/2,36),Ink::Label,Small);
+                    label(L"PRECIPITATION NOW",rect(16,y,W/2,36),Ink::Label,Small);
                     // Right-aligned: the value, then its trend.
                     const std::wstring value=percent(f.precipitation); const int valueWidth=measure(value,Bold), trendWidth=rainTrend.first.empty()?0:measure(rainTrend.first,Small)+px(6);
                     const int left=px(W-16)-trendWidth-valueWidth;
@@ -1194,7 +1203,8 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                 }
                 if(id==TemperatureHistoryModule) {
                     fill(rect(0,y,W,1),Ink::Line);
-                    label(L"TRACK TEMP  ·  LAST 20 MIN",rect(16,y+8,W-32,16),Ink::Label,Small);
+                    const int minutes=history.Count()>1?static_cast<int>(std::lround((history.At(history.Count()-1).time-history.At(0).time)/60)):0;
+                    label(L"TRACK TEMP  ·  LAST "+std::to_wstring(std::clamp(minutes,1,20))+L" MIN",rect(16,y+8,W-32,16),Ink::Label,Small);
                     double low=1e9,high=-1e9; int count=0;
                     for(int i=0;i<history.Count();++i) if(const double t=history.At(i).track; std::isfinite(t)) { low=std::min(low,t); high=std::max(high,t); ++count; }
                     if(count<2) label(L"Collecting the first minutes …",rect(16,y+28,W-32,36),Ink::Muted,Regular,DT_CENTER);
@@ -1427,6 +1437,7 @@ void SetOverlayOrigin(Overlay& o,int x,int y) {
     o.place.x=x+(o.place.growLeft?MulDiv(OverlayWidth(o),dpi*o.place.scale,9600):0);
     o.place.y=y+(o.place.growUp?MulDiv(BaseHeight(o),dpi*o.place.scale,9600):0);
 }
+void ApplyOpacity(const Overlay& o) { SetLayeredWindowAttributes(o.window,0,static_cast<BYTE>(o.place.opacity*255/100),LWA_ALPHA); }
 void Fit(Overlay& o,bool recover=false) {
     InvalidateModel();
     const int dpi=GetDpiForWindow(o.window);
@@ -1444,7 +1455,7 @@ void Fit(Overlay& o,bool recover=false) {
     }
     SetWindowPos(o.window,HWND_TOPMOST,x,y,w,h,SWP_NOACTIVATE);
     o.Free(); InvalidateRect(o.window,nullptr,FALSE);
-    SetLayeredWindowAttributes(o.window,0,static_cast<BYTE>(o.place.opacity*255/100),LWA_ALPHA);
+    ApplyOpacity(o);
     const int diameter=2*MulDiv(CornerRadius,dpi*o.place.scale,9600);
     SetWindowRgn(o.window,o.place.rounded?CreateRoundRectRgn(0,0,w+1,h+1,diameter,diameter):nullptr,TRUE);
 }
@@ -1497,6 +1508,15 @@ void UpdateFrame(Overlay& o) {
     o.frameState=state; o.frameRect=r;
     SetWindowPos(o.frame,HWND_TOPMOST,r.left,r.top,w,h,SWP_NOACTIVATE|SWP_SHOWWINDOW); InvalidateRect(o.frame,nullptr,FALSE);
 }
+// Whether a refresh is due on a timer tick at now. The deadline moves on by whole periods, so the rate
+// holds on any timer: an earlier deadline from the tick time would drift (10 Hz on a 66 ms timer gave
+// 7.6 Hz). Half a timer period of slack keeps an overlay at the timer's rate from skipping ticks;
+// after a pause longer than a period the phase restarts instead of catching up.
+bool RefreshDue(ULONGLONG& due,ULONGLONG now,int period,int slack) {
+    if(now+slack<due) return false;
+    due=due+period>now?due+period:now+period;
+    return true;
+}
 // Ticks refresh each overlay at its own rate; everything else (settings, hide, diagnostics) forces a refresh.
 void UpdateOverlays(bool force=true) {
     if(!app.overlayClass) return;
@@ -1513,9 +1533,8 @@ void UpdateOverlays(bool force=true) {
         if(visible) {
             const int dpi=GetDpiForWindow(o.window);
             RECT client{}; GetClientRect(o.window,&client);
-            // Half a timer period of slack keeps a 10 Hz overlay on a 10 Hz timer from skipping ticks.
-            if(!force && app.now+app.timerMs/2<o.due) continue;
-            o.due=app.now+1000/o.place.rate;
+            if(force) o.due=app.now+1000/o.place.rate;
+            else if(!RefreshDue(o.due,app.now,1000/o.place.rate,app.timerMs/2)) continue;
             if(client.bottom!=MulDiv(BaseHeight(o),dpi*o.place.scale,9600) || client.right!=MulDiv(OverlayWidth(o),dpi*o.place.scale,9600)) { Fit(o); InvalidateModel(); }
             RefreshOverlay(o);
         }

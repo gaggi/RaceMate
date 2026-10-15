@@ -412,7 +412,8 @@ std::array<int,MaxCars> IRatingChanges(const Session& s,const Frame& f) {
     return change;
 }
 void WeatherHistory::Update(const Session& s,const Frame& f) {
-    if(!f.connected || f.replay) return;
+    // Watching live counts even with iRacing's replay flag; old footage never does.
+    if(!f.connected || View(f)==ViewMode::Replay) return;
     if(key_!=s.key || session_!=f.session || (count_ && f.time<At(count_-1).time)) { Reset(); key_=s.key; session_=f.session; }
     if(count_ && f.time-At(count_-1).time<30) return;
     samples_[cursor_]={f.time,f.trackTemperature,f.airTemperature,f.precipitation,f.trackWetness>0?static_cast<double>(f.trackWetness):std::numeric_limits<double>::quiet_NaN()};

@@ -41,7 +41,7 @@ int RunDiagnostics() {
     // The page as built at startup, before anything refreshes it: one row per overlay, each with its own title.
     bool startupOk=false;
     if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) {
-        std::vector<std::wstring> titles; for(const auto& row:reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA))->Rows()) if(!row.header) titles.push_back(row.title);
+        std::vector<std::wstring> titles; for(const auto& row:reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA))->Rows()) if(row.button==L"Settings") titles.push_back(row.title);
         startupOk=titles.size()>=OverlayCount; for(int kind=0;kind<OverlayCount && startupOk;++kind) startupOk=titles[kind]==Titles[kind];
     }
     report<<"Overlays page at startup lists every overlay by its own name: "<<(startupOk?"PASS":"FAIL")<<"\n";
@@ -278,6 +278,15 @@ int RunDiagnostics() {
         First(WeatherKind).weather.display=allModules; First(WeatherKind).bands=DefaultBands(WeatherKind); SettingChanged();
         First(WeatherKind).bands.header=false; First(WeatherKind).weather.strip=true; SettingChanged(); Load();
         weatherOk=First(WeatherKind).weather.strip && OverlayWidth(First(4))==WeatherStripCount(First(WeatherKind))*WeatherStripCell && Export(First(4).window,L"build\\qa\\weather-strip.bmp") && weatherOk;
+        // The page marks what the strip leaves out.
+        OpenOverlay(First(WeatherKind));
+        if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) for(const auto& row:reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA))->Rows()) {
+            if(row.title==WeatherModules[DetailsModule].title) weatherOk=row.pill==L"Panel only" && weatherOk;
+            if(row.title==WeatherModules[RainModule].title) weatherOk=row.pill.empty() && weatherOk;
+            // No arrow beyond either end of the order.
+            if(row.title==WeatherModules[ConditionModule].title) weatherOk=row.iconButtons.size()==3 && row.iconButtons[1] && !row.iconButtons[2] && weatherOk;
+            if(row.title==WeatherModules[UsageModule].title) weatherOk=row.iconButtons.size()==3 && !row.iconButtons[1] && row.iconButtons[2] && weatherOk;
+        } else weatherOk=false;
         First(WeatherKind).weather.strip=false; First(WeatherKind).bands=DefaultBands(WeatherKind); SettingChanged();
         report<<"Weather modules, strip layout, persistence and all-hidden visibility: "<<(weatherOk?"PASS":"FAIL")<<"\n"; ok=weatherOk && ok;
     }
@@ -299,7 +308,60 @@ int RunDiagnostics() {
         wchar_t left[8]{}; GetPrivateProfileStringW(L"Weather 2",L"X",L"",left,8,app.config.c_str());
         instancesOk=InstanceCount(WeatherKind)==1 && InstanceCount(RelativeKind)==1 && !left[0] && instancesOk;
         Load(); instancesOk=InstanceCount(WeatherKind)==1 && InstanceCount(RelativeKind)==1 && instancesOk;
-        report<<"Further instances: copy, defaults, own size, persistence, removal of settings: "<<(instancesOk?"PASS":"FAIL")<<"\n"; ok=instancesOk && ok;
+        // A copy takes header and footer along for every kind that can be copied, through a reload; name, window and place stay its own.
+        for(int kind:{RelativeKind,StandingsKind,FuelKind,WeatherKind}) {
+            auto& source=First(kind); const Bands saved=source.bands;
+            source.bands.header=false; source.bands.footer.enabled=true; source.bands.headerMetrics[0]=TrackMetric; source.bands.footer.metrics[1]=SofMetric; SettingChanged();
+            auto& copy=NewInstance(kind,&source);
+            instancesOk=copy.bands.header==source.bands.header && copy.bands.footer.enabled && copy.bands.headerMetrics==source.bands.headerMetrics && copy.bands.footer.metrics==source.bands.footer.metrics && instancesOk;
+            instancesOk=Name(copy)!=Name(source) && copy.window && copy.window!=source.window && copy.place.x==source.place.x+30 && copy.place.y==source.place.y+30 && instancesOk;
+            Load(); auto& reloaded=*std::find_if(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){ return o.kind==kind && o.number==2; });
+            instancesOk=!reloaded.bands.header && reloaded.bands.footer.enabled && reloaded.bands.headerMetrics[0]==TrackMetric && reloaded.bands.footer.metrics[1]==SofMetric && instancesOk;
+            RemoveInstance(reloaded); First(kind).bands=saved; SettingChanged();
+        }
+        report<<"Further instances: copy with header and footer, defaults, own size, persistence, removal of settings: "<<(instancesOk?"PASS":"FAIL")<<"\n"; ok=instancesOk && ok;
+    }
+    {
+        // At the narrowest window every editor of an expanded row lies inside the visible list: the overlay's
+        // size row, and header and footer of a table and of Fuel and Weather.
+        bool fitOk=true; WINDOWPLACEMENT saved{sizeof(saved)}; GetWindowPlacement(app.main,&saved);
+        ShowWindow(app.main,SW_RESTORE); SetWindowPos(app.main,nullptr,0,0,1,1,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE); // Clamped to the minimum size.
+        auto Ascii=[](const std::wstring& text){ std::string ascii; for(wchar_t c:text) ascii+=static_cast<char>(c<128?c:'?'); return ascii; };
+        auto check=[&](const std::wstring& title) {
+            const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr);
+            auto* rows=list?reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA)):nullptr; int index=-1;
+            if(rows) for(size_t i=0;i<rows->Rows().size() && index<0;++i) if(rows->Rows()[i].title==title) index=static_cast<int>(i);
+            if(index<0) { fitOk=false; report<<"  no row "<<Ascii(title)<<"\n"; return; }
+            rows->PressIconButton(index,0);
+            RECT visible{},host{}; GetClientRect(list,&visible); MapWindowPoints(list,nullptr,reinterpret_cast<POINT*>(&visible),2);
+            GetClientRect(ui.host.Handle(),&host); MapWindowPoints(ui.host.Handle(),nullptr,reinterpret_cast<POINT*>(&host),2);
+            visible.right=std::min(visible.right,host.right); int editors=0;
+            for(HWND child=GetWindow(list,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)) if(IsWindowVisible(child)) {
+                RECT r{}; GetWindowRect(child,&r); ++editors;
+                if(r.left<visible.left || r.right>visible.right) { fitOk=false; report<<"  "<<Ascii(title)<<": editor ends at "<<r.right-visible.left<<" px of "<<visible.right-visible.left<<"\n"; }
+            }
+            fitOk=editors==8 && fitOk;
+            rows->PressIconButton(index,0); // And collapsed again.
+        };
+        ShowPage(Page::Overlays); for(auto& o:app.overlays) if(o.number==1) check(Name(o));
+        for(int kind:{RelativeKind,FuelKind,WeatherKind}) { OpenOverlay(First(kind)); check(L"Header"); check(L"Footer"); }
+        SetWindowPlacement(app.main,&saved); ShowPage(Page::Overlays);
+        report<<"Expanded editors fit the narrowest window: "<<(fitOk?"PASS":"FAIL")<<"\n"; ok=fitOk && ok;
+    }
+    {
+        // Every telemetry and overlay rate combination keeps its rate over a minute of jittered ticks, and a pause restarts without a burst.
+        bool ratesOk=true;
+        for(int telemetry:{1,2,5,10,15,20}) for(int rate:OverlayRates) {
+            const int timer=1000/std::max(telemetry,rate), period=1000/rate; ULONGLONG due=0; int count=0;
+            for(int tick=0;tick*timer<60000;++tick) { if(RefreshDue(due,static_cast<ULONGLONG>(tick*timer+(tick*7919)%(timer/4+1)),period,timer/2)) ++count; }
+            const double hz=count/60.0;
+            if(std::abs(hz-1000.0/period)>.03*rate) { ratesOk=false; report<<"  rate "<<rate<<" Hz on a "<<timer<<" ms timer: "<<hz<<" Hz\n"; }
+            // Five seconds without ticks: the next tick refreshes once and the following ticks keep the rate.
+            const ULONGLONG resume=60000+5000; int burst=0;
+            for(int tick=0;tick<3;++tick) burst+=RefreshDue(due,resume+tick,period,timer/2);
+            ratesOk=burst==1 && ratesOk;
+        }
+        report<<"Overlay rates on every telemetry rate, with jitter and pauses: "<<(ratesOk?"PASS":"FAIL")<<"\n"; ok=ratesOk && ok;
     }
     {
         // Rings outside the overlay: red on the one whose page is open, dashed yellow while moving; none on the Pit Limiter; square corners on request.

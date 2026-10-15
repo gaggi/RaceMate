@@ -15,12 +15,14 @@ RowList::Row BandRow(const Overlay& o,bool footer) {
     return row;
 }
 void SetBand(Overlay& o,bool footer,bool on) { (footer?o.bands.footer.enabled:o.bands.header)=on; }
-// The four slots of an expanded header or footer row, as combo boxes firstId to firstId+3.
+// The four slots of an expanded header or footer row, as combo boxes firstId to firstId+3, two per
+// line so they fit the narrowest window.
+constexpr int BandEditorHeight=84;
 void BandEditors(RowEditors& editors,const Overlay& o,bool footer,int firstId) {
     const Slots& metrics=footer?o.bands.footer.metrics:o.bands.headerMetrics;
     const std::vector<std::wstring> titles(std::begin(MetricTitles),std::end(MetricTitles));
     const wchar_t* labels[]={L"Left",L"Right 1",L"Right 2",L"Right 3"};
-    for(int slot=0;slot<SlotCount;++slot) { editors.Label(labels[slot],slot*184,10,56); editors.Combo(firstId+slot,titles,metrics[slot],slot*184+58,10,118); }
+    for(int slot=0;slot<SlotCount;++slot) { const int x=slot%2*280, y=10+slot/2*36; editors.Label(labels[slot],x,y,56); editors.Combo(firstId+slot,titles,metrics[slot],x+60,y,200); }
 }
 void ApplyBandEditor(RowEditors& editors,Overlay& o,bool footer,int id,int firstId) {
     (footer?o.bands.footer.metrics:o.bands.headerMetrics)[id-firstId]=std::clamp(editors.Selection(id),0,MetricCount-1);

@@ -27,17 +27,7 @@ private:
         std::vector<RowList::Row> rows; keys_.clear(); overlays_.clear();
         auto push=[&](RowList::Row row,Key key,Overlay* o=nullptr) { rows.push_back(std::move(row)); keys_.push_back(key); overlays_.push_back(o); };
         auto header=[&](const wchar_t* title) { RowList::Row row; row.header=true; row.title=title; push(std::move(row),Key::None); };
-        header(L"Overlays");
-        for(auto& o:app.overlays) {
-            RowList::Row row; row.title=Name(o); row.detail=Summary(o);
-            row.toggle=o.place.enabled?1:0; row.button=L"Settings";
-            // Right to left: expand, duplicate (not the Pit Limiter), remove (added instances only); empty slots keep them in line.
-            row.iconButtons={&o==expanded_?CollapseGlyph:ExpandGlyph,o.kind==PitLimiterKind?wchar_t{0}:CopyGlyph,o.number>1?RemoveGlyph:wchar_t{0}};
-            row.expandHeight=&o==expanded_?48:0;
-            push(std::move(row),Key::Instance,&o);
-        }
-        RowList::Row add; add.title=L"Add overlay"; add.detail=L"Another Relative, Standings, Fuel Calculator or Weather with its own settings and place."; add.button=L"Add...";
-        push(std::move(add),Key::Add);
+        // Setup first, so it stays in view however many overlays follow.
         header(L"Setup");
         auto toggle=[&](Key key,const wchar_t* title,std::wstring detail,bool on) {
             RowList::Row row; row.title=title; row.detail=std::move(detail); row.toggle=on?1:0; push(std::move(row),key);
@@ -45,6 +35,17 @@ private:
         toggle(Key::Preview,L"Preview with sample data",L"Shows every overlay with made-up data, without iRacing.",app.preview);
         toggle(Key::Move,L"Move overlays",L"Drag overlays with the mouse.  \u00B7  "+HotkeyText(app.hotkeys[0]),app.edit);
         toggle(Key::Hide,L"Hide all overlays",L"Keeps their settings.  \u00B7  "+HotkeyText(app.hotkeys[1]),app.hidden);
+        header(L"Overlays");
+        for(auto& o:app.overlays) {
+            RowList::Row row; row.title=Name(o); row.detail=Summary(o);
+            row.toggle=o.place.enabled?1:0; row.button=L"Settings";
+            // Right to left: expand, duplicate (not the Pit Limiter), remove (added instances only); empty slots keep them in line.
+            row.iconButtons={&o==expanded_?CollapseGlyph:ExpandGlyph,o.kind==PitLimiterKind?wchar_t{0}:CopyGlyph,o.number>1?RemoveGlyph:wchar_t{0}};
+            row.expandHeight=&o==expanded_?84:0;
+            push(std::move(row),Key::Instance,&o);
+        }
+        RowList::Row add; add.title=L"Add overlay"; add.detail=L"Another Relative, Standings, Fuel Calculator or Weather with its own settings and place."; add.button=L"Add...";
+        push(std::move(add),Key::Add);
         RowList::Row reset; reset.title=L"Reset positions"; reset.detail=L"Puts every overlay back in its default place on the main monitor."; reset.button=L"Reset";
         push(std::move(reset),Key::Reset);
         list_.SetRows(std::move(rows));
@@ -63,10 +64,11 @@ private:
         for(int n:OverlayRates) rates.push_back(std::to_wstring(n)+L" Hz");
         const int rate=static_cast<int>(std::find(std::begin(OverlayRates),std::end(OverlayRates),place.rate)-std::begin(OverlayRates));
         syncing_=true; editors_.Begin(row);
-        editors_.Label(L"Size",0,10,40); editors_.Combo(ScaleId,scales,(place.scale-50)/10,44,10,90);
-        editors_.Label(L"Opacity",152,10,56); editors_.Combo(OpacityId,opacities,(place.opacity-40)/10,210,10,90);
-        editors_.Label(L"Fixed corner",318,10,84); editors_.Combo(CornerId,corners,Corner(place),404,10,130);
-        editors_.Label(L"Updates",548,10,56); editors_.Combo(RateId,rates,rate,606,10,80);
+        // Two per line, so they fit the narrowest window.
+        editors_.Label(L"Size",0,10,84); editors_.Combo(ScaleId,scales,(place.scale-50)/10,88,10,130);
+        editors_.Label(L"Opacity",280,10,84); editors_.Combo(OpacityId,opacities,(place.opacity-40)/10,368,10,130);
+        editors_.Label(L"Fixed corner",0,46,84); editors_.Combo(CornerId,corners,Corner(place),88,46,130);
+        editors_.Label(L"Updates",280,46,84); editors_.Combo(RateId,rates,rate,368,46,130);
         syncing_=false; editors_.Position();
     }
     void Expand(Overlay* o) {
@@ -80,7 +82,8 @@ private:
         if(choice<0) return;
         if(id==CornerId) SetOverlayCorner(o,choice);
         else if(id==RateId) { o.place.rate=OverlayRates[choice]; o.due=0; Timer(); SettingChanged(); UpdateStatus(); }
-        else { (id==ScaleId?o.place.scale:o.place.opacity)=id==ScaleId?50+10*choice:40+10*choice; Fit(o); SettingChanged(); }
+        else if(id==ScaleId) { o.place.scale=50+10*choice; Fit(o); SettingChanged(); }
+        else { o.place.opacity=40+10*choice; ApplyOpacity(o); Save(); } // Only the window's alpha changes.
         Refresh();
     }
     void Add() {

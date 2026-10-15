@@ -117,14 +117,15 @@ private:
             if(Optional(id)) row.toggle=shown?1:0;
             else row.pill=L"Always";
             row.muted=!shown;
-            row.iconButtons=id==StatusColumn?std::vector<wchar_t>{0,0}:std::vector<wchar_t>{DownGlyph,UpGlyph};
+            // No arrow where the column cannot move further.
+            row.iconButtons=id==StatusColumn?std::vector<wchar_t>{0,0}:std::vector<wchar_t>{i+1<order.size()?DownGlyph:wchar_t{0},i?UpGlyph:wchar_t{0}};
             if(HasOptions(id)) expandable(row,Key::Column,id,48);
             else if(anyOptions) row.iconButtons.insert(row.iconButtons.begin(),0);
             push(std::move(row),Key::Column,id);
         }
         header(L"Header and footer");
-        RowList::Row head=BandRow(o_,false); expandable(head,Key::Header,-1,48); push(std::move(head),Key::Header);
-        RowList::Row foot=BandRow(o_,true); expandable(foot,Key::Footer,-1,48); push(std::move(foot),Key::Footer);
+        RowList::Row head=BandRow(o_,false); expandable(head,Key::Header,-1,BandEditorHeight); push(std::move(head),Key::Header);
+        RowList::Row foot=BandRow(o_,true); expandable(foot,Key::Footer,-1,BandEditorHeight); push(std::move(foot),Key::Footer);
         RowList::Row headings; headings.title=L"Column headings"; headings.detail=L"Without them, columns shrink to their values."; headings.toggle=o_.table.columnHeaders?1:0;
         push(std::move(headings),Key::ColumnHeadings);
         list_.SetRows(std::move(rows));

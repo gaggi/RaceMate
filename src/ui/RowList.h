@@ -139,6 +139,12 @@ public:
         return rect;
     }
 
+    // Acts on a row's icon button as a click on it does.
+    void PressIconButton(int index, int iconButton)
+    {
+        if (index >= 0 && index < static_cast<int>(rows_.size())) Activate({index, PartKind::IconButton, iconButton});
+    }
+
     // Keeps the expanded area of a row in view, e.g. right after expanding it.
     void ScrollIntoView(int index)
     {
@@ -738,9 +744,13 @@ private:
             case VK_SPACE:
             case VK_RETURN:
             {
+                // Space switches; Enter takes the button, else opens what the row opens (its expansion),
+                // and switches only a row that has nothing else.
                 if (focused_ < 0) return 0;
                 const auto& row = rows_[static_cast<size_t>(focused_)];
-                const PartKind kind = row.toggle >= 0 ? PartKind::Toggle : !row.button.empty() ? PartKind::Button : PartKind::Body;
+                const bool opens = std::any_of(row.iconButtons.begin(), row.iconButtons.end(), [](wchar_t glyph) { return glyph != 0; });
+                const PartKind kind = wParam == VK_SPACE && row.toggle >= 0 ? PartKind::Toggle
+                    : !row.button.empty() ? PartKind::Button : row.toggle >= 0 && !opens ? PartKind::Toggle : PartKind::Body;
                 Activate({focused_, kind});
                 return 0;
             }

@@ -57,11 +57,13 @@ private:
         auto module=[&](int id,bool movable) {
             RowList::Row row; row.title=Modules()[id].title; row.detail=Fuel() && id==FiguresModule?FiguresDetail():Modules()[id].detail;
             if(!Fuel() && id==WindModule) row.detail=o_.weather.display[WindRose] && o_.weather.display[WindText]?L"Wind rose and text":(o_.weather.display[WindRose]?L"Wind rose":(o_.weather.display[WindText]?L"Wind text":L"Nothing chosen"));
-            row.toggle=Shown(id)?1:0; row.muted=!Shown(id);
+            row.toggle=Shown(id)?1:0; row.muted=!Shown(id) || (Strip() && !InStrip(o_.kind,id));
+            if(Strip() && !InStrip(o_.kind,id)) row.pill=L"Panel only";
+            else if(Strip() && Fuel() && id==FiguresModule) row.pill=L"Strip: AVG 10";
             // Same column for every row's button: the expand arrow or an empty slot.
             const bool open=expanded_==id;
             row.iconButtons={id==Expandable()?(open?CollapseGlyph:ExpandGlyph):wchar_t{0}}; row.expandHeight=id==Expandable() && open?(Fuel()?120:48):0;
-            if(movable) row.iconButtons.insert(row.iconButtons.end(),{DownGlyph,UpGlyph});
+            if(movable) row.iconButtons.insert(row.iconButtons.end(),{id!=Order().back()?DownGlyph:wchar_t{0},id!=Order().front()?UpGlyph:wchar_t{0}});
             push(std::move(row),Key::Module,id);
         };
         // Refuel and pit window share a row while they stand next to each other here.
@@ -72,7 +74,7 @@ private:
         header(L"Header and footer");
         for(int id:{HeaderRow,FooterRow}) {
             RowList::Row row=BandRow(o_,id==FooterRow); const bool open=expanded_==id;
-            row.iconButtons={open?CollapseGlyph:ExpandGlyph}; row.expandHeight=open?48:0;
+            row.iconButtons={open?CollapseGlyph:ExpandGlyph}; row.expandHeight=open?BandEditorHeight:0;
             push(std::move(row),Key::Band,id);
         }
         if(Fuel()) {

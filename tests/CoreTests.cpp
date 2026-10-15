@@ -632,6 +632,18 @@ void WeatherHistoryTests() {
  f.replay=false; f.time=10; history.Update(s,f); Require(history.Count()==1,"time going back restarts the history");
  for(int second=40;second<=1500;second+=30) { f.time=second; history.Update(s,f); }
  Require(history.Count()==WeatherHistory::Size && history.At(WeatherHistory::Size-1).time==1480,"twenty minutes kept, oldest first");
+ // Watching live from outside the car: iRacing sets the replay flag, but the footage is live.
+ WeatherHistory spectating; f.onTrack=false; f.replay=true; f.replayFramesBehind=0;
+ for(int second=0;second<=60;second+=30) { f.time=second; spectating.Update(s,f); }
+ Require(spectating.Count()==3,"live spectating is sampled");
+ f.time=90; spectating.Update(s,f); Require(spectating.Count()==4,"spectating keeps sampling");
+ const int live=spectating.Count();
+ f.time=95; spectating.Update(s,f); Require(spectating.Count()==live,"a paused or short step adds no sample");
+ f.replayFramesBehind=600; f.time=10; spectating.Update(s,f); Require(spectating.Count()==live && spectating.At(live-1).time==90,"rewound footage neither samples nor resets");
+ f.replayFramesBehind=0; f.time=120; spectating.Update(s,f); Require(spectating.Count()==live+1,"back to live continues the history");
+ f.replayFramesBehind=-1; f.replayTime=10; f.replaySession=f.session; f.time=150; spectating.Update(s,f); Require(spectating.Count()==live+1,"replay time far behind is old footage");
+ f.replayTime=150; spectating.Update(s,f); Require(spectating.Count()==live+2,"replay time at the session time is live");
+ f.replayTime=-1; f.replaySession=-1; f.replay=false; f.onTrack=true; f.session=f.session+1; f.time=10; spectating.Update(s,f); Require(spectating.Count()==1,"a new session restarts the history");
 }
 int main(int argc,char** argv) {
  if(argc==2 && std::string(argv[1])=="--benchmark-prediction") {

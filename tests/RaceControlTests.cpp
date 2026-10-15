@@ -34,16 +34,21 @@ void RaceControlTests() {
     events.Update(s,f); Require(events.Events().empty(),"joining does not manufacture earlier events");
     f.time+=.1; f.cars[0].surface=0; s.drivers[0].incidentCount=1; events.Update(s,f);
     Require(Count(events,EventType::Offtrack)==1 && Count(events,EventType::Incident)==1,"offtrack transition and counter delta captured for opponent");
+    const auto revision=events.Revision();
     events.Update(s,f); f.time+=.1; events.Update(s,f); Require(events.Events().size()==2,"paused and sustained offtrack are deduplicated");
+    Require(revision>0 && events.Revision()==revision,"the revision stays while no event is added");
     f.time+=.1; f.cars[0].sessionFlags=0x100000; events.Update(s,f);
     Require(Count(events,EventType::Crash)==1 && events.Events().back().estimated,"repair flag is explicitly a possible crash");
     f.time+=.1; f.cars[0].surface=3; f.cars[0].pit=true; events.Update(s,f);
     const double entry=f.time;
     for(int i=0;i<5;++i) { f.time+=1; events.Update(s,f); }
+    const auto beforeStop=events.Revision();
     f.time+=1; f.cars[0].pit=false; f.cars[0].lastPitStationary=3; events.Update(s,f);
+    Require(events.Revision()==beforeStop+2,"adding the stop and amending its stationary time both change the revision");
     Require(events.Events().back().detail.find("stationary: ~3 s")!=std::string::npos,"completed event includes independently observed stationary time");
     Require(Count(events,EventType::PitEntry)==1 && Count(events,EventType::PitStop)==1,"completed pit visit recorded");
     Require(events.Events().back().time==entry && events.Events().back().lap==4,"pit replay anchors to entry and entry lap");
+    { EventRecorder copy=events; const auto last=copy.Revision(); copy.Reset(); Require(copy.Events().empty() && copy.Revision()>last,"a reset never repeats an earlier revision"); }
     auto replay=f; replay.onTrack=false; replay.replayTime=90; replay.replaySession=0; replay.cars[0].surface=0; events.Update(s,replay);
     Require(Count(events,EventType::Offtrack)==1,"reviewing old replay does not duplicate event feed");
     f.time-=50; f.cars[0].surface=0; events.Update(s,f); Require(Count(events,EventType::Offtrack)==1,"rewind remains below recording frontier");
