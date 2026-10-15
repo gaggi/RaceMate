@@ -164,6 +164,7 @@ struct Overlay {
     HWND window=nullptr; int kind=0, number=1; Placement place;
     TableSettings table; FuelSettings fuel; WeatherSettings weather;
     HDC dc=nullptr; HBITMAP bitmap=nullptr; HGDIOBJ original=nullptr, originalFont=nullptr;
+    HWND frame=nullptr; int frameState=-1; RECT frameRect{}; // The ring around it while edited or movable.
     std::array<HFONT,FontCount> fonts{}; int width=0,height=0,dpi=0;
     std::vector<DrawCommand> scene;
     ULONGLONG due=0; // Next scheduled refresh, in app.now time.
@@ -1215,12 +1216,8 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         fill({0,px(32),width,height+titleOffset},!known?RGB(95,100,110):(app.frame.limiter?RGB(27,135,68):RGB(182,41,44)));
         label(!known?L"PIT LIMITER STATUS UNKNOWN":(app.frame.limiter?L"PIT LIMITER ACTIVE":L"PIT LIMITER NOT ACTIVE"),{px(12),px(38),width-px(12),height+titleOffset-px(6)},RGB(255,255,255),Bold,DT_CENTER);
     }
-    // The border, last so it stays on top; the window region rounds the same corners. Red marks the overlay whose
-    // settings are open, dashed yellow every overlay while they can be moved. The Pit Limiter's color needs no border.
-    const float radius=static_cast<float>(o.place.rounded?px(CornerRadius):0), thick=static_cast<float>(std::max(4,px(4)));
-    if(Editing(o)) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},RGB(235,64,52),{radius,thick}});
-    else if(app.edit) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Yellow,{radius,thick,1}});
-    else if(o.kind!=PitLimiterKind) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{radius}});
+    // The 1 px border, last so it stays on top; the window region rounds the same corners. The Pit Limiter's color needs none.
+    if(o.kind!=PitLimiterKind) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{static_cast<float>(o.place.rounded?px(CornerRadius):0)}});
 }
 // DrawTextW costs about three times as much as measuring and ExtTextOutW; it remains only for ellipsis.
 void DrawLabel(HDC dc,const DrawCommand& c) {
@@ -1424,6 +1421,51 @@ void CreateOverlayWindow(Overlay& o) {
     CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_LAYERED|WS_EX_TRANSPARENT,L"RaceMate.Overlay",Name(o).c_str(),WS_POPUP,o.place.x,o.place.y,365,200,nullptr,nullptr,app.instance,&o);
     Fit(o,true);
 }
+// A ring just outside an overlay marks it: red while its settings are open, dashed yellow while overlays can be moved.
+// It is a window of its own, so the overlay keeps its size and content.
+enum FrameStyle { NoFrame, EditingFrame, MovingFrame };
+constexpr int FrameWidth=3;
+int FrameStyleOf(const Overlay& o) { return !o.window || !IsWindowVisible(o.window)?NoFrame:(Editing(o)?EditingFrame:(app.edit?MovingFrame:NoFrame)); }
+void PaintFrame(HWND w,HDC dc) {
+    const auto* o=reinterpret_cast<const Overlay*>(GetWindowLongPtrW(w,GWLP_USERDATA)); if(!o) return;
+    RECT r{}; GetClientRect(w,&r); const int thick=MulDiv(FrameWidth,GetDpiForWindow(w),96), style=o->frameState/2;
+    const int diameter=o->place.rounded?2*(MulDiv(CornerRadius,GetDpiForWindow(o->window)*o->place.scale,9600)+thick):0;
+    SetDCBrushColor(dc,Ink::Panel); FillRect(dc,&r,static_cast<HBRUSH>(GetStockObject(DC_BRUSH))); // The gaps between dashes.
+    LOGBRUSH ink{BS_SOLID,style==EditingFrame?RGB(235,64,52):Ink::Yellow,0}; const DWORD dashes[]={static_cast<DWORD>(3*thick),static_cast<DWORD>(2*thick)};
+    const bool dashed=style==MovingFrame;
+    HPEN pen=ExtCreatePen(PS_GEOMETRIC|(dashed?PS_USERSTYLE:PS_SOLID)|PS_ENDCAP_FLAT|PS_JOIN_ROUND,thick,&ink,dashed?2:0,dashed?dashes:nullptr);
+    const auto oldPen=SelectObject(dc,pen); const auto oldBrush=SelectObject(dc,GetStockObject(NULL_BRUSH)); const int inset=thick/2;
+    RoundRect(dc,r.left+inset,r.top+inset,r.right-inset+(thick%2?0:1),r.bottom-inset+(thick%2?0:1),diameter,diameter);
+    SelectObject(dc,oldBrush); SelectObject(dc,oldPen); DeleteObject(pen);
+}
+LRESULT CALLBACK FrameProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
+    switch(m) {
+    case WM_PAINT: { PAINTSTRUCT p{}; HDC dc=BeginPaint(w,&p); PaintFrame(w,dc); EndPaint(w,&p); return 0; }
+    case WM_PRINTCLIENT: PaintFrame(w,reinterpret_cast<HDC>(wp)); return 0;
+    case WM_ERASEBKGND: return 1;
+    case WM_NCHITTEST: return HTTRANSPARENT;
+    case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
+    }
+    return DefWindowProcW(w,m,wp,lp);
+}
+// Shows, moves or hides an overlay's ring to match its state, place, size and corners.
+void UpdateFrame(Overlay& o) {
+    const int style=FrameStyleOf(o);
+    if(style==NoFrame) { if(o.frame && IsWindowVisible(o.frame)) ShowWindow(o.frame,SW_HIDE); o.frameState=-1; return; }
+    if(!o.frame) {
+        o.frame=CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_LAYERED|WS_EX_TRANSPARENT,L"RaceMate.Frame",L"",WS_POPUP,0,0,0,0,nullptr,nullptr,app.instance,nullptr);
+        SetWindowLongPtrW(o.frame,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(&o)); SetLayeredWindowAttributes(o.frame,0,255,LWA_ALPHA);
+    }
+    RECT r{}; GetWindowRect(o.window,&r); const int thick=MulDiv(FrameWidth,GetDpiForWindow(o.window),96); InflateRect(&r,thick,thick);
+    const int state=style*2+o.place.rounded;
+    if(state==o.frameState && EqualRect(&r,&o.frameRect) && IsWindowVisible(o.frame)) return;
+    // Only the ring between the overlay's edge and the frame's outer edge belongs to the window.
+    const int w=r.right-r.left, h=r.bottom-r.top, inner=o.place.rounded?2*MulDiv(CornerRadius,GetDpiForWindow(o.window)*o.place.scale,9600):0;
+    HRGN ring=CreateRoundRectRgn(0,0,w+1,h+1,inner?inner+2*thick:0,inner?inner+2*thick:0), hole=CreateRoundRectRgn(thick,thick,w-thick+1,h-thick+1,inner,inner);
+    CombineRgn(ring,ring,hole,RGN_DIFF); DeleteObject(hole); SetWindowRgn(o.frame,ring,FALSE);
+    o.frameState=state; o.frameRect=r;
+    SetWindowPos(o.frame,HWND_TOPMOST,r.left,r.top,w,h,SWP_NOACTIVATE|SWP_SHOWWINDOW); InvalidateRect(o.frame,nullptr,FALSE);
+}
 // Ticks refresh each overlay at its own rate; everything else (settings, hide, diagnostics) forces a refresh.
 void UpdateOverlays(bool force=true) {
     if(!app.overlayClass) return;
@@ -1436,6 +1478,7 @@ void UpdateOverlays(bool force=true) {
         if(style!=desired) SetWindowLongPtrW(o.window,GWL_EXSTYLE,desired);
         if(visible && !IsWindowVisible(o.window)) { ShowWindow(o.window,SW_SHOWNOACTIVATE); o.due=0; }
         if(!visible && IsWindowVisible(o.window)) ShowWindow(o.window,SW_HIDE);
+        UpdateFrame(o);
         if(visible) {
             const int dpi=GetDpiForWindow(o.window);
             RECT client{}; GetClientRect(o.window,&client);
@@ -1515,9 +1558,10 @@ LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     case WM_NCHITTEST: return app.edit?HTCAPTION:HTTRANSPARENT;
     case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
     case WM_EXITSIZEMOVE: CaptureOverlayCorner(*o); Save(); return 0;
+    case WM_WINDOWPOSCHANGED: UpdateFrame(*o); break; // The ring follows while the overlay is dragged or resized.
     case WM_DPICHANGED: Fit(*o); return 0;
     case WM_DISPLAYCHANGE: Fit(*o,true); return 0;
-    case WM_DESTROY: o->Free(); return 0;
+    case WM_DESTROY: o->Free(); if(o->frame) DestroyWindow(o->frame); o->frame=nullptr; return 0;
     }
     return DefWindowProcW(w,m,wp,lp);
 }
@@ -1662,6 +1706,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
     if(!app.main) { DeleteObject(app.brush); if(mutex) CloseHandle(mutex); return 1; }
     CreateMainUi();
     cls.lpfnWndProc=OverlayProc; cls.hbrBackground=nullptr; cls.lpszClassName=L"RaceMate.Overlay"; RegisterClassExW(&cls);
+    cls.lpfnWndProc=FrameProc; cls.lpszClassName=L"RaceMate.Frame"; RegisterClassExW(&cls);
     app.overlayClass=true;
     for(auto& o:app.overlays) CreateOverlayWindow(o);
 #ifdef RACEMATE_DIAGNOSTICS

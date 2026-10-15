@@ -297,13 +297,18 @@ int RunDiagnostics() {
         report<<"Further instances: copy, defaults, own size, persistence, removal of settings: "<<(instancesOk?"PASS":"FAIL")<<"\n"; ok=instancesOk && ok;
     }
     {
-        // Borders: red on the overlay whose page is open, dashed yellow while moving, none on the Pit Limiter; square corners on request.
+        // Rings outside the overlay: red on the one whose page is open, dashed yellow while moving; none on the Pit Limiter; square corners on request.
         bool bordersOk=true; auto& relative=First(RelativeKind);
+        auto ringAround=[](const Overlay& o) {
+            RECT inner{},outer{}; GetWindowRect(o.window,&inner); GetWindowRect(o.frame,&outer); const int thick=MulDiv(FrameWidth,GetDpiForWindow(o.window),96);
+            return o.frame && IsWindowVisible(o.frame) && outer.left==inner.left-thick && outer.top==inner.top-thick && outer.right==inner.right+thick && outer.bottom==inner.bottom+thick;
+        };
         OpenOverlay(relative); UpdateWindow(app.main);
-        bordersOk=Editing(relative) && !Editing(First(StandingsKind)) && Export(relative.window,L"build\\qa\\border-editing.bmp") && bordersOk;
-        ShowPage(Page::Overlays); bordersOk=!Editing(relative) && bordersOk;
-        app.edit=true; UpdateOverlays(); bordersOk=Export(relative.window,L"build\\qa\\border-moving.bmp") && bordersOk;
-        app.edit=false; UpdateOverlays();
+        bordersOk=Editing(relative) && !Editing(First(StandingsKind)) && FrameStyleOf(relative)==EditingFrame && ringAround(relative) && bordersOk;
+        bordersOk=(!First(StandingsKind).frame || !IsWindowVisible(First(StandingsKind).frame)) && Export(relative.frame,L"build\\qa\\border-editing.bmp") && bordersOk;
+        ShowPage(Page::Overlays); bordersOk=!Editing(relative) && !IsWindowVisible(relative.frame) && bordersOk;
+        app.edit=true; UpdateOverlays(); bordersOk=FrameStyleOf(relative)==MovingFrame && ringAround(relative) && ringAround(First(StandingsKind)) && Export(relative.frame,L"build\\qa\\border-moving.bmp") && Export(relative.window,L"build\\qa\\border-overlay.bmp") && bordersOk;
+        app.edit=false; UpdateOverlays(); bordersOk=!IsWindowVisible(relative.frame) && bordersOk;
         bordersOk=Export(First(PitLimiterKind).window,L"build\\qa\\border-pit-limiter.bmp") && bordersOk;
         relative.place.rounded=false; Fit(relative); SettingChanged(); Load(); bordersOk=!relative.place.rounded && bordersOk;
         bordersOk=Export(relative.window,L"build\\qa\\border-square.bmp") && bordersOk;
