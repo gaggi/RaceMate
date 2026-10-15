@@ -97,7 +97,7 @@ int RunDiagnostics() {
         auto& fuel=First(FuelKind); const FuelSettings settings=fuel.fuel;
         fuel.fuel.strip=false; fuel.fuel.display.fill(false); fuel.fuel.display[LeaderDistanceModule]=fuel.fuel.display[WhiteFlagTimeModule]=true;
         fuel.fuel.order=FuelOrder; Save(); Load(); UpdateOverlays();
-        forecastOk=FuelHeight(fuel)==60 && Export(fuel.window,L"build\\qa\\fuel-leader-forecast.bmp") && forecastOk;
+        forecastOk=FuelHeight(fuel)==64 && Export(fuel.window,L"build\\qa\\fuel-leader-forecast.bmp") && forecastOk;
         fuel.fuel.strip=true; Save(); Load(); UpdateOverlays();
         forecastOk=FuelStripCount(fuel)==2 && InStrip(FuelKind,LeaderDistanceModule) && InStrip(FuelKind,WhiteFlagTimeModule) && Export(fuel.window,L"build\\qa\\fuel-leader-forecast-strip.bmp") && forecastOk;
         fuel.fuel=settings; Save(); UpdateOverlays();
@@ -567,6 +567,25 @@ int RunDiagnostics() {
         ok=MoveInOrder(weather.weather.order,ConditionModule,3) && BaseHeight(weather)==weatherHeight && ok;
         Load(); ok=First(WeatherKind).weather.order[3]==ConditionModule && Export(First(WeatherKind).window,L"build\\qa\\weather-reordered.bmp") && ok;
         First(FuelKind).fuel.order=FuelOrder; First(WeatherKind).weather.order=WeatherOrder; SettingChanged();
+        // Caution marks: off by default and switched inside the expanded "Last 10 laps" row, not as a row of their own.
+        ok=!FuelModules[CautionMarks].on && ok;
+        OpenOverlay(First(FuelKind));
+        if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) {
+            auto* rows=reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA)); int history=-1;
+            for(size_t i=0;i<rows->Rows().size();++i) {
+                ok=rows->Rows()[i].title!=FuelModules[CautionMarks].title && ok;
+                if(rows->Rows()[i].title==FuelModules[HistoryModule].title) history=static_cast<int>(i);
+            }
+            ok=history>=0 && ok;
+            if(history>=0) {
+                rows->PressIconButton(history,0); bool check=false;
+                for(HWND child=GetWindow(list,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)) {
+                    wchar_t text[64]{}; GetWindowTextW(child,text,64);
+                    check=check || (IsWindowVisible(child) && std::wstring(text)==FuelModules[CautionMarks].title);
+                }
+                ok=check && ok; rows->PressIconButton(history,0);
+            }
+        } else ok=false;
     }
     app.frame.fuel=50; UpdateOverlays();
     fuelSummary=CalculatePitWindow(app.session,app.frame,Plan().lapsToFinish,Plan().estimates[5].consumption);
@@ -612,7 +631,7 @@ int RunDiagnostics() {
             ok=std::none_of(First(FuelKind).fuel.display.begin(),First(FuelKind).fuel.display.end(),[](bool value){return value;}) && ok;
             ok=Export(First(2).window,L"build\\qa\\fuel-compact.bmp") && ok;
             First(FuelKind).fuel.display.fill(true); SettingChanged();
-            ok=HeightWithTitle(First(2))==32+112+52+104+92+46+16+4*24+2*30 && BaseHeight(First(2))==HeightWithTitle(First(2)) && ok;
+            ok=HeightWithTitle(First(2))==32+112+52+104+92+46+16+4*24+2*32 && BaseHeight(First(2))==HeightWithTitle(First(2)) && ok;
             ok=Export(First(2).window,L"build\\qa\\fuel-all.bmp") && ok;
             First(FuelKind).fuel.strip=true; SettingChanged(); ok=Export(First(2).window,L"build\\qa\\fuel-strip.bmp") && ok;
             First(FuelKind).fuel.strip=false; SettingChanged();

@@ -90,7 +90,8 @@ constexpr ModuleInfo FuelModules[]={
     {L"ShowTank",L"Tank",L"Fuel, range in laps and a bar of the fuel to the finish",true},
     {L"ShowFigures",L"Consumption",L"",true},
     {L"ShowHistory",L"Last 10 laps",L"Fuel of each lap against the 10-lap average",true},
-    {L"MarkCaution",L"Mark caution laps",L"In the last 10 laps; they never count toward consumption",true},
+    // Switched in the expanded "Last 10 laps" row. A new key, so it starts off for earlier installs too.
+    {L"MarkCautionLaps",L"Mark caution laps",L"In yellow; they never count toward consumption",false},
     {L"ShowRefuel",L"Refuel to finish",L"Without a safety margin; green when it fits in the tank",true},
     {L"ShowPitWindow",L"Pit window",L"Earliest and latest lap to stop",true},
     {L"ShowTimeline",L"Pit window timeline",L"One block per lap of a full tank: window green, current lap yellow",true},
@@ -316,7 +317,7 @@ bool IsCard(int id) { return id==RefuelCard || id==WindowCard; }
 bool IsTarget(int id) { return id>=OneShorterRow && id<=TwoLongerRow; }
 int FuelHeight(const Overlay& o) {
     if(o.fuel.strip) return 50;
-    constexpr int heights[]={112,52,104,0,92,92,46,24,24,24,24,30,30};
+    constexpr int heights[]={112,52,104,0,92,92,46,24,24,24,24,32,32};
     static_assert(std::size(heights)==FuelModuleCount);
     const auto shown=FuelShown(o); int h=0;
     for(size_t k=0;k<shown.size();++k) {
@@ -1027,14 +1028,17 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             const auto shown=FuelShown(o); const int figures=static_cast<int>(std::count(o.fuel.figures.begin(),o.fuel.figures.end(),true));
             for(size_t k=0;k<shown.size();++k) {
                 const int id=shown[k], next=k+1<shown.size()?shown[k+1]:-1;
+                // A line above each module that has none of its own; the consumption figures close with one.
+                auto separator=[&]{ if(y>32 && (!k || shown[k-1]!=FiguresModule)) fill(rect(0,y,W,1),Ink::Line); };
                 if(id==LeaderDistanceModule || id==WhiteFlagTimeModule) {
-                    if(y>32) fill(rect(0,y,W,1),Ink::Line);
-                    label(id==LeaderDistanceModule?L"Leader at time expiry / lap limit":L"Time left at leader's final lap",rect(16,y,W-150,30),Ink::Label,Small);
-                    label(id==LeaderDistanceModule?LeaderDistanceValue()+L" laps":WhiteFlagTimeValue(),rect(W-142,y,126,30),id==LeaderDistanceModule?Ink::Accent:white,Bold,DT_RIGHT);
-                    y+=30;
+                    // One value row each, like Weather's precipitation.
+                    separator();
+                    label(id==LeaderDistanceModule?L"LEADER LAPS AT FINISH":L"TIME LEFT AT LEADER'S FINAL LAP",rect(16,y,W-150,32),Ink::Label,Small);
+                    label(id==LeaderDistanceModule?LeaderDistanceValue()+L" laps":WhiteFlagTimeValue(),rect(W-142,y,126,32),id==LeaderDistanceModule?Ink::Accent:white,Bold,DT_RIGHT);
+                    y+=32;
                 }
                 if(id==TankModule) {
-                    if(y>32) fill(rect(0,y,W,1),Ink::Line);
+                    separator();
                     label(L"IN TANK",rect(16,y+10,150,16),Ink::Label,Small); label(L"RANGE",rect(W-166,y+10,150,16),Ink::Label,Small,DT_RIGHT);
                     const std::wstring fuel=tankKnown?Format(f.fuel,1):L"—", laps=range>=0?Format(range,1):L"—";
                     const int fuelWidth=measure(fuel,Large), unitWidth=measure(L"laps",Regular), lapsWidth=measure(laps,Large), end=px(W-16);
@@ -1069,6 +1073,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                     fill(rect(0,y+51,W,1),Ink::Line); y+=52;
                 }
                 if(id==HistoryModule) {
+                    separator();
                     label(L"CONSUMPTION  ·  LAST 10 LAPS",rect(16,y+8,W/2,16),Ink::Label,Small);
                     const int n=p.historyCount,top=y+30,chart=56,gap=6,bar=(W-32-9*gap)/10;
                     if(!n) label(L"Waiting for complete laps",rect(16,top,W-32,chart),Ink::Muted,Regular,DT_CENTER);
