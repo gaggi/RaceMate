@@ -50,6 +50,97 @@ int RunDiagnostics() {
     ShowWindow(app.main,SW_SHOWNOACTIVATE); UpdateWindow(app.main);
     bool ok=Export(app.main,L"build\\qa\\main-overlays.bmp");
     {
+        bool forecastOk=true;
+        InvalidateModel(); Plan();
+        const auto savedPlan=app.fuelPlan;
+        auto& finish=app.fuelPlan.prediction.finish;
+        finish.leaderTotalDistance=19.08; finish.finalLapTimeLeft=13;
+        forecastOk=LeaderDistanceValue()==L"~19.08" && WhiteFlagTimeValue()==L"~13 s" && forecastOk;
+        forecastOk=FooterValue(LapLeaderDistanceMetric)==L"Lap 8 / ~19.08" && forecastOk;
+        const Frame savedFrame=app.frame;
+        app.frame.onTrack=false; app.frame.camera=0; app.frame.cars[0].lap=12;
+        forecastOk=FooterValue(LapLeaderDistanceMetric)==L"Lap 12 / ~19.08" && forecastOk;
+        app.frame=savedFrame;
+        finish.finalLapTimeLeft=73; forecastOk=WhiteFlagTimeValue()==L"~1:13" && forecastOk;
+        finish.finalLapTimeLeft=0; forecastOk=WhiteFlagTimeValue()==L"~0 s" && forecastOk;
+        finish.finalLapTimeLeft=std::numeric_limits<double>::quiet_NaN(); forecastOk=WhiteFlagTimeValue()==L"—" && forecastOk;
+        finish.valid=false; forecastOk=LeaderDistanceValue()==L"—" && WhiteFlagTimeValue()==L"—" && forecastOk;
+        forecastOk=FooterValue(LapLeaderDistanceMetric)==L"Lap 8 / —" && forecastOk;
+        app.fuelPlan=savedPlan;
+        // One registry and renderer for both bands of every kind, including the Pit Limiter.
+        for(int kind=0;kind<OverlayCount;++kind) {
+            auto& o=First(kind); const Bands bands=o.bands;
+            o.bands.header=true; o.bands.footer.enabled=true;
+            o.bands.headerMetrics={LeaderDistanceMetric,WhiteFlagTimeMetric,NoMetric,NoMetric};
+            o.bands.footer.metrics={WhiteFlagTimeMetric,LeaderDistanceMetric,NoMetric,NoMetric};
+            Save(); Load(); UpdateOverlays();
+            forecastOk=o.bands.header && o.bands.footer.enabled && o.bands.headerMetrics[0]==LeaderDistanceMetric && o.bands.footer.metrics[1]==LeaderDistanceMetric && forecastOk;
+            bool leader=false,time=false;
+            for(const auto& command:o.scene) { leader=leader || command.text==LeaderDistanceValue(); time=time || command.text==WhiteFlagTimeValue(); }
+            forecastOk=leader && time && Export(o.window,L"build\\qa\\forecast-bands-"+std::to_wstring(kind)+L".bmp") && forecastOk;
+            OpenOverlay(o);
+            const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr);
+            auto* rows=reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA));
+            int header=-1; for(size_t i=0;rows && i<rows->Rows().size();++i) if(rows->Rows()[i].title==L"Header") header=static_cast<int>(i);
+            if(header<0) forecastOk=false;
+            else {
+                rows->PressIconButton(header,0);
+                int combos=0;
+                for(HWND child=GetWindow(list,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)) {
+                    wchar_t name[32]{}; GetClassNameW(child,name,32);
+                    if(wcscmp(name,L"ComboBox")==0) { ++combos; forecastOk=SendMessageW(child,CB_GETCOUNT,0,0)==MetricCount && forecastOk; }
+                }
+                forecastOk=combos==SlotCount && forecastOk;
+            }
+            ShowPage(Page::Overlays); o.bands=bands; Save();
+        }
+        auto& fuel=First(FuelKind); const FuelSettings settings=fuel.fuel;
+        fuel.fuel.strip=false; fuel.fuel.display.fill(false); fuel.fuel.display[LeaderDistanceModule]=fuel.fuel.display[WhiteFlagTimeModule]=true;
+        fuel.fuel.order=FuelOrder; Save(); Load(); UpdateOverlays();
+        forecastOk=FuelHeight(fuel)==60 && Export(fuel.window,L"build\\qa\\fuel-leader-forecast.bmp") && forecastOk;
+        fuel.fuel.strip=true; Save(); Load(); UpdateOverlays();
+        forecastOk=FuelStripCount(fuel)==2 && InStrip(FuelKind,LeaderDistanceModule) && InStrip(FuelKind,WhiteFlagTimeModule) && Export(fuel.window,L"build\\qa\\fuel-leader-forecast-strip.bmp") && forecastOk;
+        fuel.fuel=settings; Save(); UpdateOverlays();
+        report<<"Leader forecast precision, final-lap clock, independent Fuel modules and universal header/footer choices: "<<(forecastOk?"PASS":"FAIL")<<"\n"; ok=forecastOk && ok;
+    }
+    {
+        const auto savedTables=Tables(); const int savedExtra=app.opponentFuelExtraLaps;
+        bool fuelOk=true;
+        app.opponentFuelExtraLaps=4; Save(); app.opponentFuelExtraLaps=0; Load();
+        fuelOk=app.opponentFuelExtraLaps==4 && fuelOk;
+        for(int kind:{RelativeKind,StandingsKind}) {
+            auto& o=First(kind); auto& t=o.table;
+            // Old saved orders gain the appended column without renumbering existing columns.
+            t.columnOrder=DefaultColumns[kind]; t.columnOrder.pop_back(); Save(); Load();
+            fuelOk=t.columnOrder==DefaultColumns[kind] && fuelOk;
+            SetColumnVisible(o,FuelColumn,false); const int before=OverlayWidth(o);
+            SetColumnVisible(o,FuelColumn,true); Save(); Load();
+            fuelOk=ColumnVisible(o,FuelColumn) && OverlayWidth(o)==before+ColumnWidth(o,FuelColumn) && fuelOk;
+            Row row; row.driver.index=0; Cell end{{},Ink::White}; CellRenderers[FuelColumn](row,o,end);
+            row.driver.index=4; Cell save{{},Ink::White}; CellRenderers[FuelColumn](row,o,save);
+            row.driver.index=6; Cell unknown{{},Ink::White}; CellRenderers[FuelColumn](row,o,unknown);
+            fuelOk=end.text==L"END" && end.box==Cell::Filled && end.boxColor==Ink::Green && save.text==L"SAVE" && save.boxColor==Ink::Yellow && unknown.text.empty() && unknown.box==Cell::Plain && fuelOk;
+            t.extraColumns.fill(false); t.extraColumns[FuelColumn-BrandColumn]=true;
+            t.driverColumns.fill(false); t.driverColumns[PitStopColumn-LicenseColumn]=true;
+            t.columnHeaders=true; t.best=t.last=false; t.interval=kind==StandingsKind;
+            t.columnOrder=kind==RelativeKind?std::vector<int>{PositionColumn,NumberColumn,DriverColumn,GapColumn,PitStopColumn,FuelColumn}:
+                std::vector<int>{PositionColumn,NumberColumn,DriverColumn,GapColumn,IntervalColumn,BestColumn,LastColumn,PitStopColumn,FuelColumn};
+            o.bands.header=false; o.bands.footer.enabled=true;
+            UpdateOverlays();
+            fuelOk=Export(o.window,L"build\\qa\\fuel-column-"+std::to_wstring(kind)+L".bmp") && fuelOk;
+            OpenOverlay(o);
+            const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr);
+            auto* rows=reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA));
+            bool found=false; if(rows) for(const auto& item:rows->Rows()) if(item.title==L"Fuel to finish") found=item.toggle==1;
+            fuelOk=found && Export(app.main,L"build\\qa\\fuel-column-settings-"+std::to_wstring(kind)+L".bmp") && fuelOk;
+            // Each overlay's switch remains independent.
+            SetColumnVisible(o,FuelColumn,false);
+        }
+        RestoreTables(savedTables); app.opponentFuelExtraLaps=savedExtra; Save(); UpdateOverlays();
+        report<<"Opponent fuel column: END/SAVE colors, blank unknowns, independent visibility, old order migration and shared saving setting: "<<(fuelOk?"PASS":"FAIL")<<"\n";
+        ok=fuelOk && ok;
+    }
+    {
         ShowPage(Page::Settings); UpdateWindow(app.main); ok=Export(app.main,L"build\\qa\\main-settings.bmp") && ok;
         bool pagesOk=ui.page==Page::Settings && ui.host.Content()!=nullptr;
         for(int kind=0;kind<OverlayCount;++kind) {
@@ -470,7 +561,7 @@ int RunDiagnostics() {
         auto& fuel=First(FuelKind); const int paired=BaseHeight(fuel);
         ok=MoveInOrder(fuel.fuel.order,WindowCard,1) && BaseHeight(fuel)==paired+92 && ok;
         MoveInOrder(fuel.fuel.order,TankModule,2); Load();
-        ok=First(FuelKind).fuel.order==std::vector<int>{HistoryModule,FiguresModule,TankModule,RefuelCard,TimelineModule,WindowCard,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow} && BaseHeight(First(FuelKind))==paired+92 && ok;
+        ok=First(FuelKind).fuel.order==std::vector<int>{LeaderDistanceModule,FiguresModule,TankModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,TimelineModule,WindowCard,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow} && BaseHeight(First(FuelKind))==paired+92 && ok;
         ok=Export(First(FuelKind).window,L"build\\qa\\fuel-reordered.bmp") && ok;
         auto& weather=First(WeatherKind); const int weatherHeight=BaseHeight(weather);
         ok=MoveInOrder(weather.weather.order,ConditionModule,3) && BaseHeight(weather)==weatherHeight && ok;
@@ -521,7 +612,7 @@ int RunDiagnostics() {
             ok=std::none_of(First(FuelKind).fuel.display.begin(),First(FuelKind).fuel.display.end(),[](bool value){return value;}) && ok;
             ok=Export(First(2).window,L"build\\qa\\fuel-compact.bmp") && ok;
             First(FuelKind).fuel.display.fill(true); SettingChanged();
-            ok=HeightWithTitle(First(2))==32+112+52+104+92+46+16+4*24 && BaseHeight(First(2))==HeightWithTitle(First(2)) && ok;
+            ok=HeightWithTitle(First(2))==32+112+52+104+92+46+16+4*24+2*30 && BaseHeight(First(2))==HeightWithTitle(First(2)) && ok;
             ok=Export(First(2).window,L"build\\qa\\fuel-all.bmp") && ok;
             First(FuelKind).fuel.strip=true; SettingChanged(); ok=Export(First(2).window,L"build\\qa\\fuel-strip.bmp") && ok;
             First(FuelKind).fuel.strip=false; SettingChanged();
@@ -553,6 +644,57 @@ int RunDiagnostics() {
     int chase=-1; for(int i=0;i<static_cast<int>(raceControl.cameras.size());++i) if(raceControl.cameras[i].name=="Far Chase") chase=i;
     SetRaceCamera(chase); ok=chase>=0 && RaceCameraGroup()==11 && ok;
     ok=Export(raceControl.window,L"build\\qa\\race-control.bmp") && ok;
+    {
+        bool splitOk=raceControl.splitter!=nullptr; const int savedSplit=raceControl.splitPermille;
+        RECT savedBounds{}; GetWindowRect(raceControl.window,&savedBounds);
+        const int dpi=GetDpiForWindow(raceControl.window); auto d=[&](int n){return MulDiv(n,dpi,96);};
+        auto bounds=[&](HWND window) { RECT area{}; GetWindowRect(window,&area); MapWindowPoints(nullptr,raceControl.window,reinterpret_cast<POINT*>(&area),2); return area; };
+        auto drag=[&](int target) {
+            RECT grip{}; GetClientRect(raceControl.splitter,&grip);
+            const int grab=grip.right/2;
+            SendMessageW(raceControl.splitter,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(grab,10));
+            splitOk=GetCapture()==raceControl.splitter && splitOk;
+            RECT client{}; GetClientRect(raceControl.window,&client);
+            POINT point{d(12)+MulDiv(client.right-3*d(12),target,1000)+grab,d(130)};
+            MapWindowPoints(raceControl.window,raceControl.splitter,&point,1);
+            SendMessageW(raceControl.splitter,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(point.x,point.y));
+            SendMessageW(raceControl.splitter,WM_LBUTTONUP,0,0);
+        };
+        const int originalWidth=ListView_GetColumnWidth(raceControl.standings,0);
+        ListView_SetColumnWidth(raceControl.standings,0,originalWidth+d(10));
+        const auto originalRows=raceControl.rows; const auto originalEvents=raceControl.events;
+        SetRaceSplit(560,false); drag(350);
+        splitOk=std::abs(raceControl.splitPermille-350)<=1 && GetCapture()!=raceControl.splitter && !raceControl.splitDragging && splitOk;
+        splitOk=ListView_GetColumnWidth(raceControl.standings,0)==originalWidth+d(10) && raceControl.rows.size()==originalRows.size() && raceControl.events.size()==originalEvents.size() && splitOk;
+        const int dragged=raceControl.splitPermille; LoadRaceFields(); splitOk=raceControl.splitPermille==dragged && splitOk;
+        CloseRaceControl(); OpenRaceControl(); splitOk=raceControl.splitPermille==dragged && splitOk;
+        ok=Export(raceControl.window,L"build\\qa\\race-control-split-35.bmp") && ok;
+        drag(700); splitOk=std::abs(raceControl.splitPermille-700)<=1 && splitOk;
+        ok=Export(raceControl.window,L"build\\qa\\race-control-split-70.bmp") && ok;
+        SendMessageW(raceControl.splitter,WM_LBUTTONDBLCLK,0,0); splitOk=raceControl.splitPermille==560 && splitOk;
+        SendMessageW(raceControl.splitter,WM_KEYDOWN,VK_LEFT,0); splitOk=raceControl.splitPermille==550 && splitOk;
+        SendMessageW(raceControl.splitter,WM_KEYDOWN,VK_HOME,0); splitOk=raceControl.splitPermille==560 && splitOk;
+        SendMessageW(raceControl.splitter,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(2,10));
+        SetRaceSplit(400,false); SendMessageW(raceControl.splitter,WM_KEYDOWN,VK_ESCAPE,0);
+        splitOk=raceControl.splitPermille==560 && GetCapture()!=raceControl.splitter && splitOk;
+        // Minimum window size, both drag limits and a visible car filter must keep the toolbar usable.
+        SetWindowPos(raceControl.window,nullptr,0,0,d(900),d(520),SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
+        SetRaceCarFilter(0);
+        for(int target:{100,900}) {
+            drag(target); const auto events=bounds(raceControl.feed), standings=bounds(raceControl.standings), separator=bounds(raceControl.splitter);
+            splitOk=events.right-events.left>=d(240)-1 && standings.right-standings.left>=d(240)-1 && events.right<=separator.left && separator.right<=standings.left && splitOk;
+            const auto filter=bounds(raceControl.filter.Handle()), camera=bounds(RaceItem(RaceCameraId)), pill=bounds(RaceItem(RaceCarPillId));
+            const auto count=bounds(RaceItem(RaceCountId)), only=bounds(RaceItem(RaceOnlyCarId));
+            splitOk=filter.right<=camera.left && pill.right<=count.left && count.right<=only.left && pill.bottom<=events.top && splitOk;
+            const auto replay=bounds(raceControl.replay.Handle()), selected=bounds(RaceItem(RaceSelectedId)), watch=bounds(RaceItem(RaceWatchId));
+            splitOk=replay.right<=selected.left && selected.right<=watch.left && splitOk;
+        }
+        ok=Export(raceControl.window,L"build\\qa\\race-control-split-narrow.bmp") && ok;
+        SetRaceCarFilter(-1); SetRaceSplit(savedSplit,true);
+        SetWindowPos(raceControl.window,nullptr,savedBounds.left,savedBounds.top,savedBounds.right-savedBounds.left,savedBounds.bottom-savedBounds.top,SWP_NOZORDER|SWP_NOACTIVATE);
+        report<<"Race Control splitter: mouse, persisted ratio and reopen, minimum widths, stable columns, toolbar wrapping, keyboard, reset and cancel: "<<(splitOk?"PASS":"FAIL")<<"\n";
+        ok=splitOk && ok;
+    }
     if(raceControl.events.size()>0) {
         ReplayRaceEvent(0,5); ok=!raceControl.pendingNumber.empty() && raceControl.pendingGroup==11 && ok;
         KillTimer(raceControl.window,1); raceControl.pendingNumber.clear();
@@ -633,6 +775,97 @@ int RunDiagnostics() {
         raceControl.sortColumn=-1; raceControl.eventSortColumn=2; raceControl.eventSortDescending=true; SaveRaceFields();
         SetRaceEventFilter(0);
         report<<"Race Control field visibility, numeric sorting, missing values, event sorting, car/type filters and replay for the filtered event: "<<(rcOk?"PASS":"FAIL")<<"\n"; ok=rcOk && ok;
+    }
+    {
+        bool extrasOk=true; const auto savedFields=raceControl.fields; const auto savedEvents=raceControl.eventFields;
+        const auto savedInfo=raceControl.info; const auto savedSession=app.session; const auto savedFrame=app.frame;
+        const int savedSplit=raceControl.splitPermille;
+        const int savedSort=raceControl.sortColumn, savedEventSort=raceControl.eventSortColumn;
+        const bool savedDescending=raceControl.sortDescending, savedEventDescending=raceControl.eventSortDescending;
+        // Old configurations enable none of the newly added options.
+        for(int i=RaceFuelField;i<RaceFieldCount;++i) WritePrivateProfileStringW(L"RaceControl",(L"Field"+std::to_wstring(i)).c_str(),nullptr,app.config.c_str());
+        WritePrivateProfileStringW(L"RaceControl",L"EventField7",nullptr,app.config.c_str());
+        for(const auto key:RaceInfoKeys) WritePrivateProfileStringW(L"RaceControl",key,nullptr,app.config.c_str());
+        LoadRaceFields();
+        for(int i=RaceFuelField;i<RaceFieldCount;++i) extrasOk=!raceControl.fields[i] && extrasOk;
+        extrasOk=!raceControl.eventFields[RaceEventLapField] && !raceControl.info[0] && !raceControl.info[1] && extrasOk;
+        // Disabled extras do not request the shared fuel or rating calculations.
+        raceControl.fields.fill(false); raceControl.fields[0]=raceControl.fields[1]=raceControl.fields[2]=true; raceControl.sortColumn=-1;
+        InvalidateModel(); app.ratingVersion=app.opponentFuelVersion=~app.modelVersion;
+        UpdateRaceControl(true);
+        extrasOk=app.ratingVersion!=app.modelVersion && app.opponentFuelVersion!=app.modelVersion && extrasOk;
+        for(int i=RaceFuelField;i<RaceFieldCount;++i) SetRaceField(false,i,true);
+        SetRaceField(true,RaceEventLapField,true);
+        SetRaceInfo(RaceLeaderDistanceInfo,true); SetRaceInfo(RaceWhiteFlagInfo,true);
+        SaveRaceFields(); LoadRaceFields();
+        for(int i=RaceFuelField;i<RaceFieldCount;++i) extrasOk=raceControl.fields[i] && extrasOk;
+        extrasOk=raceControl.eventFields[RaceEventLapField] && raceControl.info[0] && raceControl.info[1] && extrasOk;
+        ShowRaceControlPage();
+        const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr);
+        auto* settings=reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA));
+        int switches=0; if(settings) for(const auto& row:settings->Rows()) if(row.toggle>=0) ++switches;
+        extrasOk=switches==RaceFieldCount+RaceEventFieldCount-FirstEventField+RaceInfoCount+1 && extrasOk;
+        Export(app.main,L"build\\qa\\race-control-extra-settings.bmp"); ShowPage(Page::Overlays);
+        Row leader{app.session.drivers[0],app.frame.cars[0]}, saver{app.session.drivers[4],app.frame.cars[4]}, unknown{app.session.drivers[6],app.frame.cars[6]};
+        extrasOk=RaceStandingCell(leader,RaceFuelField)==L"END" && RaceStandingCell(saver,RaceFuelField)==L"SAVE" && RaceStandingCell(unknown,RaceFuelField).empty() && extrasOk;
+        Cell overlay{{},Ink::White}; CellRenderers[FuelColumn](leader,First(RelativeKind),overlay);
+        extrasOk=overlay.text==RaceStandingCell(leader,RaceFuelField) && extrasOk;
+        leader.car.stintLaps=10; saver.car.stintLaps=2; unknown.car.stintLaps=-1;
+        leader.car.stops=10; saver.car.stops=2; unknown.car.stops=-1;
+        leader.driver.brand="BMW"; saver.driver.brand="Audi"; unknown.driver.brand.clear();
+        app.ratingChanges.fill(NoRatingChange); app.ratingVersion=app.modelVersion;
+        app.ratingChanges[leader.driver.index]=12; app.ratingChanges[saver.driver.index]=-10;
+        extrasOk=RaceStandingCell(leader,RaceRatingChangeField)==L"+12" && RaceStandingCell(saver,RaceRatingChangeField)==L"-10" && RaceStandingCell(unknown,RaceRatingChangeField)==L"\u2014" && extrasOk;
+        extrasOk=RaceStandingCell(leader,RaceStintTimeField)==L"23:14" && RaceStandingCell(unknown,RaceStintTimeField)==L"\u2014" && extrasOk;
+        extrasOk=RaceStandingCell(leader,RaceStopsField)==L"10" && RaceStandingCell(unknown,RaceStopsField)==L"\u2014" && extrasOk;
+        for(int column:{RaceFuelField,RaceStintLapsField,RaceStintTimeField,RaceStopsField,RaceRatingChangeField,RaceBrandField}) {
+            raceControl.sortColumn=column;
+            for(bool descending:{false,true}) {
+                raceControl.sortDescending=descending; std::vector<Row> rows{unknown,saver,leader}; SortRaceRows(rows);
+                const bool leaderFirst=column==RaceFuelField?!descending:descending;
+                extrasOk=rows.back().driver.index==unknown.driver.index && rows.front().driver.index==(leaderFirst?leader.driver.index:saver.driver.index) && extrasOk;
+            }
+        }
+        raceControl.sortColumn=-1;
+        // A live stint timer uses an observed timestamp; unknown, pit and replay stay unavailable.
+        app.preview=false; app.frame.time=500; leader.car.stintStartTime=400;
+        extrasOk=RaceStandingCell(leader,RaceStintTimeField)==L"1:40" && extrasOk;
+        leader.car.stintStartTime=-1; extrasOk=RaceStandingCell(leader,RaceStintTimeField)==L"\u2014" && extrasOk;
+        leader.car.stintStartTime=400; leader.car.pit=true; extrasOk=RaceStandingCell(leader,RaceStintTimeField)==L"\u2014" && extrasOk; leader.car.pit=false;
+        app.frame.replay=true; extrasOk=RaceStandingCell(leader,RaceStintTimeField)==L"\u2014" && extrasOk;
+        app.preview=true; app.frame=savedFrame; InvalidateModel();
+        for(bool descending:{false,true}) {
+            std::vector<RaceEvent> events(3); events[0].lap=-1; events[1].lap=2; events[2].lap=10;
+            raceControl.eventSortColumn=RaceEventLapField; raceControl.eventSortDescending=descending; SortRaceEvents(events);
+            extrasOk=events.back().lap==-1 && events.front().lap==(descending?10:2) && extrasOk;
+        }
+        SetRaceSort(true,RaceEventLapField,0); SaveRaceFields(); LoadRaceFields();
+        extrasOk=raceControl.eventSortColumn==RaceEventLapField && extrasOk;
+        const int lapColumn=static_cast<int>(std::find(raceControl.feedColumns.begin(),raceControl.feedColumns.end(),RaceEventLapField)-raceControl.feedColumns.begin());
+        wchar_t lapText[32]{}; NMLVDISPINFOW item{}; item.hdr.hwndFrom=raceControl.feed; item.hdr.code=LVN_GETDISPINFOW;
+        item.item.mask=LVIF_TEXT; item.item.iItem=0; item.item.iSubItem=lapColumn; item.item.pszText=lapText; item.item.cchTextMax=32;
+        SendMessageW(raceControl.window,WM_NOTIFY,RaceFeedId,reinterpret_cast<LPARAM>(&item));
+        extrasOk=std::wstring(lapText)==L"4" && extrasOk;
+        auto infoText=[] { wchar_t text[512]{}; GetWindowTextW(RaceItem(RaceInfoId),text,512); return std::wstring(text); };
+        UpdateRaceControl(true); RECT withInfo{}; GetWindowRect(raceControl.feed,&withInfo);
+        extrasOk=IsWindowVisible(RaceItem(RaceInfoId)) && infoText().find(LeaderDistanceValue())!=std::wstring::npos && infoText().find(WhiteFlagTimeValue())!=std::wstring::npos && extrasOk;
+        SetRaceInfo(RaceLeaderDistanceInfo,false);
+        extrasOk=infoText().find(L"Leader projection")==std::wstring::npos && infoText().find(L"Clock at leader")==0 && extrasOk;
+        SetRaceInfo(RaceWhiteFlagInfo,false); RECT withoutInfo{}; GetWindowRect(raceControl.feed,&withoutInfo);
+        extrasOk=!IsWindowVisible(RaceItem(RaceInfoId)) && withInfo.top-withoutInfo.top==MulDiv(30,GetDpiForWindow(raceControl.window),96) && extrasOk;
+        SetRaceInfo(RaceLeaderDistanceInfo,true); SetRaceInfo(RaceWhiteFlagInfo,true); SetRaceSplit(270,true);
+        CloseRaceControl(); OpenRaceControl();
+        extrasOk=raceControl.info[0] && raceControl.info[1] && raceControl.fields[RaceFuelField] && raceControl.eventFields[RaceEventLapField] && extrasOk;
+        Export(raceControl.window,L"build\\qa\\race-control-extra-fields.bmp");
+        SetRaceField(false,RaceStopsField,false);
+        extrasOk=std::find(raceControl.columns.begin(),raceControl.columns.end(),RaceStopsField)==raceControl.columns.end() && raceControl.fields[RaceFuelField] && extrasOk;
+        SetRaceField(true,RaceEventLapField,false); extrasOk=raceControl.eventSortColumn==FirstEventField && extrasOk;
+        app.session=savedSession; app.frame=savedFrame; InvalidateModel();
+        raceControl.fields=savedFields; raceControl.eventFields=savedEvents; raceControl.info=savedInfo;
+        raceControl.sortColumn=savedSort; raceControl.sortDescending=savedDescending; raceControl.eventSortColumn=savedEventSort; raceControl.eventSortDescending=savedEventDescending;
+        SetRaceSplit(savedSplit,false); SaveRaceFields(); LayoutRaceControl(); UpdateRaceControl(true);
+        report<<"Race Control extras: defaults off, independent settings, shared fuel badges and cache, stint time, signed rating, numeric/missing sorting, event lap, optional forecasts and persistence: "<<(extrasOk?"PASS":"FAIL")<<"\n";
+        ok=extrasOk && ok;
     }
     // Kept apart from ok, which later checks reuse for their own line; folded in at the end.
     bool listOk=true;

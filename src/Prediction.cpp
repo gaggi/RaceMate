@@ -44,7 +44,7 @@ struct Candidate {
         return completed+1+(driving-First())/pace;
     }
 };
-FinishScenario Finish(const std::vector<Candidate>& cars,int leader,int player,double expiry,int lapLimit) {
+FinishScenario Finish(const std::vector<Candidate>& cars,int leader,int player,double expiry,int lapLimit,std::array<double,MaxCars>& finishTimes) {
     FinishScenario result;
     if(cars.empty()) return result;
     double target=-1;
@@ -64,13 +64,13 @@ FinishScenario Finish(const std::vector<Candidate>& cars,int leader,int player,d
     }
     result.valid=true; result.raceFinishIn=finish;
     for(const auto& car:cars) {
-        if(car.index!=player && car.index!=leader) continue;
         // Project each car independently to the overall winner's flag time. Using
         // the leader's lap count (or subtracting only the current lap deficit)
         // would overestimate fuel for slower classes that will be lapped again.
         double goal=std::max(static_cast<double>(car.completed)+1,std::ceil(car.At(finish)-Epsilon));
         // A pause exactly on a line can hold progress at an already completed crossing.
         if(car.Arrival(goal)<finish-Epsilon) ++goal;
+        finishTimes[car.index]=car.Arrival(goal);
         if(car.index==leader) { result.leaderTotalDistance=expiry>=0?car.At(std::min(expiry,finish)):goal; result.leaderDistance=goal-car.Progress(); result.leaderFinishIn=car.Arrival(goal); result.leaderCrossings=static_cast<int>(goal)-car.completed; }
         if(car.index!=player) continue;
         result.ownCrossings=static_cast<int>(goal)-car.completed;
@@ -177,10 +177,31 @@ RacePrediction RacePredictor::Predict(const Session& s,const Frame& f) const {
     p.leaderPace=leader->pace;
     const bool timed=(f.timeLeftKnown || f.timeLeft>=0) && std::isfinite(f.timeLeft) && f.timeLeft<604800;
     const double expiry=timed?std::max(0.0,f.timeLeft):-1;
-    p.finish=Finish(cars,p.leader,f.player,expiry,s.totalLaps);
+    p.finish=Finish(cars,p.leader,f.player,expiry,s.totalLaps,p.carFinishIn);
     if(!p.finish.valid) { p.status=PredictionStatus::Waiting; return p; }
     if(timed && p.finish.leaderDistance>=0) p.finish.finalLapTimeLeft=f.timeLeft-(p.finish.leaderFinishIn-leader->pace);
     p.status=own==cars.end()?PredictionStatus::MissingPace:PredictionStatus::Racing;
     return p;
+}
+OpponentFuelStatus OpponentFuel(const Session& s,const Frame& f,const FuelPlan& plan,int index,int extraLaps) {
+    const auto none=OpponentFuelStatus::None;
+    if(!f.connected || View(f)==ViewMode::Replay || s.type!="Race" || f.state!=4 ||
+       index<0 || index>=MaxCars || index==f.player || f.player<0 || f.player>=MaxCars ||
+       plan.prediction.status!=PredictionStatus::Racing || !plan.prediction.finish.valid) return none;
+    const auto own=std::find_if(s.drivers.begin(),s.drivers.end(),[&](const Driver& d){ return d.index==f.player; });
+    const auto driver=std::find_if(s.drivers.begin(),s.drivers.end(),[&](const Driver& d){ return d.index==index; });
+    if(own==s.drivers.end() || driver==s.drivers.end() || own->classId<=0 || driver->classId!=own->classId || driver->paceCar || driver->spectator) return none;
+    const auto& car=f.cars[index]; const auto& estimate=plan.estimates[static_cast<int>(FuelMetric::Average10)];
+    const double pace=plan.prediction.ownPace, remaining=plan.prediction.carFinishIn[index];
+    if(car.pit || car.towing || car.surface<0 || !std::isfinite(car.fuelStintStart) || car.fuelStintStart<0 || car.fuelStintStart>f.time ||
+       !std::isfinite(f.time) || !PaceTime(pace) || !std::isfinite(remaining) || remaining<=0 ||
+       !std::isfinite(s.fuelCapacity) || s.fuelCapacity<=0 || estimate.samples<3 || !std::isfinite(estimate.consumption) || estimate.consumption<=0) return none;
+    // Convert our full-tank range and the configurable lap tolerance to seconds.
+    // Green uses the normal range; only yellow may use the configurable saving tolerance.
+    const double reserve=s.fuelCapacity/estimate.consumption*pace-(f.time-car.fuelStintStart)-remaining;
+    if(!std::isfinite(reserve)) return none;
+    if(reserve>=-Epsilon) return OpponentFuelStatus::End;
+    if(reserve>=-std::clamp(extraLaps,0,10)*pace-Epsilon) return OpponentFuelStatus::Save;
+    return none;
 }
 }

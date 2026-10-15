@@ -49,12 +49,18 @@ Separate class sections or one combined order, optionally only the reference car
 
 ### Header and footer
 
-Relative, Standings, Fuel Calculator and Weather each have a header and a footer with up to four metrics, switched and chosen on the overlay's page. Footers are off by default. Fuel Calculator's header shows its name, current and expected final lap and the stops needed as a colored pill; Weather's shows its name and **DECLARED WET** while rain tires are allowed. The **Title bar** setting switches all headers at once.
+Every overlay, including Pit Limiter, has an optional header and footer with up to four metrics, switched and chosen on the overlay's page. **All headers and footers offer the same metric list.** Footers are off by default; Pit Limiter also starts without a header. Fuel Calculator's header shows its name, current and expected final lap and the stops needed as a colored pill; Weather's shows its name and **DECLARED WET** while rain tires are allowed. The **Title bar** setting switches all headers at once.
+
+Two overall-leader forecasts are available everywhere: **Leader projected race distance**, for example `~19.08 laps` at time expiry (at the finish for lap-limited races), and **Time left at leader's final lap**, for example `~13 s` or `~1:13` on the race clock when that leader is projected to start the final lap. They always refer to the overall leader, even when watching another car, and work before fuel consumption is learned. They are forecasts at the observed pace, not a report of an actual white flag. Missing data shows `—`. The existing **Current / Expected Final Lap** and **Estimated Laps Remaining** still refer to your car or the watched car. **Stops Needed (your car)** uses your fuel data.
+
+**Current lap / Leader projected distance** combines your current lap (or the watched car's lap) with the overall leader's fractional projection, for example `Lap 8 / ~19.12`. It is a separate choice in every header and footer; **Current / Expected Final Lap** keeps the rounded finishing lap for your own or the watched car.
 
 ### Columns (Relative and Standings)
 
 Both overlays offer the same options, configured separately.
 
+- **Fuel to finish (FUEL)** is an optional, reorderable column. Green **END** means your normal full-tank range is sufficient; yellow **SAVE** means finishing requires up to the **Additional laps with fuel saving** set in Settings (shared by both overlays, 0–10, default **+3 laps**). The extra laps are converted to time using your pace and apply only to SAVE. Blank means insufficient range or unavailable data, including other classes and your own car.
+- Opponent fuel is a forecast, not measured fuel: it assumes a full tank at an observed race start or the exit of a completely observed service stop (at least two stationary seconds). It uses your restricted tank capacity, the average of at least three clean consumption samples and your pace to estimate a full-tank duration, subtracts elapsed stint time and compares with that opponent's projected finish time after the overall leader's flag. Drive-throughs, tows, telemetry gaps, replays and unobserved starts cannot establish a refill. No separate yellow-phase adjustment is applied. Different tanks, consumption or partial fills within the same class can still make the estimate optimistic.
 
 - The **status badge** after the driver's name shows one value, by priority: PIT > TOW > BLACK/DQ > REPAIR > SLOW > OUT. OUT lasts from an observed pit exit to the next line crossing. TOW uses the SDK for your car and is inferred for others from a direct return to the pit stall.
 - Optional: car brand as logo and/or name (the initial for brands without a logo), tires as a ring with D (dry), W (wet) or the compound's initial, iRating (both with a short view), **iRating change** (estimated as if the race ended in the current class order), **laps since stop** (L12; L- until a stop or the start was seen), last pit lap, pit lane time and **PIT STOP** (estimated stationary time in the stall, marked ≈). A last lap equal to the car's best is green.
@@ -69,10 +75,13 @@ RaceMate learns consumption between line crossings. Only whole laps at racing sp
 - **Tank**: fuel, range in laps and a bar of the tank with the fuel missing to the finish (hatched) and the finish mark.
 - **Consumption**: last lap, averages of 3, 10 and 5 laps, race average, minimum and maximum, each with its own switch.
 - **Last 10 laps**: every whole lap's fuel against the 10-lap average; caution laps can be marked.
+- **Leader projected race distance** and **Time left at leader's final lap**: separate, reorderable modules in both Panel and Strip, also selectable in every overlay's header/footer. Fractional total leader laps (`~19.08`) are distinct from your rounded finishing lap (`~20`).
 - **Refuel to finish** (without a safety margin; green when it fits in the tank) and **pit window** (earliest and latest lap); side by side while they follow each other in the module order.
 - **Pit window timeline**: one block per lap of a full-tank stint, current lap yellow, window green, with the fuel to add at the next stop.
 - **Targets**: the most fuel per lap that still reaches the latest stop (or the finish without a stop), and the same for one lap longer, two laps longer or one lap shorter.
 - The finish forecast projects the overall leader to the flag and then your own first crossing after it, using observed pace and track position. Lapping by faster classes is included; future pit stops are not.
+
+RaceMate cannot determine another car's remaining fuel from the telemetry it reads. A leader's current pit visit already contributes an estimated remaining pit loss, but a future stop must be treated as an assumption. A stop longer than a 13-second final-lap margin can remove the extra lap for that leader; another contender can still keep the race at the longer distance. See [the proposed leader-stop scenarios](docs/leader-stop-scenarios.md).
 - The arrows on the overlay's page order the modules; adjacent target rows share one band.
 - Layout **Panel** shows the modules one under the other; **Strip** shows tank, range, average, refuel, latest stop and targets in one line, in the same order. Modules the strip leaves out are marked **Panel only** on the page.
 - An average over fewer laps than its name shows how many it has so far, e.g. **AVG 10 (3)**, in gray.
@@ -93,6 +102,12 @@ Modules, each with its own switch and ordered with the arrows on the overlay's p
 ## Race Control
 
 A normal resizable window (Race Control page or tray menu) with full standings and an event feed: offtracks, incidents, possible crashes, pit entries and stops, black flags and estimated overtakes. Up to 2,000 events are kept for the current session.
+
+Events stay on the left and standings on the right. Drag the divider between the tables to change their width ratio; it is saved across restarts. Both tables retain a minimum width. Double-click the divider (or focus it and press Home) to restore the original 56/44 split; Left/Right also adjusts it. Filters and replay controls remain reachable independently of the split.
+
+The Race Control page independently switches **Fuel to finish** (the same green END / yellow SAVE as the overlays, including the shared default +3 saving laps), **laps since stop**, **stint time**, **pit stops**, **iRating change** and **car brand**. Stint time runs from an observed race start or pit exit; it is unavailable in the pits, replay or after a telemetry gap. Other unavailable values show a dash; an unavailable fuel forecast stays blank. Every new column starts disabled and supports sorting, with unknown values last.
+
+**Event lap** adds the recorded lap beside each event's timestamp and sorts numerically. Under **Race information above the tables**, the leader's projected fractional race distance and the clock at the start of the projected final lap can each be switched on. These use the same forecast as the overlays and work in Preview. The extra row only takes space when at least one value is enabled. All choices survive closing and restarting Race Control. Optional fuel and iRating calculations share the overlays' cached results and are only requested when shown.
 
 - The banner at the top shows whether you are watching live or a replay (with the replay clock); **Go live** returns to live.
 - **All / Incidents / Pit / Passes** filters the event feed. **Events of this car** (or **F**) shows only the selected driver's events; the pill next to the filter clears it.

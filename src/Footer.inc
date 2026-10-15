@@ -27,6 +27,18 @@ struct MetricText {
     MetricText(std::wstring label,std::wstring value,std::wstring label2={},std::wstring value2={}) : parts{std::move(label),std::move(value),std::move(label2),std::move(value2)} {}
     std::wstring Text() const { return parts[0]+parts[1]+parts[2]+parts[3]; }
 };
+// Overall-leader values do not follow the watched car and need no fuel samples.
+std::wstring LeaderDistanceValue() {
+    const auto& p=Plan().prediction;
+    return p.finish.valid && std::isfinite(p.finish.leaderTotalDistance) && p.finish.leaderTotalDistance>=0
+        ?L"~"+Format(p.finish.leaderTotalDistance,2):L"—";
+}
+std::wstring WhiteFlagTimeValue() {
+    const auto& p=Plan().prediction; const double seconds=p.finish.finalLapTimeLeft;
+    if(!p.finish.valid || !std::isfinite(seconds) || seconds<0 || seconds>=604800) return L"—";
+    const int rounded=static_cast<int>(std::lround(seconds));
+    return L"~"+(rounded<60?std::to_wstring(rounded)+L" s":FooterDuration(rounded));
+}
 MetricText Metric(int metric,const Overlay* o=nullptr) {
     if(metric==OverlayNameMetric) return o?Name(*o):std::wstring(L"—");
     if(metric==NoMetric) return {};
@@ -53,7 +65,10 @@ MetricText Metric(int metric,const Overlay* o=nullptr) {
     case TemperaturesMetric: return {L"Air ",FooterTemperature(f.airTemperature),L" · Track ",FooterTemperature(f.trackTemperature)};
     case TimeRemainingMetric: return {L"Left ",FooterDuration(f.timeLeftKnown?f.timeLeft:-1)};
     case TimeElapsedMetric: return {L"Elapsed ",FooterDuration(f.time)};
+    case LeaderDistanceMetric: return {L"Leader ",LeaderDistanceValue(),L" laps"};
+    case WhiteFlagTimeMetric: return {L"Final lap ",WhiteFlagTimeValue()};
     case CurrentLapMetric: return {L"Lap ",current>0?std::to_wstring(current):L"—"};
+    case LapLeaderDistanceMetric: return {L"Lap ",current>0?std::to_wstring(current):L"—",L" / ",LeaderDistanceValue()};
     case FinalLapMetric: case LapsRemainingMetric: {
         double distance=Plan().lapsToFinish;
         double progress=f.lapCompleted>=0?f.lapCompleted+f.lapPct:-1;

@@ -56,6 +56,9 @@ struct Car {
     double speed = -1, lastPitStationary = -1, pitStationary = -1;
     // Laps since the last pit exit and stops in this race; -1 while unknown (not watched since the start nor seen leaving the pits).
     int stintLaps = -1, stops = -1;
+    // Time of an observed race start or serviced pit exit; unknown after lost telemetry.
+    double fuelStintStart = -1;
+    double stintStartTime = -1; // Observed race start or pit exit, independently of a refill.
 };
 struct Frame {
     bool connected = false, onTrack = false, pit = false, inStall = false, replay = false;
@@ -114,9 +117,11 @@ private:
     struct Visit { bool seen=false, pit=false, complete=false, out=false, tow=false; int outLap=-1, outCompleted=-1; double pct=-1; double entry=-1; int lap=-1, lastLap=-1; double duration=-1;
         int surface=-1; bool stopValid=false; double stopped=0, stillRun=0, lastStopped=-1;
         bool known=false; int stintStart=-1, stops=-1;
+        double fuelStart=-1, stintTime=-1; int completed=-1; bool fuelVisit=false;
     };
     std::array<Visit,MaxCars> visits_{};
     std::string key_; int session_=-1; double time_=-1;
+    int state_=-1;
 };
 int ReferenceCar(const Frame&);
 // What the user is watching. IsReplayPlaying alone cannot tell: it is also set while
@@ -169,6 +174,7 @@ struct RacePrediction {
     FinishScenario finish;
     int leader = -1;
     double leaderPace = -1, ownPace = -1;
+    std::array<double,MaxCars> carFinishIn = [] { std::array<double,MaxCars> values; values.fill(-1); return values; }();
 };
 class RacePredictor {
 public:
@@ -202,6 +208,9 @@ struct FuelPlan {
     std::array<FuelLap, 10> history{}; int historyCount = 0; // Oldest first.
     RacePrediction prediction;
 };
+enum class OpponentFuelStatus { None, End, Save };
+// Own-class estimate: a full tank at the last observed stop, using own consumption and pace.
+OpponentFuelStatus OpponentFuel(const Session&, const Frame&, const FuelPlan&, int car, int extraLaps);
 class FuelCalculator {
 public:
     void Reset();

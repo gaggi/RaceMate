@@ -179,6 +179,23 @@ void TimedTests() {
     // A car in the pit lane carries the assumed pit loss until its own stop has been measured.
     f=RacingFrame(); f.cars[0].pit=true;
     Near(calculator.Predict(s,f).finish.leaderTotalDistance,22.01-.45,"active pit visit delays the leader by the assumed loss");
+    // Fractional leader distance and the clock at the final-lap start are distinct
+    // from the player's rounded finishing lap and need no consumption samples.
+    f=RacingFrame(); f.timeLeft=1316.25;
+    f.cars[0].best=f.cars[0].last=162.5; f.cars[0].estTime=f.cars[0].pct*162.5;
+    f.lastLap=f.bestLap=f.cars[1].last=f.cars[1].best=180; f.cars[1].estTime=f.cars[1].pct*180;
+    p=calculator.Predict(s,f);
+    Near(p.finish.leaderTotalDistance,19.08,"19.08 leader laps at expiry are not rounded to the own final lap");
+    Near(p.finish.finalLapTimeLeft,13,"leader starts the projected final lap with thirteen seconds on the race clock");
+    Near(p.finish.leaderDistance,9.02,"leader remaining distance to the flag differs from total progress at expiry");
+    f.cars[0].pit=true; p=calculator.Predict(s,f);
+    Require(p.finish.valid && p.finish.leaderTotalDistance<19,"a leader's active pit loss can remove the twentieth race lap");
+    s.drivers.push_back({2,1,2100,0xffcc44,false,false,"Challenger","13","GT3"});
+    Progress(f.cars[2],10.92); f.cars[2].position=2; f.cars[1].position=3;
+    f.cars[2].best=f.cars[2].last=162.5; f.cars[2].estTime=f.cars[2].pct*162.5;
+    p=calculator.Predict(s,f);
+    Require(p.finish.winner==2 && p.finish.raceFinishIn>f.timeLeft,"another contender can preserve the extra lap when the old leader pits");
+    Near(10.92+p.finish.raceFinishIn/162.5,20,"leader pit loss alone must not automatically cut a lap for the whole race");
 }
 void LeaderChangeTests() {
     auto s=Race(); auto f=RacingFrame();
@@ -319,5 +336,85 @@ void FuelForecastTests() {
     Require(fuel.Plan(f,&missing).estimates[1].add<0,"missing prediction never falls back to the obsolete time-plus-one rule");
     f.replay=true; Require(fuel.Plan(f,&forecast).estimates[1].add<0,"no refuel amount in replay");
 }
+void OpponentFuelTests() {
+    auto s=Race(); auto f=RacingFrame(); s.drivers[1].classId=1; s.fuelCapacity=60;
+    f.cars[0].fuelStintStart=1000;
+    FuelPlan plan; plan.prediction.status=PredictionStatus::Racing; plan.prediction.finish.valid=true;
+    plan.prediction.ownPace=100; plan.prediction.carFinishIn[0]=1700;
+    plan.estimates[static_cast<int>(FuelMetric::Average10)]={3,-1,3};
+    auto status=[&](int extra=1) { return OpponentFuel(s,f,plan,0,extra); };
+    Require(status()==OpponentFuelStatus::End,"normal full-tank time budget reaches the finish");
+    plan.prediction.carFinishIn[0]=1701;
+    Require(status()==OpponentFuelStatus::End,"green does not require an additional reserve lap");
+    plan.prediction.carFinishIn[0]=2000;
+    Require(status(2)==OpponentFuelStatus::Save && status()==OpponentFuelStatus::None,"additional saving laps extend only the yellow time budget");
+    plan.prediction.carFinishIn[0]=2001; Require(status(2)==OpponentFuelStatus::None,"beyond saving tolerance stays blank");
+    plan.prediction.carFinishIn[0]=1800;
+    Require(status(0)==OpponentFuelStatus::End,"exact normal range is green even with saving disabled");
+    plan.prediction.carFinishIn[0]=1900;
+    Require(status(1)==OpponentFuelStatus::Save && status(0)==OpponentFuelStatus::None,"plus one lap is yellow only and zero saving disables yellow");
+    // Long circuits convert a lap of tolerance to more time; absolute race lap numbers do not enter the budget.
+    plan.prediction.ownPace=600; plan.prediction.carFinishIn[0]=12400; s.trackMeters=24000;
+    Require(status(1)==OpponentFuelStatus::Save,"Nordschleife tolerance is converted to 600 seconds");
+    plan.prediction.ownPace=40; s.trackMeters=900;
+    Require(status(1)==OpponentFuelStatus::None,"short circuit tolerance cannot cover a long time deficit");
+    plan.prediction.ownPace=100; plan.prediction.carFinishIn[0]=1500;
+    f.cars[0].fuelStintStart=-1; Require(status()==OpponentFuelStatus::None,"late join cannot assume unseen refuel"); f.cars[0].fuelStintStart=1000;
+    f.cars[0].pit=true; Require(status()==OpponentFuelStatus::None,"pit visits hide the old stint forecast"); f.cars[0].pit=false;
+    f.cars[0].towing=true; Require(status()==OpponentFuelStatus::None,"towed car has no fuel badge"); f.cars[0].towing=false;
+    s.drivers[0].classId=2; Require(status()==OpponentFuelStatus::None,"another class stays blank"); s.drivers[0].classId=1;
+    Require(OpponentFuel(s,f,plan,f.player,2)==OpponentFuelStatus::None,"own car uses its actual fuel calculator instead");
+    f.onTrack=false; f.camera=0; Require(status()==OpponentFuelStatus::End,"watching another car still uses the actual player's class and fuel data"); f.onTrack=true;
+    f.replay=true; Require(status()==OpponentFuelStatus::None,"no badge in replay"); f.replay=false;
+    f.state=5; Require(status()==OpponentFuelStatus::None,"no stale badge after the flag"); f.state=4;
+    f.connected=false; Require(status()==OpponentFuelStatus::None,"no badge disconnected"); f.connected=true;
+    s.type="Practice"; Require(status()==OpponentFuelStatus::None,"no badge outside races"); s.type="Race";
+    auto& estimate=plan.estimates[static_cast<int>(FuelMetric::Average10)];
+    estimate.samples=2; Require(status()==OpponentFuelStatus::None,"wait for three clean fuel samples"); estimate.samples=3;
+    estimate.consumption=std::numeric_limits<double>::quiet_NaN(); Require(status()==OpponentFuelStatus::None,"invalid consumption stays blank"); estimate.consumption=3;
+    s.fuelCapacity=-1; Require(status()==OpponentFuelStatus::None,"unknown capacity stays blank"); s.fuelCapacity=60;
+    plan.prediction.carFinishIn[0]=-1; Require(status()==OpponentFuelStatus::None,"missing per-car finish time stays blank");
+
+    // Forecast all entrants at their own first crossing after the overall flag, including lapped cars.
+    f=RacingFrame(); s=Race(); s.drivers.push_back({2,2}); Progress(f.cars[2],7.25); f.cars[2].position=3;
+    RacePredictor predictor; predictor.Update(s,f); const auto prediction=predictor.Predict(s,f);
+    Near(prediction.carFinishIn[0],prediction.finish.leaderFinishIn,"leader per-car finish matches leader forecast");
+    Near(prediction.carFinishIn[1],prediction.finish.ownFinishIn,"player per-car finish matches own forecast");
+    Near(prediction.carFinishIn[2],1275,"lapped opponent runs to its first crossing after the overall flag");
+
+    PitHistory history; f=RacingFrame(); auto& car=f.cars[0]; history.Update(s,f);
+    Require(car.fuelStintStart<0,"joining mid-race has no fuel anchor");
+    Require(car.stintStartTime<0,"joining mid-stint cannot invent its elapsed time");
+    auto sample=[&](double seconds) { f.time+=seconds; history.Update(s,f); };
+    auto stop=[&] {
+        car.pit=true; car.surface=2; car.speed=20; sample(.5);
+        car.surface=1; car.speed=0; sample(.5);
+        for(int i=0;i<5;++i) sample(.5);
+        car.surface=2; car.speed=20; sample(.5);
+        car.pit=false; car.surface=3; sample(.5);
+    };
+    stop(); Near(car.fuelStintStart,f.time,"complete observed service stop anchors a full-tank assumption");
+    Near(car.stintStartTime,f.time,"observed pit exit starts the stint clock");
+    const double anchor=car.fuelStintStart; sample(.5); Near(car.fuelStintStart,anchor,"driving retains original fuel anchor");
+    car.pit=true; car.surface=2; sample(.5); car.pit=false; car.surface=3; sample(.5);
+    Require(car.fuelStintStart<0,"drive-through does not imply a new full tank");
+    Near(car.stintStartTime,f.time,"drive-through exit starts the same stint clock as the existing lap counter");
+    stop(); sample(6); Require(car.fuelStintStart<0,"telemetry gaps invalidate unseen fuel history");
+    Require(car.stintStartTime<0,"telemetry gaps also invalidate the stint clock");
+    stop(); car.surface=-1; sample(.5); car.surface=3; sample(.5); Require(car.fuelStintStart<0,"missing car invalidates fuel anchor");
+    stop(); car.towingKnown=car.towing=true; sample(.5); car.towing=false; sample(.5); Require(car.fuelStintStart<0,"tow does not revive the previous fuel anchor");
+    car.pit=true; car.surface=2; sample(.5); car.surface=1; car.speed=0; car.towing=true; sample(.5);
+    car.towing=false; for(int i=0;i<5;++i) sample(.5); car.surface=2; sample(.5); car.pit=false; car.surface=3; sample(.5);
+    Require(car.fuelStintStart<0,"a serviced tow visit cannot create a full tank assumption");
+    stop(); f.replay=true; sample(.5); f.replay=false; sample(.5); Require(car.fuelStintStart<0,"replay invalidates the fuel anchor");
+    stop(); ++f.session; sample(.5); Require(car.fuelStintStart<0,"session change discards fuel anchor");
+    history.Reset(); f=RacingFrame(); f.state=3; Progress(f.cars[0],0); history.Update(s,f); f.state=4; sample(.5);
+    Near(f.cars[0].fuelStintStart,f.time,"observed start anchors the initial full-tank assumption");
+    Near(f.cars[0].stintStartTime,f.time,"observed race start starts the first stint clock");
+    history.Reset(); history.Update(s,f); Require(f.cars[0].fuelStintStart<0,"first seen after green is not an observed start");
+    history.Reset(); f.state=3; f.replay=true; history.Update(s,f); f.state=4; sample(.5); f.replay=false; sample(.5);
+    Require(f.cars[0].fuelStintStart<0,"a replayed green flag cannot establish a live fuel anchor");
+    Require(f.cars[0].stintStartTime<0,"a replayed green flag cannot establish a live stint clock");
 }
-void PredictionTests() { PitWindowTests(); TimedTests(); LeaderChangeTests(); CrossingInvariantTests(); LimitAndStateTests(); HistoryTests(); MulticlassEnduranceTests(); FuelForecastTests(); }
+}
+void PredictionTests() { PitWindowTests(); TimedTests(); LeaderChangeTests(); CrossingInvariantTests(); LimitAndStateTests(); HistoryTests(); MulticlassEnduranceTests(); FuelForecastTests(); OpponentFuelTests(); }

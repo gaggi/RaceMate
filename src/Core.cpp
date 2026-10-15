@@ -152,6 +152,7 @@ void PitHistory::Update(const Session& s, Frame& f) {
     if(key_!=s.key || session_!=f.session || f.time<time_) { Reset(); key_=s.key; session_=f.session; }
     const double dt=f.time-time_;
     const bool continuous=time_>=0 && dt<=5;
+    const bool raceStart=continuous && state_>0 && state_<4 && f.state==4 && s.type=="Race" && View(f)!=ViewMode::Replay;
     for(int i=0;i<MaxCars;++i) {
         auto& v=visits_[i]; auto& car=f.cars[i];
         if(!continuous || car.surface!=1) v.tow=false;
@@ -161,6 +162,11 @@ void PitHistory::Update(const Session& s, Frame& f) {
             if((!v.pit && (v.surface==0 || v.surface==3)) || teleport) v.tow=true;
         }
         if(!car.towingKnown) car.towing=v.tow;
+        // A missed visit or reset makes the assumed last fill unusable until another complete stop.
+        if(!continuous || !v.seen || car.surface<0 || car.towing || View(f)==ViewMode::Replay ||
+           (v.completed>=0 && car.completed<v.completed)) { v.fuelStart=v.stintTime=-1; v.fuelVisit=false; }
+        if(raceStart && v.seen && car.completed==0 && !car.pit && !car.towing && car.surface>=0)
+            v.fuelStart=v.stintTime=f.time;
         if(car.surface<0) { v.seen=false; v.complete=false; v.out=false; v.stopValid=false; v.stillRun=0; }
         else {
             if(!continuous) { v.seen=false; v.complete=false; v.out=false; v.stopValid=false; v.stillRun=0; }
@@ -169,6 +175,7 @@ void PitHistory::Update(const Session& s, Frame& f) {
             if(!car.pit && v.seen && v.pit) { v.out=true; v.outLap=car.lap; v.outCompleted=car.completed; }
             if(car.pit && v.seen && !v.pit) {
                 v.entry=f.time; v.lap=car.lap; v.complete=true;
+                v.fuelVisit=!car.towing && View(f)!=ViewMode::Replay;
                 v.stopValid=true; v.stopped=v.stillRun=0; v.lastStopped=-1;
             }
             if(v.stopValid && v.seen && (car.pit || v.pit) && dt>0) {
@@ -189,6 +196,9 @@ void PitHistory::Update(const Session& s, Frame& f) {
             v.pct=car.pct;
             if(!car.pit && v.seen && v.pit) {
                 v.lastStopped=v.stopValid?v.stopped:-1; v.stopValid=false; v.stillRun=0;
+                // Drive-throughs do not imply a refill. Require a continuously observed stationary stop.
+                v.fuelStart=v.fuelVisit && v.complete && v.lastStopped>=2 && !car.towing && s.type=="Race" && f.state==4 && View(f)!=ViewMode::Replay?f.time:-1;
+                v.fuelVisit=false;
             }
             if(!car.pit && v.seen && v.pit && v.complete) {
                 v.lastLap=v.lap; v.duration=std::max(0.0,f.time-v.entry); v.complete=false;
@@ -197,6 +207,7 @@ void PitHistory::Update(const Session& s, Frame& f) {
             if(!v.known) { v.known=true; if(s.type=="Race" && car.completed<=0) { v.stintStart=0; v.stops=0; } }
             if(!car.pit && v.seen && v.pit) {
                 v.stintStart=std::max(0,car.completed);
+                v.stintTime=View(f)==ViewMode::Replay || car.towing?-1:f.time;
                 // Leaving the pits for the start is not a stop.
                 if(v.stops>=0 && s.type=="Race" && f.state==4 && (car.completed>0 || car.lap>1)) ++v.stops;
             }
@@ -208,8 +219,12 @@ void PitHistory::Update(const Session& s, Frame& f) {
         car.lastPitLap=v.lastLap; car.lastPitDuration=v.duration;
         car.stintLaps=v.stintStart<0 || car.completed<0?-1:(car.pit?0:std::max(0,car.completed-v.stintStart));
         car.stops=v.stops;
+        car.fuelStintStart=v.fuelStart;
+        car.stintStartTime=v.stintTime;
+        v.completed=car.completed;
     }
     time_=f.time;
+    state_=f.state;
 }
 std::string DriverFlags(unsigned flags,bool black,bool slowdown,bool repair) {
     std::string text;

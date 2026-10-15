@@ -3,7 +3,7 @@ class GeneralPage : public PageWindow {
 public:
     GeneralPage() : PageWindow(ui.heading,ui.text) {}
 private:
-    enum class Key { None, StartWithWindows, StartMinimized, RefreshRate, TitleBar, Hotkey, CheckUpdates, Version };
+    enum class Key { None, StartWithWindows, StartMinimized, RefreshRate, TitleBar, OpponentFuel, Hotkey, CheckUpdates, Version };
     static constexpr int ListId=100, HotkeyId=200, HotkeyResetId=201;
     static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E';
     // Below 5 Hz short offtracks and pit timing get lost.
@@ -30,7 +30,14 @@ private:
         header(L"Overlays");
         RowList::Row rate; rate.title=L"Background rate"; rate.detail=std::to_wstring(app.rate)+L" Hz  \u00B7  for Race Control events and pit stops; overlays have their own rate, a faster one raises it"; rate.button=L"Choose...";
         push(std::move(rate),Key::RefreshRate);
-        toggle(Key::TitleBar,L"Title bar",L"Shows a title above the Pit Limiter and switches the headers of all other overlays.",app.showTitleBar);
+        toggle(Key::TitleBar,L"Title bar",L"Switches the configurable header of every overlay. Each overlay also has its own header and footer settings.",app.showTitleBar);
+        header(L"Opponent fuel estimate");
+        RowList::Row fuel; fuel.title=L"Additional laps with fuel saving";
+        fuel.detail=L"+"+std::to_wstring(app.opponentFuelExtraLaps)+(app.opponentFuelExtraLaps==1?L" lap":L" laps")+L" for yellow SAVE. Green END uses your normal full-tank range. Shared by Relative and Standings."; fuel.button=L"Choose...";
+        push(std::move(fuel),Key::OpponentFuel);
+        RowList::Row assumption; assumption.title=L"Full tank assumed at the last observed stop";
+        assumption.detail=L"Uses your class, tank capacity, learned consumption and pace. Blank without enough data; opponents' actual fuel is unknown.";
+        push(std::move(assumption),Key::None);
         header(L"Shortcuts  \u00B7  work in every program");
         const wchar_t* names[]={L"Move overlays",L"Hide all overlays",L"Open RaceMate"};
         for(int i=0;i<HotkeyCount;++i) {
@@ -96,6 +103,13 @@ private:
         case Key::StartMinimized: if(code==RowList::kToggled) { SetStartMinimized(on); Refresh(); } break;
         case Key::RefreshRate: if(pressed) ChooseRate(); break;
         case Key::TitleBar: if(code==RowList::kToggled) { SetShowTitleBar(on); Refresh(); } break;
+        case Key::OpponentFuel:
+            if(pressed) {
+                std::vector<std::wstring> items; for(int i=0;i<=10;++i) items.push_back(L"+"+std::to_wstring(i)+(i==1?L" lap":L" laps"));
+                const int choice=ChooseFromMenu(items,app.opponentFuelExtraLaps);
+                if(choice>=0) { app.opponentFuelExtraLaps=choice; SettingChanged(); Refresh(); }
+            }
+            break;
         case Key::Hotkey: if(code==RowList::kIconButton || code==RowList::kActivated) Expand(hotkeys_[row]); break;
         case Key::CheckUpdates: if(code==RowList::kToggled) { SetCheckUpdates(on); Refresh(); } break;
         case Key::Version:

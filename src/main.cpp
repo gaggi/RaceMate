@@ -43,34 +43,35 @@ constexpr int DefaultRates[]={10,1,1,10,1};
 enum Column {
     PositionColumn, NumberColumn, DriverColumn, GapColumn, IntervalColumn, BestColumn, LastColumn,
     LicenseColumn, IRatingColumn, TiresColumn, PitLapColumn, PitTimeColumn, PitStopColumn,
-    LapsColumn, GainedColumn, StatusColumn, BrandColumn, RatingChangeColumn, StintColumn, StopsColumn
+    LapsColumn, GainedColumn, StatusColumn, BrandColumn, RatingChangeColumn, StintColumn, StopsColumn, FuelColumn
 };
-constexpr int ColumnCount=StopsColumn+1;
+constexpr int ColumnCount=FuelColumn+1;
 // License..PitStop are the optional driver columns, also used by Race Control; Brand..Stint came later with their own keys.
-constexpr int DriverColumnCount=PitStopColumn-LicenseColumn+1, ExtraColumnCount=StopsColumn-BrandColumn+1;
+constexpr int DriverColumnCount=PitStopColumn-LicenseColumn+1, ExtraColumnCount=FuelColumn-BrandColumn+1;
 // Widths include the 8 px gap to the next column; Status is the badge after the driver's name, not a column.
 struct ColumnInfo { const wchar_t* title; int width, compactWidth; UINT align=DT_RIGHT; };
 constexpr ColumnInfo Columns[]={
     {L"P",36,32},{L"#",50,50,DT_CENTER},{L"DRIVER",180,170,DT_LEFT},{L"GAP",70,60},{L"INT",64,56},{L"BEST",80,72},{L"LAST",80,72},
     {L"LICENSE",70,58,DT_CENTER},{L"iRATING",66,48},{L"TIRES",54,30,DT_CENTER},{L"PIT LAP",64,48},{L"PIT TIME",74,66},{L"PIT STOP",80,72},
-    {L"LAPS",50,42},{L"GAIN",50,42},{L"STATUS",0,0,DT_LEFT},{L"CAR",124,116,DT_LEFT},{L"iR ±",54,46},{L"STINT",58,46,DT_CENTER},{L"STOPS",56,32,DT_CENTER}};
+    {L"LAPS",50,42},{L"GAIN",50,42},{L"STATUS",0,0,DT_LEFT},{L"CAR",124,116,DT_LEFT},{L"iR ±",54,46},{L"STINT",58,46,DT_CENTER},{L"STOPS",56,32,DT_CENTER},{L"FUEL",62,58,DT_CENTER}};
 static_assert(std::size(Columns)==ColumnCount);
 const wchar_t* DriverColumnKeys[]={L"ShowLicense",L"ShowIRating",L"ShowTires",L"ShowLastPitLap",L"ShowPitTime",L"ShowPitStopTime"};
-const wchar_t* ExtraColumnKeys[]={L"ShowCar",L"ShowIRatingChange",L"ShowStint",L"ShowStops"};
+const wchar_t* ExtraColumnKeys[]={L"ShowCar",L"ShowIRatingChange",L"ShowStint",L"ShowStops",L"ShowFuelFinish"};
 // Saved orders keep their place; columns a file does not list yet go before their default successor.
 const std::vector<int> DefaultColumns[]={
     {PositionColumn,NumberColumn,DriverColumn,StatusColumn,BrandColumn,LicenseColumn,IRatingColumn,RatingChangeColumn,StintColumn,StopsColumn,BestColumn,LastColumn,GapColumn,
-     TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn},
+     TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn,FuelColumn},
     {PositionColumn,GainedColumn,NumberColumn,DriverColumn,StatusColumn,BrandColumn,GapColumn,IntervalColumn,BestColumn,LastColumn,StintColumn,StopsColumn,LapsColumn,
-     LicenseColumn,IRatingColumn,RatingChangeColumn,TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn}};
+     LicenseColumn,IRatingColumn,RatingChangeColumn,TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn,FuelColumn}};
 // Header and footer metrics. The values are stored in the Header*/Footer* keys.
 enum Metric {
     NoMetric, TrackMetric, IncidentsMetric, TrackTempMetric, AirTempMetric, TemperaturesMetric, TimeRemainingMetric, TimeElapsedMetric,
     CurrentLapMetric, FinalLapMetric, LapsRemainingMetric, LocalTimeMetric, SimTimeMetric, SessionTypeMetric, WetnessMetric, WindMetric,
-    SofMetric, OverlayNameMetric, PositionMetric, BrakeBiasMetric, StopsNeededMetric, DeclaredWetMetric
+    SofMetric, OverlayNameMetric, PositionMetric, BrakeBiasMetric, StopsNeededMetric, DeclaredWetMetric,
+    LeaderDistanceMetric, WhiteFlagTimeMetric, LapLeaderDistanceMetric
 };
-constexpr int MetricCount=DeclaredWetMetric+1;
-const wchar_t* MetricTitles[]={L"None",L"Track",L"Incidents",L"Track Temperature",L"Air Temperature",L"Temperatures",L"Session Time Remaining",L"Session Time Elapsed",L"Current Lap",L"Current / Expected Final Lap",L"Estimated Laps Remaining",L"Local Time",L"Sim Time",L"Session Type",L"Track Wetness",L"Wind",L"Class SOF",L"Overlay Name",L"Position in Class",L"Brake Bias",L"Stops Needed",L"Declared Wet"};
+constexpr int MetricCount=LapLeaderDistanceMetric+1;
+const wchar_t* MetricTitles[]={L"None",L"Track",L"Incidents",L"Track Temperature",L"Air Temperature",L"Temperatures",L"Session Time Remaining",L"Session Time Elapsed",L"Current Lap",L"Current / Expected Final Lap",L"Estimated Laps Remaining",L"Local Time",L"Sim Time",L"Session Type",L"Track Wetness",L"Wind",L"Class SOF",L"Overlay Name",L"Position in Class",L"Brake Bias (your car)",L"Stops Needed (your car)",L"Declared Wet",L"Leader projected race distance",L"Time left at leader's final lap",L"Current lap / Leader projected distance"};
 static_assert(std::size(MetricTitles)==MetricCount);
 // The first slot sits on the left, the others right-aligned in order. Keys keep their earlier names.
 constexpr int SlotCount=4;
@@ -81,9 +82,9 @@ constexpr Slots DefaultHeader{OverlayNameMetric,SofMetric,IncidentsMetric,TimeRe
 // Fuel Calculator modules, top to bottom; each switch is stored under its key.
 enum FuelModule {
     TankModule, FiguresModule, HistoryModule, CautionMarks, RefuelCard, WindowCard, TimelineModule,
-    OneShorterRow, TargetRow, OneLongerRow, TwoLongerRow
+    OneShorterRow, TargetRow, OneLongerRow, TwoLongerRow, LeaderDistanceModule, WhiteFlagTimeModule
 };
-constexpr int FuelModuleCount=TwoLongerRow+1;
+constexpr int FuelModuleCount=WhiteFlagTimeModule+1;
 struct ModuleInfo { const wchar_t* key; const wchar_t* title; const wchar_t* detail; bool on; };
 constexpr ModuleInfo FuelModules[]={
     {L"ShowTank",L"Tank",L"Fuel, range in laps and a bar of the fuel to the finish",true},
@@ -96,7 +97,9 @@ constexpr ModuleInfo FuelModules[]={
     {L"ShowOneShorter",L"One lap shorter",L"Most fuel per lap for one lap less",true},
     {L"ShowTarget",L"Target",L"Most fuel per lap that still reaches the latest stop, or the finish",true},
     {L"ShowOneLonger",L"One lap longer",L"Most fuel per lap for one lap more",true},
-    {L"ShowTwoLonger",L"Two laps longer",L"Most fuel per lap for two laps more",false}};
+    {L"ShowTwoLonger",L"Two laps longer",L"Most fuel per lap for two laps more",false},
+    {L"ShowLeaderDistance",L"Leader projected race distance",L"Total leader laps at time expiry, with two decimals; at the finish for lap-limited races. No future stops assumed.",true},
+    {L"ShowFinalLapTime",L"Time left at leader's final lap",L"Race clock when the current overall leader is projected to start the final lap. No future stops assumed.",true}};
 static_assert(std::size(FuelModules)==FuelModuleCount);
 // Consumption figures in display order; app.fuelRows follows this order.
 struct FigureInfo { int metric; const wchar_t* heading; const wchar_t* title; const wchar_t* key; bool on; };
@@ -128,7 +131,7 @@ constexpr ModuleInfo WeatherModules[]={
     {L"ShowWindText",L"Wind text",L"Speed, compass direction and crosswind",true}};
 static_assert(std::size(WeatherModules)==WeatherModuleCount);
 // Modules in their default order; the page moves them, the rest are display options.
-const std::vector<int> FuelOrder{TankModule,FiguresModule,HistoryModule,RefuelCard,WindowCard,TimelineModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow};
+const std::vector<int> FuelOrder{TankModule,FiguresModule,LeaderDistanceModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,WindowCard,TimelineModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow};
 const std::vector<int> WeatherOrder{ConditionModule,RainModule,TemperatureModule,TemperatureHistoryModule,WindModule,DetailsModule,UsageModule};
 const wchar_t* WetnessNames[]={L"—",L"Dry",L"Mostly Dry",L"Very Lightly Wet",L"Lightly Wet",L"Moderately Wet",L"Very Wet",L"Extremely Wet"};
 struct Placement { int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=true, growLeft=false, growUp=false, rounded=false; };
@@ -157,11 +160,12 @@ struct TableSettings {
     int rows=7, gapDecimals=1; bool hidePit=false, best=false, last=false, lapColors=true; // Relative.
     StandingsOptions standings; bool interval=false, laps=false, gained=false, progress=true; // Standings.
 };
-// Header and footer of Relative, Standings, Fuel Calculator and Weather; the Pit Limiter has the title bar instead.
+// Every overlay uses the same selectable header/footer metrics.
 struct Bands { bool header=false; Slots headerMetrics=DefaultHeader; FooterSettings footer; };
 Bands DefaultBands(int kind) {
     if(kind==FuelKind) return {true,{OverlayNameMetric,FinalLapMetric,StopsNeededMetric,NoMetric},{false,DefaultFooter}};
     if(kind==WeatherKind) return {true,{OverlayNameMetric,DeclaredWetMetric,NoMetric,NoMetric},{false,DefaultFooter}};
+    if(kind==PitLimiterKind) return {false,{OverlayNameMetric,NoMetric,NoMetric,NoMetric},{false,DefaultFooter}};
     return {};
 }
 struct FuelSettings { std::array<bool,FuelModuleCount> display{}; std::array<bool,FuelMetricCount> figures{}; std::vector<int> order=FuelOrder; bool strip=false; };
@@ -211,8 +215,11 @@ struct App {
     std::map<std::wstring,std::wstring> savedSettings; unsigned settingsWrites=0;
     std::array<WORD,HotkeyCount> hotkeys{}; bool hotkeysEnabled=false; std::wstring hotkeyError;
     int rate=10,timerMs=0; ULONGLONG now=0;
+    int opponentFuelExtraLaps=3;
     unsigned modelVersion=0,planVersion=~0u,ratingVersion=~0u;
     std::array<int,MaxCars> ratingChanges{};
+    unsigned opponentFuelVersion=~0u; int opponentFuelExtra=-1; bool opponentFuelPreview=false;
+    std::array<OpponentFuelStatus,MaxCars> opponentFuelStatuses{};
     std::vector<DrawCommand> sceneBuffer; bool overlayClass=false;
     NOTIFYICONDATAW tray{};
 } app;
@@ -290,12 +297,12 @@ int WeatherHeight(const Overlay& o) {
     if(d[WindModule]) h+=d[WindRose]?108:(d[WindText]?76:0);
     return std::max(h,40);
 }
-// Values in the strip layout: tank and range, the 10-lap average, refuel, latest stop and two targets.
-int FuelStripCount(const Overlay& o) { const auto& d=o.fuel.display; return 2*d[TankModule]+d[FiguresModule]+d[RefuelCard]+d[WindowCard]+d[TargetRow]+d[OneLongerRow]; }
+// Values in the strip layout, including the two independent overall-leader forecasts.
+int FuelStripCount(const Overlay& o) { const auto& d=o.fuel.display; return 2*d[TankModule]+d[FiguresModule]+d[RefuelCard]+d[WindowCard]+d[TargetRow]+d[OneLongerRow]+d[LeaderDistanceModule]+d[WhiteFlagTimeModule]; }
 constexpr int FuelPanelWidth=440, FuelStripCell=86;
 // Whether the strip layout shows a module or uses an option; the page marks the others "Panel only".
 bool InStrip(int kind,int id) {
-    if(kind==FuelKind) return id==TankModule || id==FiguresModule || id==RefuelCard || id==WindowCard || id==TargetRow || id==OneLongerRow;
+    if(kind==FuelKind) return id==TankModule || id==FiguresModule || id==RefuelCard || id==WindowCard || id==TargetRow || id==OneLongerRow || id==LeaderDistanceModule || id==WhiteFlagTimeModule;
     return id==ConditionModule || id==RainModule || id==TemperatureModule || id==WindModule || id==TrendArrows || id==WindRelative;
 }
 // The panel's modules that show, in their order. Refuel and pit window share a row when
@@ -306,10 +313,11 @@ std::vector<int> FuelShown(const Overlay& o) {
     return shown;
 }
 bool IsCard(int id) { return id==RefuelCard || id==WindowCard; }
-bool IsTarget(int id) { return id>=OneShorterRow; }
+bool IsTarget(int id) { return id>=OneShorterRow && id<=TwoLongerRow; }
 int FuelHeight(const Overlay& o) {
     if(o.fuel.strip) return 50;
-    constexpr int heights[]={112,52,104,0,92,92,46,24,24,24,24};
+    constexpr int heights[]={112,52,104,0,92,92,46,24,24,24,24,30,30};
+    static_assert(std::size(heights)==FuelModuleCount);
     const auto shown=FuelShown(o); int h=0;
     for(size_t k=0;k<shown.size();++k) {
         const int id=shown[k], next=k+1<shown.size()?shown[k+1]:-1;
@@ -340,9 +348,9 @@ std::wstring CompletedLaps(const Row& row) {
     if(completed<0 && app.session.number==app.frame.session && index>=0 && index<MaxCars) completed=app.session.results[index].completed;
     return completed>=0?std::to_wstring(completed):L"—";
 }
-// Fuel Calculator and Weather draw their own header module instead of the title bar.
-bool ShowOverlayHeader(const Overlay& o) { return o.kind==PitLimiterKind?app.showTitleBar:o.bands.header; }
-int FooterHeight(const Overlay& o) { return o.kind!=PitLimiterKind && o.bands.footer.enabled?28:0; }
+// All overlay kinds draw the same configurable metric bands.
+bool ShowOverlayHeader(const Overlay& o) { return o.bands.header; }
+int FooterHeight(const Overlay& o) { return o.bands.footer.enabled?28:0; }
 double SessionProgress();
 // The Standings' session progress bar, a row of its own under the header while the session has a known length.
 int ProgressHeight(const Overlay& o) { return o.kind==StandingsKind && o.table.progress && SessionProgress()>=0?24:0; }
@@ -466,7 +474,7 @@ void ReadInstance(Overlay& o) {
     p.enabled=ReadBool(section.c_str(),L"Enabled",true); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
     p.rounded=ReadBool(section.c_str(),L"RoundedCorners",false);
     const Bands defaults=DefaultBands(kind); auto& b=o.bands;
-    b.header=ReadBool(section.c_str(),L"ShowHeader",defaults.header); b.headerMetrics=ReadSlots(section.c_str(),HeaderKeys,defaults.headerMetrics);
+    b.header=ReadBool(section.c_str(),L"ShowHeader",kind==PitLimiterKind?ReadBool(L"General",L"ShowTitleBar",false):defaults.header); b.headerMetrics=ReadSlots(section.c_str(),HeaderKeys,defaults.headerMetrics);
     b.footer.enabled=ReadBool(section.c_str(),L"ShowFooter",defaults.footer.enabled); b.footer.metrics=ReadSlots(section.c_str(),FooterKeys,defaults.footer.metrics);
     if(IsTable(kind)) ReadTable(section.c_str(),kind,o.table);
     for(int i=0;i<FuelModuleCount;++i) o.fuel.display[i]=ReadBool(section.c_str(),FuelModules[i].key,FuelModules[i].on);
@@ -492,6 +500,7 @@ void Load() {
     app.showTitleBar=ReadBool(L"General",L"ShowTitleBar",false);
     app.checkUpdates=ReadBool(L"General",L"CheckForUpdates",true);
     app.rate=std::clamp(ReadInt(L"General",L"RefreshHz",10),5,20);
+    app.opponentFuelExtraLaps=std::clamp(ReadInt(L"General",L"OpponentFuelExtraLaps",3),0,10);
     app.startWithWindows=ReadBool(L"General",L"StartWithWindows",false);
     app.startMinimized=ReadBool(L"General",L"StartMinimized",false);
     app.windowRect={ReadInt(L"General",L"WindowLeft",0),ReadInt(L"General",L"WindowTop",0),ReadInt(L"General",L"WindowRight",0),ReadInt(L"General",L"WindowBottom",0)};
@@ -519,7 +528,7 @@ void Save() {
         const auto name=Section(o); const auto* section=name.c_str(); const auto& p=o.place;
         number(section,L"X",p.x); number(section,L"Y",p.y); number(section,L"Scale",p.scale); number(section,L"Opacity",p.opacity);
         number(section,L"RefreshHz",p.rate); number(section,L"Enabled",p.enabled); number(section,L"GrowLeft",p.growLeft); number(section,L"GrowUp",p.growUp); number(section,L"RoundedCorners",p.rounded);
-        if(o.kind!=PitLimiterKind) {
+        {
             const auto& b=o.bands; number(section,L"ShowHeader",b.header); number(section,L"ShowFooter",b.footer.enabled);
             for(int i=0;i<SlotCount;++i) { number(section,HeaderKeys[i],b.headerMetrics[i]); number(section,FooterKeys[i],b.footer.metrics[i]); }
         }
@@ -556,6 +565,7 @@ void Save() {
         }
     }
     number(L"General",L"ShowTitleBar",app.showTitleBar); number(L"General",L"RefreshHz",app.rate);
+    number(L"General",L"OpponentFuelExtraLaps",app.opponentFuelExtraLaps);
     number(L"General",L"StartWithWindows",app.startWithWindows); number(L"General",L"StartMinimized",app.startMinimized); number(L"General",L"CheckForUpdates",app.checkUpdates);
     if(app.windowRect.right>app.windowRect.left) {
         number(L"General",L"WindowLeft",app.windowRect.left); number(L"General",L"WindowTop",app.windowRect.top);
@@ -623,6 +633,20 @@ const FuelPlan& Plan() {
     }
     return app.fuelPlan;
 }
+OpponentFuelStatus FuelFinishStatus(int index) {
+    if(index<0 || index>=MaxCars) return OpponentFuelStatus::None;
+    if(app.opponentFuelVersion!=app.modelVersion || app.opponentFuelExtra!=app.opponentFuelExtraLaps || app.opponentFuelPreview!=app.preview) {
+        app.opponentFuelStatuses.fill(OpponentFuelStatus::None);
+        if(app.preview) { app.opponentFuelStatuses[0]=OpponentFuelStatus::End; app.opponentFuelStatuses[4]=OpponentFuelStatus::Save; }
+        else {
+            const auto& plan=Plan();
+            for(const auto& driver:app.session.drivers) if(driver.index>=0 && driver.index<MaxCars)
+                app.opponentFuelStatuses[driver.index]=OpponentFuel(app.session,app.frame,plan,driver.index,app.opponentFuelExtraLaps);
+        }
+        app.opponentFuelVersion=app.modelVersion; app.opponentFuelExtra=app.opponentFuelExtraLaps; app.opponentFuelPreview=app.preview;
+    }
+    return app.opponentFuelStatuses[index];
+}
 const std::vector<Row>& RelativeRows(const Overlay& o) {
     if(o.rowsVersion!=app.modelVersion) { o.relativeRows=Relative(app.session,app.frame,o.table.rows,false,o.table.hidePit); o.rowsVersion=app.modelVersion; }
     return o.relativeRows;
@@ -675,7 +699,7 @@ int HeightWithTitle(const Overlay& o) {
         return height+(count==0?54:0);
     }
     if(o.kind==FuelKind) return 32+FuelHeight(o)+FooterHeight(o);
-    return o.kind==WeatherKind?32+WeatherHeight(o)+FooterHeight(o):90;
+    return o.kind==WeatherKind?32+WeatherHeight(o)+FooterHeight(o):90+FooterHeight(o);
 }
 int BaseHeight(const Overlay& o) { return HeightWithTitle(o)-(ShowOverlayHeader(o)?0:32); }
 std::wstring Gap(const Row& r,const Overlay& o) {
@@ -813,7 +837,12 @@ const CellRenderer CellRenderers[]={
     +[](const Row& r,const Overlay&,Cell& c) {
         c.box=Cell::Framed; c.boxColor=Ink::Frame; c.font=Small; c.ink=Ink::Value;
         c.text=r.car.stintLaps>=0?L"L"+std::to_wstring(r.car.stintLaps):L"L-"; },
-    +[](const Row& r,const Overlay&,Cell& c) { c.text=r.car.stops>=0?std::to_wstring(r.car.stops):L"?"; c.ink=r.car.stops>=0?Ink::Value:Ink::Muted; }};
+    +[](const Row& r,const Overlay&,Cell& c) { c.text=r.car.stops>=0?std::to_wstring(r.car.stops):L"?"; c.ink=r.car.stops>=0?Ink::Value:Ink::Muted; },
+    +[](const Row& r,const Overlay&,Cell& c) {
+        const auto status=FuelFinishStatus(r.driver.index);
+        if(status==OpponentFuelStatus::None) return;
+        c.text=status==OpponentFuelStatus::End?L"END":L"SAVE";
+        c.box=Cell::Filled; c.boxColor=status==OpponentFuelStatus::End?Ink::Green:Ink::Yellow; c.ink=Ink::Panel; c.font=SmallBold; }};
 static_assert(std::size(CellRenderers)==ColumnCount);
 bool Editing(const Overlay& o); // Its own page is open in the visible main window.
 // Describes an overlay in physical pixels. Comparing it with the previous scene yields the exact changed areas.
@@ -872,12 +901,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
     if(ShowOverlayHeader(o)) {
         fill({0,0,width,px(32)},Ink::Band);
         fill({0,px(31),width,px(32)},Ink::Line);
-        if(o.kind!=PitLimiterKind) slots(o.bands.headerMetrics,{0,0,width,px(31)});
-        else {
-            label(L"PIT LANE",rect(12,0,230,32),white,Bold);
-            const auto mode=app.frame.replay?L"REPLAY":(!app.frame.onTrack?L"SPOTTING":Wide(app.session.type));
-            label(app.edit?L"MOVE":(app.preview?L"PREVIEW":mode),{width-px(145),0,width-px(12),px(32)},muted,Regular,DT_RIGHT);
-        }
+        slots(o.bands.headerMetrics,{0,0,width,px(31)});
     }
     // The footer from logical y down to the bottom.
     auto footer=[&](int y) {
@@ -994,6 +1018,8 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             case WindowCard: item(L"BOX BY",open?lap(window.lastLap):L"—",white); break;
             case TargetRow: item(L"TARGET",target(0)>=0?Format(target(0),2):L"—",targetInk(target(0))); break;
             case OneLongerRow: item(L"+1 LAP",target(1)>=0?Format(target(1),2):L"—",targetInk(target(1))); break;
+            case LeaderDistanceModule: item(L"LEADER LAPS",LeaderDistanceValue(),Ink::Accent); break;
+            case WhiteFlagTimeModule: item(L"FINAL LAP",WhiteFlagTimeValue(),white); break;
             default: break;
             }
             y+=50;
@@ -1001,6 +1027,12 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             const auto shown=FuelShown(o); const int figures=static_cast<int>(std::count(o.fuel.figures.begin(),o.fuel.figures.end(),true));
             for(size_t k=0;k<shown.size();++k) {
                 const int id=shown[k], next=k+1<shown.size()?shown[k+1]:-1;
+                if(id==LeaderDistanceModule || id==WhiteFlagTimeModule) {
+                    if(y>32) fill(rect(0,y,W,1),Ink::Line);
+                    label(id==LeaderDistanceModule?L"Leader at time expiry / lap limit":L"Time left at leader's final lap",rect(16,y,W-150,30),Ink::Label,Small);
+                    label(id==LeaderDistanceModule?LeaderDistanceValue()+L" laps":WhiteFlagTimeValue(),rect(W-142,y,126,30),id==LeaderDistanceModule?Ink::Accent:white,Bold,DT_RIGHT);
+                    y+=30;
+                }
                 if(id==TankModule) {
                     if(y>32) fill(rect(0,y,W,1),Ink::Line);
                     label(L"IN TANK",rect(16,y+10,150,16),Ink::Label,Small); label(L"RANGE",rect(W-166,y+10,150,16),Ink::Label,Small,DT_RIGHT);
@@ -1254,8 +1286,9 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         footer(y);
     } else {
         const bool known=app.frame.limiterKnown;
-        fill({0,px(32),width,height+titleOffset},!known?RGB(95,100,110):(app.frame.limiter?RGB(27,135,68):RGB(182,41,44)));
-        label(!known?L"PIT LIMITER STATUS UNKNOWN":(app.frame.limiter?L"PIT LIMITER ACTIVE":L"PIT LIMITER NOT ACTIVE"),{px(12),px(38),width-px(12),height+titleOffset-px(6)},RGB(255,255,255),Bold,DT_CENTER);
+        fill({0,px(32),width,px(90)},!known?RGB(95,100,110):(app.frame.limiter?RGB(27,135,68):RGB(182,41,44)));
+        label(!known?L"PIT LIMITER STATUS UNKNOWN":(app.frame.limiter?L"PIT LIMITER ACTIVE":L"PIT LIMITER NOT ACTIVE"),{px(12),px(38),width-px(12),px(84)},RGB(255,255,255),Bold,DT_CENTER);
+        footer(90);
     }
     // The 1 px border, last so it stays on top; the window region rounds the same corners. The Pit Limiter's color needs none.
     if(o.kind!=PitLimiterKind) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{static_cast<float>(o.place.rounded?px(CornerRadius):0)}});

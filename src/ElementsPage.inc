@@ -1,6 +1,6 @@
 // Pages that list what an overlay shows: Fuel Calculator and Weather choose a layout,
 // switch and order modules (the fuel consumption module expands to its values) and set
-// header and footer. Pit Limiter has only its corners to choose; its page explains when and how it shows.
+// header and footer. Pit Limiter shares the bands and explains when and how it shows.
 class ElementsPage : public PageWindow {
 public:
     explicit ElementsPage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
@@ -36,9 +36,18 @@ private:
         auto info=[&](const wchar_t* title,const wchar_t* detail,const wchar_t* pill=L"",RowList::Tone tone=RowList::Tone::Neutral) {
             RowList::Row row; row.title=title; row.detail=detail; row.pill=pill; row.pillTone=tone; push(std::move(row),Key::Info);
         };
+        auto bands=[&] {
+            header(L"Header and footer");
+            for(int id:{HeaderRow,FooterRow}) {
+                RowList::Row row=BandRow(o_,id==FooterRow); const bool open=expanded_==id;
+                row.iconButtons={open?CollapseGlyph:ExpandGlyph}; row.expandHeight=open?BandEditorHeight:0;
+                push(std::move(row),Key::Band,id);
+            }
+        };
         if(o_.kind==PitLimiterKind) {
             header(L"Layout");
             push(RoundedRow(o_),Key::Rounded);
+            bands();
             header(L"When it shows");
             info(L"On pit approach and in the pit lane",L"Only while you drive your own car, not while spotting or in replays.");
             info(L"After pit exit",L"Stays until you switch the limiter off; with the limiter off it hides at pit exit.");
@@ -71,12 +80,7 @@ private:
         for(int id:Order()) module(id,true);
         header(L"Display");
         for(int id:Options()) module(id,false);
-        header(L"Header and footer");
-        for(int id:{HeaderRow,FooterRow}) {
-            RowList::Row row=BandRow(o_,id==FooterRow); const bool open=expanded_==id;
-            row.iconButtons={open?CollapseGlyph:ExpandGlyph}; row.expandHeight=open?BandEditorHeight:0;
-            push(std::move(row),Key::Band,id);
-        }
+        bands();
         if(Fuel()) {
             header(L"Learning");
             info(L"Which laps count",L"Whole laps at racing speed: caution laps, pit and out laps, refuels and the first partial lap never count. The 10-lap average drives range, pit window, refuel and targets.");

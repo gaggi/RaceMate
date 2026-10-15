@@ -183,7 +183,7 @@ void SetCheckUpdates(bool on) { app.checkUpdates=on; Save(); }
 void SetGapSigns(Overlay& o,bool on) { o.table.gapSigns=on; SettingChanged(); }
 void SetShowTitleBar(bool on) {
     app.showTitleBar=on;
-    for(auto& o:app.overlays) if(o.kind!=PitLimiterKind) o.bands.header=on;
+    for(auto& o:app.overlays) o.bands.header=on;
     for(auto& overlay:app.overlays) Fit(overlay);
     Save(); UpdateOverlays();
 }
