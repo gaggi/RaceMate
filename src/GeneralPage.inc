@@ -6,7 +6,8 @@ private:
     enum class Key { None, StartWithWindows, StartMinimized, RefreshRate, TitleBar, Hotkey, CheckUpdates, Version };
     static constexpr int ListId=100, HotkeyId=200, HotkeyResetId=201;
     static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E';
-    static constexpr int Rates[]={2,5,10,15,20};
+    // Below 5 Hz short offtracks and pit timing get lost.
+    static constexpr int Rates[]={5,10,15,20};
 
     void OnCreate() override {
         list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont());
@@ -27,7 +28,7 @@ private:
         if(!startupError_.empty()) { rows.back().pill=L"Not changed"; rows.back().pillTone=RowList::Tone::Warning; }
         toggle(Key::StartMinimized,L"Start minimized",L"Starts in the tray; enabled overlays work as usual.",app.startMinimized);
         header(L"Overlays");
-        RowList::Row rate; rate.title=L"Telemetry rate"; rate.detail=std::to_wstring(app.rate)+L" Hz  \u00B7  how often RaceMate reads iRacing; an overlay set to update faster raises it"; rate.button=L"Choose...";
+        RowList::Row rate; rate.title=L"Background rate"; rate.detail=std::to_wstring(app.rate)+L" Hz  \u00B7  for Race Control events and pit stops; overlays have their own rate, a faster one raises it"; rate.button=L"Choose...";
         push(std::move(rate),Key::RefreshRate);
         toggle(Key::TitleBar,L"Title bar",L"Shows a title above the Pit Limiter and switches the headers of all other overlays.",app.showTitleBar);
         header(L"Shortcuts  \u00B7  work in every program");

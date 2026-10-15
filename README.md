@@ -105,7 +105,7 @@ A normal resizable window (Race Control page or tray menu) with full standings a
 ## Resource use
 
 - RaceMate runs in Windows efficiency mode (low priority, EcoQoS), so the simulator always gets CPU time first.
-- Telemetry rate 2, 5, 10, 15 or 20 Hz (default 10, Settings page); an overlay set to update faster raises it. One connection attempt per second while iRacing is not running.
+- **Background rate** 5, 10, 15 or 20 Hz (default 10, Settings page): how often RaceMate reads iRacing for Race Control events, pit stops, fuel learning and the finish forecast, even while no overlay redraws. Overlays have their own rate; one set faster raises it. One connection attempt per second while iRacing is not running.
 - Each overlay updates at its own rate, keeps a list of draw commands and repaints only the parts that changed.
 - Session YAML is parsed only when iRacing updates it.
 

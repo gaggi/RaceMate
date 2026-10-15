@@ -361,6 +361,9 @@ int RunDiagnostics() {
             for(int tick=0;tick<3;++tick) burst+=RefreshDue(due,resume+tick,period,timer/2);
             ratesOk=burst==1 && ratesOk;
         }
+        // A background rate saved below 5 Hz, from earlier versions, loads as 5 Hz.
+        const int savedRate=app.rate; WritePrivateProfileStringW(L"General",L"RefreshHz",L"2",app.config.c_str()); Load();
+        ratesOk=app.rate==5 && ratesOk; app.rate=savedRate; Save(); Timer();
         report<<"Overlay rates on every telemetry rate, with jitter and pauses: "<<(ratesOk?"PASS":"FAIL")<<"\n"; ok=ratesOk && ok;
     }
     {

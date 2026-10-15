@@ -491,7 +491,7 @@ void Load() {
     for(auto& o:app.overlays) { ReadInstance(o); if(!o.window && app.overlayClass) CreateOverlayWindow(o); }
     app.showTitleBar=ReadBool(L"General",L"ShowTitleBar",false);
     app.checkUpdates=ReadBool(L"General",L"CheckForUpdates",true);
-    app.rate=std::clamp(ReadInt(L"General",L"RefreshHz",10),2,20);
+    app.rate=std::clamp(ReadInt(L"General",L"RefreshHz",10),5,20);
     app.startWithWindows=ReadBool(L"General",L"StartWithWindows",false);
     app.startMinimized=ReadBool(L"General",L"StartMinimized",false);
     app.windowRect={ReadInt(L"General",L"WindowLeft",0),ReadInt(L"General",L"WindowTop",0),ReadInt(L"General",L"WindowRight",0),ReadInt(L"General",L"WindowBottom",0)};
