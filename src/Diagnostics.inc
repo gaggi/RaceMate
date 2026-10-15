@@ -568,7 +568,7 @@ int RunDiagnostics() {
         Load(); ok=First(WeatherKind).weather.order[3]==ConditionModule && Export(First(WeatherKind).window,L"build\\qa\\weather-reordered.bmp") && ok;
         First(FuelKind).fuel.order=FuelOrder; First(WeatherKind).weather.order=WeatherOrder; SettingChanged();
         // Caution marks: off by default and switched inside the expanded "Last 10 laps" row, not as a row of their own.
-        ok=!FuelModules[CautionMarks].on && ok;
+        ok=!FuelModules[CautionMarks].on && !FuelModules[LeaderDistanceModule].on && !FuelModules[WhiteFlagTimeModule].on && ok; // Leader rows start off too.
         OpenOverlay(First(FuelKind));
         if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) {
             auto* rows=reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA)); int history=-1;

@@ -99,8 +99,8 @@ constexpr ModuleInfo FuelModules[]={
     {L"ShowTarget",L"Target",L"Most fuel per lap that still reaches the latest stop, or the finish",true},
     {L"ShowOneLonger",L"One lap longer",L"Most fuel per lap for one lap more",true},
     {L"ShowTwoLonger",L"Two laps longer",L"Most fuel per lap for two laps more",false},
-    {L"ShowLeaderDistance",L"Leader projected race distance",L"Total leader laps at time expiry, with two decimals; at the finish for lap-limited races. No future stops assumed.",true},
-    {L"ShowFinalLapTime",L"Time left at leader's final lap",L"Race clock when the current overall leader is projected to start the final lap. No future stops assumed.",true}};
+    {L"ShowLeaderDistance",L"Leader projected race distance",L"Total leader laps at time expiry, with two decimals; at the finish for lap-limited races. No future stops assumed.",false},
+    {L"ShowFinalLapTime",L"Time left at leader's final lap",L"Race clock when the current overall leader is projected to start the final lap. No future stops assumed.",false}};
 static_assert(std::size(FuelModules)==FuelModuleCount);
 // Consumption figures in display order; app.fuelRows follows this order.
 struct FigureInfo { int metric; const wchar_t* heading; const wchar_t* title; const wchar_t* key; bool on; };

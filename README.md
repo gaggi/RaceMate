@@ -75,7 +75,7 @@ RaceMate learns consumption between line crossings. Only whole laps at racing sp
 - **Tank**: fuel, range in laps and a bar of the tank with the fuel missing to the finish (hatched) and the finish mark.
 - **Consumption**: last lap, averages of 3, 10 and 5 laps, race average, minimum and maximum, each with its own switch.
 - **Last 10 laps**: every whole lap's fuel against the 10-lap average; caution laps can be marked in yellow (switch in the module's expanded row, off by default).
-- **Leader projected race distance** and **Time left at leader's final lap**: separate, reorderable modules in both Panel and Strip, also selectable in every overlay's header/footer. Fractional total leader laps (`~19.08`) are distinct from your rounded finishing lap (`~20`).
+- **Leader projected race distance** and **Time left at leader's final lap**: separate, reorderable modules in both Panel and Strip, off by default, also selectable in every overlay's header/footer. Fractional total leader laps (`~19.08`) are distinct from your rounded finishing lap (`~20`).
 - **Refuel to finish** (without a safety margin; green when it fits in the tank) and **pit window** (earliest and latest lap); side by side while they follow each other in the module order.
 - **Pit window timeline**: one block per lap of a full-tank stint, current lap yellow, window green, with the fuel to add at the next stop.
 - **Targets**: the most fuel per lap that still reaches the latest stop (or the finish without a stop), and the same for one lap longer, two laps longer or one lap shorter.
