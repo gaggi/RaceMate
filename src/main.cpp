@@ -1217,7 +1217,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
     }
     // The border, last so it stays on top; the window region rounds the same corners. Red marks the overlay whose
     // settings are open, dashed yellow every overlay while they can be moved. The Pit Limiter's color needs no border.
-    const float radius=static_cast<float>(o.place.rounded?px(CornerRadius):0), thick=static_cast<float>(std::max(2,px(2)));
+    const float radius=static_cast<float>(o.place.rounded?px(CornerRadius):0), thick=static_cast<float>(std::max(4,px(4)));
     if(Editing(o)) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},RGB(235,64,52),{radius,thick}});
     else if(app.edit) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Yellow,{radius,thick,1}});
     else if(o.kind!=PitLimiterKind) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{radius}});
