@@ -76,19 +76,20 @@ void DrawMapLayer(Gdiplus::Graphics& graphics,const trackmap::Layer& layer,const
 void PaintMap(Overlay& o,const DrawCommand& c) {
     if(!trackMap.ready) return;
     const int width=c.r.right-c.r.left,height=c.r.bottom-c.r.top;
-    if(!o.mapBitmap || o.mapRevision!=trackMap.revision || o.mapWidth!=width || o.mapHeight!=height) {
+    const int style=(o.map.background?1:0)|(o.map.pitLane?2:0)|(o.map.startFinish?4:0);
+    if(!o.mapBitmap || o.mapRevision!=trackMap.revision || o.mapWidth!=width || o.mapHeight!=height || o.mapStyle!=style) {
         if(o.mapBitmap) DeleteObject(o.mapBitmap);
-        o.mapBitmap=CreateCompatibleBitmap(o.dc,width,height); o.mapWidth=width; o.mapHeight=height; o.mapRevision=trackMap.revision;
+        o.mapBitmap=CreateCompatibleBitmap(o.dc,width,height); o.mapWidth=width; o.mapHeight=height; o.mapRevision=trackMap.revision; o.mapStyle=style;
         if(!o.mapBitmap) return;
         HDC dc=CreateCompatibleDC(o.dc); const auto old=SelectObject(dc,o.mapBitmap);
-        RECT bounds{0,0,width,height}; SetDCBrushColor(dc,Ink::Panel); FillRect(dc,&bounds,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+        RECT bounds{0,0,width,height}; SetDCBrushColor(dc,MapOnly(o)?TrackMapTransparentKey:Ink::Panel); FillRect(dc,&bounds,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
         {
             Gdiplus::Graphics graphics(dc); graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias); graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
             const auto transform=MapFit(trackMap.geometry,width,height);
-            DrawMapLayer(graphics,trackMap.geometry.pit,transform,Ink::Muted);
+            if(o.map.pitLane) DrawMapLayer(graphics,trackMap.geometry.pit,transform,Ink::Muted);
             DrawMapLayer(graphics,trackMap.geometry.active,transform,RGB(110,120,134));
             // The stripe is clear on the map; the arrow may lie outside its tight bounds.
-            DrawMapLayer(graphics,trackMap.geometry.finish,transform,Ink::White);
+            if(o.map.startFinish) DrawMapLayer(graphics,trackMap.geometry.finish,transform,Ink::White);
         }
         SelectObject(dc,old); DeleteDC(dc);
     }

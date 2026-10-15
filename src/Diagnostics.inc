@@ -3,7 +3,7 @@
 struct TableSnapshot { TableSettings table; Bands bands; };
 std::array<TableSnapshot,2> Tables() { return {TableSnapshot{First(RelativeKind).table,First(RelativeKind).bands},TableSnapshot{First(StandingsKind).table,First(StandingsKind).bands}}; }
 void RestoreTables(const std::array<TableSnapshot,2>& tables) { for(int kind:{RelativeKind,StandingsKind}) { First(kind).table=tables[kind].table; First(kind).bands=tables[kind].bands; } }
-bool Export(HWND window,const std::wstring& path) {
+bool Export(HWND window,const std::wstring& path,bool transparentChecker=false) {
     RECT r{}; GetClientRect(window,&r); const int w=r.right,h=r.bottom;
     BITMAPINFO info{}; info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER); info.bmiHeader.biWidth=w; info.bmiHeader.biHeight=-h;
     info.bmiHeader.biPlanes=1; info.bmiHeader.biBitCount=32; info.bmiHeader.biCompression=BI_RGB;
@@ -16,6 +16,11 @@ bool Export(HWND window,const std::wstring& path) {
         PrintWindow(window,dc,PW_RENDERFULLCONTENT);
     }
     else SendMessageW(window,WM_PRINTCLIENT,reinterpret_cast<WPARAM>(dc),PRF_CLIENT);
+    if(transparentChecker) {
+        auto* pixels=static_cast<uint32_t*>(bits);
+        const uint32_t key=((TrackMapTransparentKey&0xff)<<16)|(TrackMapTransparentKey&0xff00)|((TrackMapTransparentKey>>16)&0xff);
+        for(int y=0;y<h;++y) for(int x=0;x<w;++x) if((pixels[y*w+x]&0xffffff)==key) pixels[y*w+x]=((x/18+y/18)%2)?0x303840:0x46515c;
+    }
     BITMAPFILEHEADER file{}; file.bfType=0x4d42; file.bfOffBits=sizeof(file)+sizeof(info.bmiHeader); file.bfSize=file.bfOffBits+w*h*4;
     std::ofstream out(path,std::ios::binary); out.write(reinterpret_cast<char*>(&file),sizeof(file)); out.write(reinterpret_cast<char*>(&info.bmiHeader),sizeof(info.bmiHeader)); out.write(static_cast<char*>(bits),static_cast<std::streamsize>(w)*h*4);
     SelectObject(dc,old); DeleteObject(bitmap); DeleteDC(dc); ReleaseDC(window,screen); return out.good();
@@ -72,6 +77,29 @@ int RunDiagnostics() {
             const auto sprites=o.mapMarkers.size();
             app.frame.cars[0].pct+=.001; UpdateOverlays();
             mapOk=markers()<all && o.mapBitmap==bitmap && sprites>0 && o.mapMarkers.size()==sprites && mapOk;
+            // Layer visibility must invalidate the static bitmap without changing
+            // the prepared route, start/finish alignment or live marker positions.
+            auto mapPixels=[&] {
+                std::vector<uint32_t> pixels(static_cast<size_t>(o.mapWidth)*o.mapHeight);
+                BITMAPINFO info{}; info.bmiHeader={sizeof(BITMAPINFOHEADER),o.mapWidth,-o.mapHeight,1,32,BI_RGB};
+                GetDIBits(o.dc,o.mapBitmap,0,o.mapHeight,pixels.data(),&info,DIB_RGB_COLORS);
+                for(auto& pixel:pixels) pixel&=0xffffff;
+                return pixels;
+            };
+            const auto start=trackMap.geometry.At(0); const auto revision=trackMap.revision; const auto withLayers=mapPixels();
+            o.map.pitLane=false; UpdateOverlays(); const auto withoutPit=mapPixels();
+            mapOk=(trackMap.geometry.pit.shapes.empty() || withLayers!=withoutPit) && mapOk;
+            o.map.startFinish=false; UpdateOverlays();
+            mapOk=withoutPit!=mapPixels() && trackMap.revision==revision && trackMap.geometry.At(0).x==start.x && trackMap.geometry.At(0).y==start.y && mapOk;
+            o.map.background=false; Save(); Load(); UpdateOverlays();
+            COLORREF key=0; BYTE alpha=0; DWORD flags=0;
+            mapOk=!o.map.background && !o.map.pitLane && !o.map.startFinish && GetLayeredWindowAttributes(o.window,&key,&alpha,&flags)
+                && (flags&LWA_COLORKEY) && (flags&LWA_ALPHA) && key==TrackMapTransparentKey && GetPixel(o.dc,0,0)==key && BaseHeight(o)==240
+                && !ShowOverlayHeader(o) && FooterHeight(o)==0 && std::none_of(o.scene.begin(),o.scene.end(),[](const DrawCommand& c){return c.type==DrawCommand::Outline;}) && mapOk;
+            mapOk=Export(o.window,L"build\\qa\\trackmap-transparent-"+std::to_wstring(id)+L".bmp",true) && mapOk;
+            o.map.background=true; UpdateOverlays();
+            GetLayeredWindowAttributes(o.window,&key,&alpha,&flags);
+            mapOk=!(flags&LWA_COLORKEY) && ShowOverlayHeader(o)==o.bands.header && mapOk;
             o.map.numbers=false; o.map.pit=false; o.map.details=false; Save(); Load(); UpdateOverlays();
             mapOk=!o.map.numbers && o.map.ownClass && !o.map.pit && !o.map.details && Export(o.window,L"build\\qa\\trackmap-dots-"+std::to_wstring(id)+L".bmp") && mapOk;
         }
@@ -79,7 +107,7 @@ int RunDiagnostics() {
         mapOk=!trackMap.ready && !trackMap.task.Running() && std::none_of(o.scene.begin(),o.scene.end(),[](const DrawCommand& c){return c.type==DrawCommand::Map;}) && mapOk;
         o.map=settings; app.preview=true; app.session=savedSession; app.frame=savedFrame; RetryTrackMap(); UpdateOverlays(); Save();
         OpenOverlay(o); mapOk=Export(app.main,L"build\\qa\\trackmap-settings.bmp") && mapOk;
-        report<<"Track map: cached official Lime Rock/Okayama SVGs, class/pit filters, persisted settings, cached bitmap/markers and unknown-layout clearing: "<<(mapOk?(exercised?"PASS":"PASS (no cached real SVGs to render)"):"FAIL")<<"\n";
+        report<<"Track map: cached SVGs/markers, class/pit filters, transparent background, optional pit lane/start-finish, persistence and unchanged geometry: "<<(mapOk?(exercised?"PASS":"PASS (no cached real SVGs to render)"):"FAIL")<<"\n";
         ok=mapOk && ok;
         ShowPage(Page::Overlays);
     }

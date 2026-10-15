@@ -1,16 +1,16 @@
         const int W=TrackMapWidth, end=32+TrackMapBodyHeight;
         const std::wstring title=app.preview?L"Lime Rock Park · Grand Prix · sample cars":Wide(app.session.track+(app.session.trackConfig.empty()?"":" · "+app.session.trackConfig));
-        label(title,rect(14,39,W-28,22),white,Bold);
-        if(o.map.details) {
+        if(!MapOnly(o)) label(title,rect(14,39,W-28,22),white,Bold);
+        if(o.map.details && !MapOnly(o)) {
             std::wstring detail=L"ID "+std::to_wstring(trackMap.id);
             if(trackMap.ready) detail+=trackMap.cached?L" · local SVG cache":L" · SVG in memory";
             detail+=L" · "+std::to_wstring(o.place.rate)+L" Hz";
             label(detail,rect(14,61,W-28,18),Ink::Muted,Small);
         }
-        const RECT area=rect(24,92,W-48,208);
+        const RECT area=rect(24,MapOnly(o)?48:92,W-48,208);
         if(trackMap.ready) {
             RECT physical=area; physical.top-=titleOffset; physical.bottom-=titleOffset;
-            out.push_back({DrawCommand::Map,Regular,0,physical,0,{static_cast<float>(trackMap.revision)}});
+            out.push_back({DrawCommand::Map,Regular,0,physical,0,{static_cast<float>(trackMap.revision),static_cast<float>((o.map.background?1:0)|(o.map.pitLane?2:0)|(o.map.startFinish?4:0))}});
             if(trackMap.geometry.direction) {
                 const auto transform=MapFit(trackMap.geometry,area.right-area.left,area.bottom-area.top);
                 const int reference=ReferenceCar(app.frame);
@@ -36,8 +36,9 @@
                 for(const auto& d:app.session.drivers) if(d.index!=reference) drawCar(d,false);
                 if(own!=app.session.drivers.end()) drawCar(*own,true);
             }
-        } else label(trackMap.message,rect(20,130,W-40,80),Ink::Muted,Regular,DT_CENTER);
+        } else label(trackMap.message,rect(20,MapOnly(o)?100:130,W-40,80),Ink::Muted,Regular,DT_CENTER);
         const bool warning=trackMap.ready && !trackMap.geometry.direction;
-        label(trackMap.ready?(warning?trackMap.message:L"FOCUS: white ring · CLASS: color · PIT: hollow"):L"Official iRacing SVGs · prototype",rect(14,307,W-28,18),warning?Ink::Yellow:Ink::Muted,Small,DT_CENTER);
-        if(trackMap.ready && o.map.details && !warning) label(L"Approximate position from SVG path length",rect(14,330,W-28,18),Ink::Muted,Small,DT_CENTER);
+        if(!MapOnly(o)) label(trackMap.ready?(warning?trackMap.message:L"FOCUS: white ring · CLASS: color · PIT: hollow"):L"Official iRacing SVGs · prototype",rect(14,307,W-28,18),warning?Ink::Yellow:Ink::Muted,Small,DT_CENTER);
+        else if(warning) label(trackMap.message,rect(14,32,W-28,16),Ink::Yellow,Small,DT_CENTER);
+        if(trackMap.ready && o.map.details && !warning && !MapOnly(o)) label(L"Approximate position from SVG path length",rect(14,330,W-28,18),Ink::Muted,Small,DT_CENTER);
         footer(end);

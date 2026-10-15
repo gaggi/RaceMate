@@ -107,6 +107,8 @@ The official `active.svg`, `start-finish.svg` and optional `pitroad.svg` downloa
 
 Start/finish and driving direction are extracted from the SVG. Car lap percentages follow a prepared path between the circuit boundaries; this is an approximation until checked in the simulator. If start/finish cannot be resolved the map reports the error; if direction cannot be resolved, it shows the map without car markers. The focused car has a white ring and yellow marker; other cars use class colors. Numbers, own-class filtering, pit cars, projection details and the usual header/footer metrics are optional. Pit markers are hollow and follow their main-circuit lap percentage, not an exact pit-lane position. The static map bitmap is cached per overlay and size; the default update rate is 15 Hz.
 
+Switch **Background and frame** off for just the map and car markers on a transparent background; captions, border and header/footer are hidden while their settings are kept. **Pit lane** and **Start/finish marking** independently switch those SVG layers without changing position mapping. **Cars in the pits** remains a separate marker filter. All three new switches default to on, preserving existing layouts.
+
 See [the prototype test guide](docs/trackmap-prototype.md) and [third-party notices](docs/third-party.md).
 
 ## Race Control

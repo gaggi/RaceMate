@@ -173,8 +173,9 @@ Bands DefaultBands(int kind) {
 }
 struct FuelSettings { std::array<bool,FuelModuleCount> display{}; std::array<bool,FuelMetricCount> figures{}; std::vector<int> order=FuelOrder; bool strip=false; };
 struct WeatherSettings { std::array<bool,WeatherModuleCount> display{}; std::vector<int> order=WeatherOrder; bool strip=false; };
-struct TrackMapSettings { bool numbers=true, ownClass=false, pit=true, details=true; };
+struct TrackMapSettings { bool numbers=true, ownClass=false, pit=true, details=true, background=true, pitLane=true, startFinish=true; };
 constexpr int TrackMapWidth=440, TrackMapBodyHeight=328;
+constexpr COLORREF TrackMapTransparentKey=RGB(1,2,3); // Reserved, distinct from marker text and fills.
 // One overlay window. A kind can have several instances; the first keeps the kind's plain name and settings section.
 struct Overlay {
     HWND window=nullptr; int kind=0, number=1; Placement place;
@@ -188,7 +189,7 @@ struct Overlay {
     mutable std::vector<Width> widths; // Measured text widths for the current fonts.
     struct Logo { int index, size; HBITMAP bitmap; };
     std::vector<Logo> logos; // Car brand logos at this overlay's size, premultiplied for AlphaBlend.
-    HBITMAP mapBitmap=nullptr; int mapWidth=0,mapHeight=0; unsigned mapRevision=~0u;
+    HBITMAP mapBitmap=nullptr; int mapWidth=0,mapHeight=0,mapStyle=-1; unsigned mapRevision=~0u;
     struct MapMarker { int width,height,stroke; COLORREF color; bool hollow; HBITMAP bitmap; };
     std::vector<MapMarker> mapMarkers;
     // Rows for the current model version.
@@ -198,7 +199,7 @@ struct Overlay {
         for(const auto& logo:logos) DeleteObject(logo.bitmap);
         logos.clear();
         if(mapBitmap) DeleteObject(mapBitmap);
-        mapBitmap=nullptr; mapWidth=mapHeight=0; mapRevision=~0u;
+        mapBitmap=nullptr; mapWidth=mapHeight=0; mapStyle=-1; mapRevision=~0u;
         for(const auto& marker:mapMarkers) DeleteObject(marker.bitmap);
         mapMarkers.clear();
         for(HFONT& font:fonts) if(font) { DeleteObject(font); font=nullptr; }
@@ -362,8 +363,9 @@ std::wstring CompletedLaps(const Row& row) {
     return completed>=0?std::to_wstring(completed):L"—";
 }
 // All overlay kinds draw the same configurable metric bands.
-bool ShowOverlayHeader(const Overlay& o) { return o.bands.header; }
-int FooterHeight(const Overlay& o) { return o.bands.footer.enabled?28:0; }
+bool MapOnly(const Overlay& o) { return o.kind==TrackMapKind && !o.map.background; }
+bool ShowOverlayHeader(const Overlay& o) { return o.bands.header && !MapOnly(o); }
+int FooterHeight(const Overlay& o) { return o.bands.footer.enabled && !MapOnly(o)?28:0; }
 double SessionProgress();
 // The Standings' session progress bar, a row of its own under the header while the session has a known length.
 int ProgressHeight(const Overlay& o) { return o.kind==StandingsKind && o.table.progress && SessionProgress()>=0?24:0; }
@@ -500,6 +502,8 @@ void ReadInstance(Overlay& o) {
     if(kind==TrackMapKind) {
         o.map.numbers=ReadBool(section.c_str(),L"ShowCarNumbers",true); o.map.ownClass=ReadBool(section.c_str(),L"OwnClass",false);
         o.map.pit=ReadBool(section.c_str(),L"ShowPitCars",true); o.map.details=ReadBool(section.c_str(),L"ShowMapDetails",true);
+        o.map.background=ReadBool(section.c_str(),L"ShowBackground",true); o.map.pitLane=ReadBool(section.c_str(),L"ShowPitLane",true);
+        o.map.startFinish=ReadBool(section.c_str(),L"ShowStartFinish",true);
     }
 }
 void Load() {
@@ -583,6 +587,7 @@ void Save() {
         if(o.kind==TrackMapKind) {
             number(section,L"ShowCarNumbers",o.map.numbers); number(section,L"OwnClass",o.map.ownClass);
             number(section,L"ShowPitCars",o.map.pit); number(section,L"ShowMapDetails",o.map.details);
+            number(section,L"ShowBackground",o.map.background); number(section,L"ShowPitLane",o.map.pitLane); number(section,L"ShowStartFinish",o.map.startFinish);
         }
     }
     number(L"General",L"ShowTitleBar",app.showTitleBar); number(L"General",L"RefreshHz",app.rate);
@@ -710,7 +715,7 @@ int BrandLogo(const std::string& brand) {
     return -1;
 }
 int HeightWithTitle(const Overlay& o) {
-    if(o.kind==TrackMapKind) return 32+TrackMapBodyHeight+FooterHeight(o);
+    if(o.kind==TrackMapKind) return 32+(MapOnly(o)?240:TrackMapBodyHeight)+FooterHeight(o);
     const auto& t=o.table;
     if(o.kind==RelativeKind) return TableRowsTop(o)+t.rows*27+FooterHeight(o);
     if(o.kind==StandingsKind) {
@@ -882,7 +887,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         r.top-=titleOffset; r.bottom-=titleOffset; out.push_back({type,Regular,0,r,color,{static_cast<float>(px(radius))}});
     };
     const COLORREF white=Ink::White, muted=Ink::Muted;
-    out.push_back({DrawCommand::Fill,Regular,0,{0,0,width,height},Ink::Panel});
+    out.push_back({DrawCommand::Fill,Regular,0,{0,0,width,height},MapOnly(o)?TrackMapTransparentKey:Ink::Panel});
     // Width in physical pixels, measured with the overlay's fonts exactly as DrawLabel will.
     // Most metric texts repeat between refreshes, so widths are kept until the fonts change.
     auto measure=[&](const std::wstring& text,FontId font) {
@@ -1320,7 +1325,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         footer(90);
     }
     // The 1 px border, last so it stays on top; the window region rounds the same corners. The Pit Limiter's color needs none.
-    if(o.kind!=PitLimiterKind) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{static_cast<float>(o.place.rounded?px(CornerRadius):0)}});
+    if(o.kind!=PitLimiterKind && !MapOnly(o)) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{static_cast<float>(o.place.rounded?px(CornerRadius):0)}});
 }
 // DrawTextW costs about three times as much as measuring and ExtTextOutW; it remains only for ellipsis.
 void DrawLabel(HDC dc,const DrawCommand& c) {
@@ -1501,7 +1506,7 @@ void SetOverlayOrigin(Overlay& o,int x,int y) {
     o.place.x=x+(o.place.growLeft?MulDiv(OverlayWidth(o),dpi*o.place.scale,9600):0);
     o.place.y=y+(o.place.growUp?MulDiv(BaseHeight(o),dpi*o.place.scale,9600):0);
 }
-void ApplyOpacity(const Overlay& o) { SetLayeredWindowAttributes(o.window,0,static_cast<BYTE>(o.place.opacity*255/100),LWA_ALPHA); }
+void ApplyOpacity(const Overlay& o) { SetLayeredWindowAttributes(o.window,MapOnly(o)?TrackMapTransparentKey:0,static_cast<BYTE>(o.place.opacity*255/100),LWA_ALPHA|(MapOnly(o)?LWA_COLORKEY:0)); }
 void Fit(Overlay& o,bool recover=false) {
     InvalidateModel();
     const int dpi=GetDpiForWindow(o.window);

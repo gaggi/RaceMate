@@ -9,6 +9,8 @@ Branch: `codex/trackmap-prototype`.
 5. Zunächst an Start/Ziel prüfen, ob der Marker beim Überqueren der Linie ebenfalls über die weiße Linie geht. Danach Fahrtrichtung und Position in mehreren Kurven prüfen. Auch den Übergang von 99,x % auf 0 % ansehen.
 6. Ohne RaceMate-Neustart das Layout oder die Strecke wechseln. Die alte Karte muss verschwinden und die zum neuen TrackID passende Karte erscheinen. **Retry** in den Track-Map-Einstellungen lädt nach einem Fehler erneut.
 
+**Background and frame** ausschalten zeigt nur die Karte mit Fahrzeugen auf transparentem Hintergrund. Rand, Überschriften, Legende sowie Header/Footer verschwinden dabei; ihre Einstellungen bleiben für den Modus mit Hintergrund erhalten. **Pit lane** und **Start/finish marking** schalten die gezeichnete Boxengasse beziehungsweise Linie mit Richtungspfeil unabhängig voneinander um. Das Ausblenden beeinflusst die Positionsberechnung nicht. **Cars in the pits** steuert separat die Fahrzeugmarker in der Box.
+
 Für Rückmeldungen helfen TrackID/Layout und konkrete Stellen: zum Beispiel „Okayama Full, Marker an der Hairpin schon 30 m zu weit, an Start/Ziel passend“. So lässt sich ein Startversatz von einer Abweichung der gezeichneten Streckenlänge unterscheiden.
 
 ## Was der Prototyp macht
