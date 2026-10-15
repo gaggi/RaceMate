@@ -1,0 +1,31 @@
+#pragma once
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace rm::trackmap {
+struct Point { double x=0, y=0; };
+struct Path { std::vector<Point> points; bool closed=false; };
+struct Shape { std::vector<Path> paths; bool evenOdd=false; double strokeWidth=0; bool filled=true; };
+struct Layer { double width=0, height=0; std::vector<Shape> shapes; };
+struct Geometry {
+    Layer active, finish, pit;
+    std::vector<Point> route;
+    std::vector<double> distances;
+    Point low, high;
+    double length=0, start=0;
+    int direction=0;
+    bool centered=false;
+    Point At(double fraction, int directionOverride=0, double offset=0) const;
+};
+struct Result {
+    Geometry geometry;
+    std::string error;
+    explicit operator bool() const { return error.empty() && geometry.length>0; }
+};
+// SVGs are parsed once on a worker. No telemetry learning or track-specific corrections.
+Result Prepare(std::string active, std::string finish, std::string pit={});
+struct Source { int id; const char* slug; const char* folder; };
+const Source* FindSource(int trackId, std::string_view trackName={});
+std::string NormalizeName(std::string_view name);
+}

@@ -44,7 +44,7 @@ private:
             row.expandHeight=&o==expanded_?84:0;
             push(std::move(row),Key::Instance,&o);
         }
-        RowList::Row add; add.title=L"Add overlay"; add.detail=L"Another Relative, Standings, Fuel Calculator or Weather with its own settings and place."; add.button=L"Add...";
+        RowList::Row add; add.title=L"Add overlay"; add.detail=L"Another Relative, Standings, Fuel Calculator, Weather or Track Map with its own settings and place."; add.button=L"Add...";
         push(std::move(add),Key::Add);
         RowList::Row reset; reset.title=L"Reset positions"; reset.detail=L"Puts every overlay back in its default place on the main monitor."; reset.button=L"Reset";
         push(std::move(reset),Key::Reset);
@@ -87,7 +87,7 @@ private:
         Refresh();
     }
     void Add() {
-        static constexpr int kinds[]={RelativeKind,StandingsKind,FuelKind,WeatherKind};
+        static constexpr int kinds[]={RelativeKind,StandingsKind,FuelKind,WeatherKind,TrackMapKind};
         std::vector<std::wstring> items; for(int kind:kinds) items.push_back(Titles[kind]);
         const int choice=ChooseFromMenu(items,-1); if(choice<0) return;
         NewInstance(kinds[choice]); Refresh();

@@ -1,6 +1,6 @@
 # RaceMate 0.1.2
 
-Lightweight native overlays for iRacing on Windows 10/11. C++20, Win32 and GDI: one executable with a statically linked runtime, no browser engine, no network access, read-only access to iRacing's shared memory.
+Lightweight native overlays for iRacing on Windows 10/11. C++20, Win32 and GDI: one executable with a statically linked runtime, no browser engine and read-only access to iRacing's shared memory. Optional update checks and the experimental Track Map use HTTPS.
 
 ## Getting started
 
@@ -25,7 +25,7 @@ Overlays stay visible during spotting, replays and paused playback, and follow t
 
 ## Overlays
 
-The Overlays page starts with **Preview**, **Move overlays** and **Hide all overlays**, so they stay in view with many overlays. In all lists, Space switches a row and Enter opens its settings or expands it. Each overlay's row expands to its size, opacity, **fixed corner** and **update rate** (1–20 Hz; default 10 Hz for Relative and Pit Limiter, 1 Hz for Standings, Fuel Calculator and Weather). The fixed corner stays in place when the overlay grows or shrinks (more rows, extra columns, header or footer). **Settings** in the row opens the overlay's own page; its **Layout** section switches **rounded corners** (default square).
+The Overlays page starts with **Preview**, **Move overlays** and **Hide all overlays**, so they stay in view with many overlays. In all lists, Space switches a row and Enter opens its settings or expands it. Each overlay's row expands to its size, opacity, **fixed corner** and **update rate** (1–20 Hz; default 10 Hz for Relative and Pit Limiter, 1 Hz for Standings, Fuel Calculator and Weather, 15 Hz for Track Map). The fixed corner stays in place when the overlay grows or shrinks (more rows, extra columns, header or footer). **Settings** in the row opens the overlay's own page; its **Layout** section switches **rounded corners** (default square).
 
 **Add overlay** adds another Relative, Standings, Fuel Calculator or Weather with its own settings and place, for example a second Weather that shows only the wind rose in the middle of the screen. The copy button in an overlay's row adds one with the same settings; the bin removes an added overlay with its settings. Added overlays are numbered (Weather 2) and saved in their own section of `settings.ini`. While an overlay's own page is open, it has a red border; while overlays can be moved, all have a dashed yellow border.
 
@@ -98,6 +98,16 @@ Modules, each with its own switch and ordered with the arrows on the overlay's p
 - The wind module shows the **wind rose** (the ring with the speed inside), the **wind text** or both. With only the wind rose switched on, the overlay shrinks to the ring.
 - Layout **Panel** or **Strip** (condition, rain, temperatures and wind in one line; the others are marked **Panel only**).
 - Trends compare with 10 minutes ago and pause while old footage plays; the temperature history is recorded while you drive or watch live and says how many minutes it holds so far. Precipitation is the current rain, not a forecast.
+
+### Track Map (experimental)
+
+Enable **Track Map** on the Overlays page; it starts disabled. The exact layout is selected by iRacing's `TrackID` and checked against its internal `TrackName`. The built-in index currently covers 424 layouts. Unknown layouts stay empty.
+
+The official `active.svg`, `start-finish.svg` and optional `pitroad.svg` download from iRacing's public asset server on a worker, then stay in `%LOCALAPPDATA%\RaceMate\trackmaps\v1\<TrackID>`. There are no bundled track SVGs or learned fallback maps. Preview uses the official Lime Rock GP SVG with sample cars. After the first successful download the cache works offline; **Retry** in its settings retries a failure.
+
+Start/finish and driving direction are extracted from the SVG. Car lap percentages follow a prepared path between the circuit boundaries; this is an approximation until checked in the simulator. If start/finish cannot be resolved the map reports the error; if direction cannot be resolved, it shows the map without car markers. The focused car has a white ring and yellow marker; other cars use class colors. Numbers, own-class filtering, pit cars, projection details and the usual header/footer metrics are optional. Pit markers are hollow and follow their main-circuit lap percentage, not an exact pit-lane position. The static map bitmap is cached per overlay and size; the default update rate is 15 Hz.
+
+See [the prototype test guide](docs/trackmap-prototype.md) and [third-party notices](docs/third-party.md).
 
 ## Race Control
 

@@ -1,0 +1,68 @@
+class TrackMapPage : public PageWindow {
+public:
+    explicit TrackMapPage(Overlay& overlay) : PageWindow(ui.heading,ui.text), o_(overlay) {}
+private:
+    enum Key { Info, Numbers, OwnClass, Pit, Details, Rounded, Header, Footer, Retry, Cache };
+    static constexpr int ListId=100, SlotEditId=230;
+    static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E';
+    void OnCreate() override { list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont()); editors_.Attach(list_,Instance(),TextFont()); Refresh(); }
+    void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
+    void Refresh() {
+        std::vector<RowList::Row> rows; keys_.clear();
+        auto push=[&](RowList::Row row,Key key) { rows.push_back(std::move(row)); keys_.push_back(key); };
+        auto heading=[&](const wchar_t* title) { RowList::Row row; row.header=true; row.title=title; push(std::move(row),Info); };
+        auto toggle=[&](const wchar_t* title,const wchar_t* detail,bool on,Key key) { RowList::Row row; row.title=title; row.detail=detail; row.toggle=on?1:0; push(std::move(row),key); };
+        heading(L"Display");
+        toggle(L"Car numbers",L"Switch off for smaller dots. Your reference car is yellow with a white outline.",o_.map.numbers,Numbers);
+        toggle(L"Own class only",L"Uses the class of your car, or the car you are watching.",o_.map.ownClass,OwnClass);
+        toggle(L"Cars in the pits",L"Hollow markers at their lap percentage on the main circuit; not their exact pit-lane position.",o_.map.pit,Pit);
+        toggle(L"Projection details",L"Show track ID, cache source, refresh rate and the distance-projection notice.",o_.map.details,Details);
+        push(RoundedRow(o_),Rounded);
+        heading(L"Header and footer");
+        for(Key key:{Header,Footer}) {
+            RowList::Row row=BandRow(o_,key==Footer); row.iconButtons={expanded_==key?CollapseGlyph:ExpandGlyph}; row.expandHeight=expanded_==key?BandEditorHeight:0;
+            push(std::move(row),key);
+        }
+        heading(L"SVG source");
+        RowList::Row status; status.title=L"Automatic layout match"; status.detail=L"Exact iRacing TrackID plus internal TrackName. Unknown layouts are left empty. Preview uses Lime Rock GP with sample cars."; push(std::move(status),Info);
+        RowList::Row retry; retry.title=L"Retry loading this map"; retry.detail=L"Uses a valid local cache first. Failed downloads are retried only on request or after changing track."; retry.button=L"Retry"; push(std::move(retry),Retry);
+        RowList::Row cache; cache.title=L"Local SVG cache"; cache.detail=TrackMapCache().wstring(); cache.button=L"Open folder"; push(std::move(cache),Cache);
+        RowList::Row note; note.title=L"Experimental distance projection"; note.detail=L"Start/finish and direction come from the official SVG. Lap percentages follow its prepared path length. No learned fallback or per-track corrections. SVGs download once per layout while this overlay is enabled."; push(std::move(note),Info);
+        list_.SetRows(std::move(rows));
+    }
+    void BuildEditors() {
+        editors_.Clear();
+        if(expanded_!=Header && expanded_!=Footer) return;
+        for(size_t i=0;i<keys_.size();++i) if(keys_[i]==expanded_) {
+            syncing_=true; editors_.Begin(static_cast<int>(i)); BandEditors(editors_,o_,expanded_==Footer,SlotEditId); syncing_=false; editors_.Position(); return;
+        }
+    }
+    bool OnCommand(int id,int code,HWND) override {
+        if(id==PageRefreshId) { Refresh(); BuildEditors(); return true; }
+        if(id>=SlotEditId && id<SlotEditId+SlotCount) {
+            if(!syncing_ && code==CBN_SELCHANGE) { ApplyBandEditor(editors_,o_,expanded_==Footer,id,SlotEditId); SettingChanged(); Refresh(); }
+            return true;
+        }
+        if(id!=ListId) return false;
+        if(code==RowList::kLayoutChanged) { editors_.Position(); return true; }
+        const int index=list_.NotifiedRow(); if(index<0 || static_cast<size_t>(index)>=keys_.size()) return true;
+        const Key key=keys_[index]; const bool on=list_.Rows()[index].toggle==1;
+        if(code==RowList::kToggled) {
+            if(key==Numbers) o_.map.numbers=on;
+            if(key==OwnClass) o_.map.ownClass=on;
+            if(key==Pit) o_.map.pit=on;
+            if(key==Details) o_.map.details=on;
+            if(key==Rounded) SetRounded(o_,on);
+            if(key==Header || key==Footer) SetBand(o_,key==Footer,on);
+            SettingChanged(); Refresh(); return true;
+        }
+        if(code==RowList::kButton || code==RowList::kActivated || code==RowList::kIconButton) {
+            if(key==Header || key==Footer) { expanded_=expanded_==key?Info:key; Refresh(); BuildEditors(); }
+            if(key==Retry) { RetryTrackMap(); UpdateOverlays(); }
+            if(key==Cache) { std::error_code error; std::filesystem::create_directories(TrackMapCache(),error); if(!error) ShellExecuteW(Handle(),L"open",TrackMapCache().c_str(),nullptr,nullptr,SW_SHOWNORMAL); }
+        }
+        return true;
+    }
+    Overlay& o_; RowList list_; RowEditors editors_; std::vector<Key> keys_; Key expanded_=Info; bool syncing_=false;
+};
+HWND CreateTrackMapPage(HWND parent,Overlay& overlay) { return PageWindow::Show(std::make_unique<TrackMapPage>(overlay),app.instance,parent,560,360); }

@@ -1,5 +1,6 @@
 #include "Telemetry.h"
 #include "RaceControl.h"
+#include "TrackMapLoader.h"
 #include <windowsx.h>
 #include <commctrl.h>
 #include <shellapi.h>
@@ -30,15 +31,15 @@ namespace {
 using namespace rm;
 constexpr COLORREF Background=RGB(246,247,249), Text=RGB(40,47,58);
 constexpr UINT TrayMessage=WM_APP+1;
-enum OverlayKind { RelativeKind, StandingsKind, FuelKind, PitLimiterKind, WeatherKind };
-constexpr int OverlayCount=WeatherKind+1;
+enum OverlayKind { RelativeKind, StandingsKind, FuelKind, PitLimiterKind, WeatherKind, TrackMapKind };
+constexpr int OverlayCount=TrackMapKind+1;
 constexpr bool IsTable(int kind) { return kind==RelativeKind || kind==StandingsKind; }
-const wchar_t* Titles[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pit Limiter",L"Weather"};
-const wchar_t* Sections[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pitlimiter",L"Weather"};
-constexpr POINT DefaultPositions[]={{40,120},{480,120},{40,470},{40,720},{40,820}};
+const wchar_t* Titles[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pit Limiter",L"Weather",L"Track Map"};
+const wchar_t* Sections[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pitlimiter",L"Weather",L"Track Map"};
+constexpr POINT DefaultPositions[]={{40,120},{480,120},{40,470},{40,720},{40,820},{960,120}};
 // Refresh rates an overlay can choose, and each overlay's default; telemetry is read at least as often as the fastest.
 constexpr int OverlayRates[]={1,2,5,10,15,20};
-constexpr int DefaultRates[]={10,1,1,10,1};
+constexpr int DefaultRates[]={10,1,1,10,1,15};
 // Relative and Standings columns. The values are stored in ColumnOrder.
 enum Column {
     PositionColumn, NumberColumn, DriverColumn, GapColumn, IntervalColumn, BestColumn, LastColumn,
@@ -138,7 +139,7 @@ const wchar_t* WetnessNames[]={L"—",L"Dry",L"Mostly Dry",L"Very Lightly Wet",L
 struct Placement { int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=true, growLeft=false, growUp=false, rounded=false; };
 enum FontId : unsigned char { Regular, Bold, Large, Small, Hero, SmallBold, FontCount };
 struct DrawCommand {
-    enum Type : unsigned char { Fill, Text, DottedLine, WindRing, Outline, RoundFill, Ring, Hatch, Sparkline, Logo };
+    enum Type : unsigned char { Fill, Text, DottedLine, WindRing, Outline, RoundFill, Ring, Hatch, Sparkline, Logo, Map, MapCar };
     Type type=Fill; FontId font=Regular; UINT align=DT_LEFT; RECT r{}; COLORREF color=0;
     std::array<float,5> shape{}; // Wind ring: center x/y, radius, scale, bearing (negative without direction). Outline: corner radius, line width (1 when 0), dashed when 1. RoundFill: corner radius. Ring: stroke width. Hatch: background color. Sparkline: stroke width; its text holds the points, 1 + 0..1000 from bottom to top. Logo: atlas cell.
     std::wstring text;
@@ -167,14 +168,17 @@ Bands DefaultBands(int kind) {
     if(kind==FuelKind) return {true,{OverlayNameMetric,FinalLapMetric,StopsNeededMetric,NoMetric},{false,DefaultFooter}};
     if(kind==WeatherKind) return {true,{OverlayNameMetric,DeclaredWetMetric,NoMetric,NoMetric},{false,DefaultFooter}};
     if(kind==PitLimiterKind) return {false,{OverlayNameMetric,NoMetric,NoMetric,NoMetric},{false,DefaultFooter}};
+    if(kind==TrackMapKind) return {true,{OverlayNameMetric,NoMetric,NoMetric,NoMetric},{false,DefaultFooter}};
     return {};
 }
 struct FuelSettings { std::array<bool,FuelModuleCount> display{}; std::array<bool,FuelMetricCount> figures{}; std::vector<int> order=FuelOrder; bool strip=false; };
 struct WeatherSettings { std::array<bool,WeatherModuleCount> display{}; std::vector<int> order=WeatherOrder; bool strip=false; };
+struct TrackMapSettings { bool numbers=true, ownClass=false, pit=true, details=true; };
+constexpr int TrackMapWidth=440, TrackMapBodyHeight=328;
 // One overlay window. A kind can have several instances; the first keeps the kind's plain name and settings section.
 struct Overlay {
     HWND window=nullptr; int kind=0, number=1; Placement place;
-    Bands bands; TableSettings table; FuelSettings fuel; WeatherSettings weather;
+    Bands bands; TableSettings table; FuelSettings fuel; WeatherSettings weather; TrackMapSettings map;
     HDC dc=nullptr; HBITMAP bitmap=nullptr; HGDIOBJ original=nullptr, originalFont=nullptr;
     HWND frame=nullptr; int frameState=-1; RECT frameRect{}; // The ring around it while edited or movable.
     std::array<HFONT,FontCount> fonts{}; int width=0,height=0,dpi=0;
@@ -184,12 +188,19 @@ struct Overlay {
     mutable std::vector<Width> widths; // Measured text widths for the current fonts.
     struct Logo { int index, size; HBITMAP bitmap; };
     std::vector<Logo> logos; // Car brand logos at this overlay's size, premultiplied for AlphaBlend.
+    HBITMAP mapBitmap=nullptr; int mapWidth=0,mapHeight=0; unsigned mapRevision=~0u;
+    struct MapMarker { int width,height,stroke; COLORREF color; bool hollow; HBITMAP bitmap; };
+    std::vector<MapMarker> mapMarkers;
     // Rows for the current model version.
     mutable unsigned rowsVersion=~0u; mutable std::vector<Row> relativeRows; mutable std::vector<StandingsGroup> standingsGroups;
     void Free() {
         if(dc) { SelectObject(dc,originalFont); SelectObject(dc,original); DeleteObject(bitmap); DeleteDC(dc); }
         for(const auto& logo:logos) DeleteObject(logo.bitmap);
         logos.clear();
+        if(mapBitmap) DeleteObject(mapBitmap);
+        mapBitmap=nullptr; mapWidth=mapHeight=0; mapRevision=~0u;
+        for(const auto& marker:mapMarkers) DeleteObject(marker.bitmap);
+        mapMarkers.clear();
         for(HFONT& font:fonts) if(font) { DeleteObject(font); font=nullptr; }
         dc=nullptr; bitmap=nullptr; width=height=dpi=0; scene.clear(); widths.clear();
     }
@@ -329,6 +340,7 @@ int FuelHeight(const Overlay& o) {
     return std::max(h,40);
 }
 int OverlayWidth(const Overlay& o) {
+    if(o.kind==TrackMapKind) return TrackMapWidth;
     if(IsTable(o.kind)) { int width=16; for(int id:VisibleColumns(o)) width+=ColumnWidth(o,id); return std::max(120,width); }
     if(o.kind==WeatherKind) return o.weather.strip?std::max(1,WeatherStripCount(o))*WeatherStripCell:(WindRoseOnly(o)?WindRoseWidth:WeatherPanelWidth);
     if(o.kind==FuelKind) return o.fuel.strip?std::max(1,FuelStripCount(o))*FuelStripCell:FuelPanelWidth;
@@ -472,7 +484,7 @@ void ReadInstance(Overlay& o) {
     p.scale=NormalizeScale(ReadInt(section.c_str(),L"Scale",100)); p.opacity=std::clamp(ReadInt(section.c_str(),L"Opacity",90),40,100);
     const int rate=ReadInt(section.c_str(),L"RefreshHz",DefaultRates[kind]);
     p.rate=*std::find_if(std::begin(OverlayRates),std::end(OverlayRates)-1,[&](int choice){return choice>=rate;});
-    p.enabled=ReadBool(section.c_str(),L"Enabled",true); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
+    p.enabled=ReadBool(section.c_str(),L"Enabled",kind!=TrackMapKind); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
     p.rounded=ReadBool(section.c_str(),L"RoundedCorners",false);
     const Bands defaults=DefaultBands(kind); auto& b=o.bands;
     b.header=ReadBool(section.c_str(),L"ShowHeader",kind==PitLimiterKind?ReadBool(L"General",L"ShowTitleBar",false):defaults.header); b.headerMetrics=ReadSlots(section.c_str(),HeaderKeys,defaults.headerMetrics);
@@ -485,6 +497,10 @@ void ReadInstance(Overlay& o) {
     if(kind==WeatherKind) o.weather.order=ReadOrder(section.c_str(),L"ModuleOrder",WeatherOrder);
     for(int i=0;i<WeatherModuleCount;++i) o.weather.display[i]=ReadBool(section.c_str(),WeatherModules[i].key,WeatherModules[i].on);
     o.weather.strip=o.fuel.strip;
+    if(kind==TrackMapKind) {
+        o.map.numbers=ReadBool(section.c_str(),L"ShowCarNumbers",true); o.map.ownClass=ReadBool(section.c_str(),L"OwnClass",false);
+        o.map.pit=ReadBool(section.c_str(),L"ShowPitCars",true); o.map.details=ReadBool(section.c_str(),L"ShowMapDetails",true);
+    }
 }
 void Load() {
     app.savedSettings.clear(); // The next Save() writes everything once.
@@ -563,6 +579,10 @@ void Save() {
         if(o.kind==WeatherKind) {
             for(int i=0;i<WeatherModuleCount;++i) number(section,WeatherModules[i].key,o.weather.display[i]);
             number(section,L"Layout",o.weather.strip); order(section,L"ModuleOrder",o.weather.order);
+        }
+        if(o.kind==TrackMapKind) {
+            number(section,L"ShowCarNumbers",o.map.numbers); number(section,L"OwnClass",o.map.ownClass);
+            number(section,L"ShowPitCars",o.map.pit); number(section,L"ShowMapDetails",o.map.details);
         }
     }
     number(L"General",L"ShowTitleBar",app.showTitleBar); number(L"General",L"RefreshHz",app.rate);
@@ -690,6 +710,7 @@ int BrandLogo(const std::string& brand) {
     return -1;
 }
 int HeightWithTitle(const Overlay& o) {
+    if(o.kind==TrackMapKind) return 32+TrackMapBodyHeight+FooterHeight(o);
     const auto& t=o.table;
     if(o.kind==RelativeKind) return TableRowsTop(o)+t.rows*27+FooterHeight(o);
     if(o.kind==StandingsKind) {
@@ -847,6 +868,7 @@ const CellRenderer CellRenderers[]={
 static_assert(std::size(CellRenderers)==ColumnCount);
 bool Editing(const Overlay& o); // Its own page is open in the visible main window.
 // Describes an overlay in physical pixels. Comparing it with the previous scene yields the exact changed areas.
+#include "TrackMap.inc"
 void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCommand>& out) {
     out.clear();
     auto px=[&](int v){return MulDiv(v,dpi*o.place.scale,9600);};
@@ -910,7 +932,9 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         fill({0,px(y),width,height+titleOffset},Ink::Band); fill({0,px(y),width,px(y)+std::max(1,px(1))},Ink::Line);
         slots(o.bands.footer.metrics,{0,px(y),width,height+titleOffset});
     };
-    if(IsTable(o.kind)) {
+    if(o.kind==TrackMapKind) {
+#include "TrackMapScene.inc"
+    } else if(IsTable(o.kind)) {
         const auto columns=VisibleColumns(o); int headerX=12;
         if(ProgressHeight(o)) {
             // Like the fuel tank: the session done in the accent color on a dark track, the percentage after it.
@@ -1360,6 +1384,8 @@ void PaintScene(Overlay& o,HRGN dirty) {
             MoveToEx(dc,c.r.left,c.r.top,nullptr); LineTo(dc,c.r.right,c.r.top); SelectObject(dc,old); DeleteObject(pen); break;
         }
         case DrawCommand::WindRing: DrawWind(dc,c); break;
+        case DrawCommand::Map: PaintMap(o,c); break;
+        case DrawCommand::MapCar: PaintMapCar(o,c); break;
         case DrawCommand::Ring: {
             // An antialiased ring around a letter centered on its ink: cap height and glyph box, not the text cell.
             const float stroke=c.shape[0], w=static_cast<float>(c.r.right-c.r.left), h=static_cast<float>(c.r.bottom-c.r.top);
@@ -1558,6 +1584,7 @@ bool RefreshDue(ULONGLONG& due,ULONGLONG now,int period,int slack) {
 // Ticks refresh each overlay at its own rate; everything else (settings, hide, diagnostics) forces a refresh.
 void UpdateOverlays(bool force=true) {
     if(!app.overlayClass) return;
+    UpdateTrackMap();
     InvalidateModel();
     const bool pitVisible=app.pitVisibility.Update(app.session,app.frame);
     for(auto& o:app.overlays) {
@@ -1668,6 +1695,7 @@ LRESULT CALLBACK HotkeyFieldProc(HWND w,UINT m,WPARAM wp,LPARAM lp,UINT_PTR id,D
 #include "Bands.inc"
 #include "TablePage.inc"
 #include "ElementsPage.inc"
+#include "TrackMapPage.inc"
 #include "RaceControlPage.inc"
 #include "GeneralPage.inc"
 void TrayMenu() {
@@ -1728,6 +1756,7 @@ LRESULT CALLBACK MainProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
         ApplyUiDpi(); return 0;
     }
     case WM_DESTROY:
+        trackMap.task.Cancel();
         if(!app.diagnostics) { RememberWindowPlacement(); Save(); }
         CloseRaceControl();
         KillTimer(w,1); Shell_NotifyIconW(NIM_DELETE,&app.tray);

@@ -50,6 +50,40 @@ int RunDiagnostics() {
     ShowWindow(app.main,SW_SHOWNOACTIVATE); UpdateWindow(app.main);
     bool ok=Export(app.main,L"build\\qa\\main-overlays.bmp");
     {
+        auto& o=First(TrackMapKind); const auto settings=o.map; const auto savedSession=app.session; const auto savedFrame=app.frame;
+        bool mapOk=true, exercised=false;
+        for(int id:{353,166}) {
+            const auto cache=TrackMapCache(); std::error_code error;
+            if(!std::filesystem::exists(cache/std::to_wstring(id)/L"source.txt",error)) continue;
+            exercised=true;
+            const std::atomic_bool cancelled=false; auto loaded=trackmap::Load(*trackmap::FindSource(id),cache,cancelled);
+            mapOk=loaded.fromCache && loaded.map && loaded.map.geometry.direction!=0 && mapOk;
+            if(!loaded.map) continue;
+            app.preview=false; app.session.trackId=id; app.session.trackName=id==353?"limerock 2019 gp":"okayama full";
+            app.session.track=id==353?"Lime Rock Park":"Okayama International Circuit"; app.session.trackConfig=id==353?"Grand Prix":"Full Course";
+            for(const auto& d:app.session.drivers) app.frame.cars[d.index].pct=std::fmod(d.index*.091+.05,1.);
+            trackMap.task.Cancel(); trackMap.identity=std::to_string(id)+":"+trackmap::NormalizeName(app.session.trackName); trackMap.id=id;
+            trackMap.geometry=std::move(loaded.map.geometry); trackMap.ready=trackMap.cached=true; ++trackMap.revision;
+            o.map={}; UpdateOverlays();
+            const auto bitmap=o.mapBitmap;
+            mapOk=bitmap && Export(o.window,L"build\\qa\\trackmap-"+std::to_wstring(id)+L".bmp") && mapOk;
+            auto markers=[&] { return std::count_if(o.scene.begin(),o.scene.end(),[](const DrawCommand& c){return c.type==DrawCommand::MapCar;}); };
+            const auto all=markers(); o.map.ownClass=true; UpdateOverlays();
+            const auto sprites=o.mapMarkers.size();
+            app.frame.cars[0].pct+=.001; UpdateOverlays();
+            mapOk=markers()<all && o.mapBitmap==bitmap && sprites>0 && o.mapMarkers.size()==sprites && mapOk;
+            o.map.numbers=false; o.map.pit=false; o.map.details=false; Save(); Load(); UpdateOverlays();
+            mapOk=!o.map.numbers && o.map.ownClass && !o.map.pit && !o.map.details && Export(o.window,L"build\\qa\\trackmap-dots-"+std::to_wstring(id)+L".bmp") && mapOk;
+        }
+        app.preview=false; app.session.trackId=999999; app.session.trackName="unknown layout"; UpdateOverlays();
+        mapOk=!trackMap.ready && !trackMap.task.Running() && std::none_of(o.scene.begin(),o.scene.end(),[](const DrawCommand& c){return c.type==DrawCommand::Map;}) && mapOk;
+        o.map=settings; app.preview=true; app.session=savedSession; app.frame=savedFrame; RetryTrackMap(); UpdateOverlays(); Save();
+        OpenOverlay(o); mapOk=Export(app.main,L"build\\qa\\trackmap-settings.bmp") && mapOk;
+        report<<"Track map: cached official Lime Rock/Okayama SVGs, class/pit filters, persisted settings, cached bitmap/markers and unknown-layout clearing: "<<(mapOk?(exercised?"PASS":"PASS (no cached real SVGs to render)"):"FAIL")<<"\n";
+        ok=mapOk && ok;
+        ShowPage(Page::Overlays);
+    }
+    {
         bool forecastOk=true;
         InvalidateModel(); Plan();
         const auto savedPlan=app.fuelPlan;
@@ -1096,6 +1130,17 @@ int RunTickBenchmark() {
     const char* classes[]={"GTP","LMP2","GT3"}; const unsigned colors[]={0xffda59,0x33ceff,0xff5888};
     for(int i=0;i<60;++i) session.drivers.push_back({i,i%3+1,1500+i*37,colors[i%3],false,false,"Driver Number "+std::to_string(i),std::to_string(i+1),classes[i%3],"Car","car",0,"A 3.45"});
     session.player=7; app.session=session;
+    // Include actual track-map rendering when the QA cache was prepared, without
+    // fetching assets or timing initial SVG parsing as part of a connected refresh.
+    bool mapPrepared=false; std::error_code mapError;
+    if(std::filesystem::exists(TrackMapCache()/L"353"/L"source.txt",mapError)) {
+        const std::atomic_bool cancelled=false; auto loaded=trackmap::Load(*trackmap::FindSource(353),TrackMapCache(),cancelled);
+        if(loaded.map) {
+            app.session.trackId=353; app.session.trackName="limerock 2019 gp";
+            trackMap.task.Cancel(); trackMap.identity="353:limerock2019gp"; trackMap.id=353;
+            trackMap.geometry=std::move(loaded.map.geometry); trackMap.ready=trackMap.cached=true; ++trackMap.revision; mapPrepared=true;
+        }
+    }
     Frame frame=DemoFrame(0); frame.player=7; frame.session=0; frame.state=4; frame.pit=false; frame.timeLeft=3600; frame.cars={};
     double progress[60];
     for(int i=0;i<60;++i) progress[i]=10+(60-i)*.02;
@@ -1139,6 +1184,7 @@ int RunTickBenchmark() {
     const double cpu=(ticks(kernelBefore,kernelAfter)+ticks(userBefore,userAfter))/iterations;
     const double wall=(end.QuadPart-start.QuadPart)*1e6/frequency.QuadPart/iterations;
     std::ofstream report("build/qa/benchmark.txt");
+    report<<"Official track-map geometry and 60 car markers included: "<<mapPrepared<<"\n";
     report<<"60-car race, all overlays visible, "<<iterations<<" refreshes: "<<wall<<" us wall, "<<cpu<<" us CPU per refresh\n";
     report<<"  model "<<phases[0]*1e6/frequency.QuadPart/iterations<<" us, overlay update "<<phases[1]*1e6/frequency.QuadPart/iterations<<" us, paint "<<phases[2]*1e6/frequency.QuadPart/iterations<<" us\n";
     for(const auto& o:app.overlays) report<<"  overlay "<<o.kind<<": "<<changes[o.kind]<<" repaints, "<<paints[o.kind]*1e6/frequency.QuadPart/iterations<<" us per refresh"<<std::endl;

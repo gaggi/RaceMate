@@ -39,6 +39,8 @@ struct SessionResult {
 struct CameraGroup { int number=-1; std::string name; bool scenic=false; };
 struct Session {
     std::string track, type, key, trackUsage;
+    std::string trackName, trackConfig;
+    int trackId = -1; // Exact layout identity for official track maps.
     int number = -1, player = -1, totalLaps = -1, incidentLimit = -1, incidentWarning = -1;
     double trackMeters = -1, fuelCapacity = -1;
     std::vector<Driver> drivers;

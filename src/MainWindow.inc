@@ -14,6 +14,7 @@ HWND CreateOverlaysPage(HWND parent);
 HWND CreateGeneralPage(HWND parent);
 HWND CreateTablePage(HWND parent,Overlay& overlay);
 HWND CreateElementsPage(HWND parent,Overlay& overlay);
+HWND CreateTrackMapPage(HWND parent,Overlay& overlay);
 HWND CreateRaceControlPage(HWND parent);
 void RefreshPage() { if(ui.host.Content()) SendMessageW(ui.host.Content(),WM_COMMAND,MAKEWPARAM(PageRefreshId,0),0); }
 std::wstring HotkeyText(WORD hotkey) {
@@ -79,7 +80,7 @@ void ShowPage(Page page,Overlay* overlay=nullptr) {
         L"Class leaders and the cars around you: rows, columns, header and footer.",
         L"Choose and order what it shows, and which laps count toward consumption.",
         L"A reminder to switch the pit limiter on. Size, opacity and corner are on the Overlays page.",
-        L"Choose and order its cards."};
+        L"Choose and order its cards.",L"Official SVG track map. Test the automatic layout, start/finish and distance projection."};
     if(page==Page::Overlay) {
         SetWindowTextW(ui.title,Name(*ui.overlay).c_str()); SetWindowTextW(ui.hint,hints[ui.overlay->kind]);
     } else if(page==Page::RaceControl) {
@@ -94,7 +95,7 @@ void ShowPage(Page page,Overlay* overlay=nullptr) {
     UpdateOverlays(); // The edited overlay's border follows the page.
     ui.nav.SetSelected(page==Page::Settings?NavSettingsId:(page==Page::RaceControl?NavRaceControlId:NavOverlaysId));
     const HWND host=ui.host.Handle();
-    ui.host.SetContent(page==Page::Overlays?CreateOverlaysPage(host):page==Page::RaceControl?CreateRaceControlPage(host):(page==Page::Settings?CreateGeneralPage(host):(IsTable(ui.overlay->kind)?CreateTablePage(host,*ui.overlay):CreateElementsPage(host,*ui.overlay))));
+    ui.host.SetContent(page==Page::Overlays?CreateOverlaysPage(host):page==Page::RaceControl?CreateRaceControlPage(host):(page==Page::Settings?CreateGeneralPage(host):(IsTable(ui.overlay->kind)?CreateTablePage(host,*ui.overlay):ui.overlay->kind==TrackMapKind?CreateTrackMapPage(host,*ui.overlay):CreateElementsPage(host,*ui.overlay))));
     LayoutMain();
 }
 void OpenOverlay(Overlay& o) { ShowPage(Page::Overlay,&o); }
@@ -143,7 +144,8 @@ void SettingChanged() { Save(); UpdateOverlays(); }
 Overlay& NewInstance(int kind,const Overlay* copy=nullptr) {
     auto& o=AddInstance(kind,InstanceCount(kind)+1);
     ReadInstance(o); // A removed instance's section is gone, so this gives the defaults.
-    if(copy) { o.bands=copy->bands; o.table=copy->table; o.fuel=copy->fuel; o.weather=copy->weather; o.place=copy->place; o.place.x+=30; o.place.y+=30; }
+    if(copy) { o.bands=copy->bands; o.table=copy->table; o.fuel=copy->fuel; o.weather=copy->weather; o.map=copy->map; o.place=copy->place; o.place.x+=30; o.place.y+=30; }
+    else o.place.enabled=true;
     CreateOverlayWindow(o); SettingChanged(); return o;
 }
 // Moves an ID one place up (-1) or down (+1); false at either end.
