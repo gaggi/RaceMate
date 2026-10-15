@@ -255,18 +255,18 @@ bool RaceIncidentsHigh(int incidents) {
 }
 std::wstring RaceStandingCell(const Row& row,int column) {
     switch(column) {
-    case 0: { const int p=app.standings.separateClasses?row.car.classPosition:row.car.position; return p>0?std::to_wstring(p):L"\u2014"; }
+    case 0: { const int p=First(StandingsKind).table.standings.separateClasses?row.car.classPosition:row.car.position; return p>0?std::to_wstring(p):L"\u2014"; }
     case 1:return Wide(row.driver.number);
     case 2:return Wide(row.driver.name);
     case 3:return Wide(row.driver.className);
-    case 4:return Gap(row,1);
-    case 5:return Interval(row);
+    case 4:return Gap(row,First(StandingsKind));
+    case 5:return Interval(row,First(StandingsKind).table);
     case 6:return Lap(row.car.best);
     case 7:return Lap(row.car.last);
     case 8:return RaceCarStatus(row).text;
     case 15: { const auto flags=Wide(DriverFlags(row.car.sessionFlags)); return flags.empty()?L"\u2014":flags; }
     case 16:return CompletedLaps(row);
-    case 17: { const int gained=PositionsGained(app.session,row,app.standings.separateClasses); return gained==-MaxCars?L"\u2014":(gained>0?L"+":L"")+std::to_wstring(gained); }
+    case 17: { const int gained=PositionsGained(app.session,row,First(StandingsKind).table.standings.separateClasses); return gained==-MaxCars?L"\u2014":(gained>0?L"+":L"")+std::to_wstring(gained); }
     case 18: { const int incidents=RaceIncidents(row); return incidents>=0?std::to_wstring(incidents):L"\u2014"; }
     default:return DriverValue(row,column-9);
     }
@@ -301,7 +301,7 @@ void UpdateRaceControl(bool force) {
     if(!raceControl.window || (!force && (!IsWindowVisible(raceControl.window) || IsIconic(raceControl.window)))) return;
     const auto now=GetTickCount64(); if(!force && now-raceControl.updated<500) return; raceControl.updated=now;
     UpdateRaceCameras(); UpdateRaceBanner();
-    auto options=app.standings; options.leaders=MaxCars; options.ahead=options.behind=0;
+    auto options=First(StandingsKind).table.standings; options.leaders=MaxCars; options.ahead=options.behind=0;
     std::vector<Row> rows; for(const auto& group:SelectStandings(app.session,app.frame,options)) rows.insert(rows.end(),group.rows.begin(),group.rows.end());
     const int reference=ReferenceCar(app.frame);
     int referenceClass=-1; for(const auto& d:app.session.drivers) if(d.index==reference) referenceClass=d.classId;
@@ -332,7 +332,7 @@ void UpdateRaceControl(bool force) {
     const bool pill=raceControl.car>=0;
     if(pill!=(IsWindowVisible(RaceItem(RaceCarPillId))!=FALSE)) { ShowWindow(RaceItem(RaceCarPillId),pill?SW_SHOW:SW_HIDE); LayoutRaceControl(); }
     if(pill) SetRaceText(RaceItem(RaceCarPillId),RaceCarName(raceControl.car)+L"  \u00D7");
-    std::wstring signature=std::to_wstring(raceControl.car)+L":"+std::to_wstring(raceControl.category)+L":"+std::to_wstring(raceControl.sortColumn)+std::to_wstring(raceControl.sortDescending)+std::to_wstring(raceControl.eventSortColumn)+std::to_wstring(raceControl.eventSortDescending)+std::to_wstring(app.standings.separateClasses)+std::to_wstring(app.frame.connected)+std::to_wstring(app.frame.onTrack);
+    std::wstring signature=std::to_wstring(raceControl.car)+L":"+std::to_wstring(raceControl.category)+L":"+std::to_wstring(raceControl.sortColumn)+std::to_wstring(raceControl.sortDescending)+std::to_wstring(raceControl.eventSortColumn)+std::to_wstring(raceControl.eventSortDescending)+std::to_wstring(First(StandingsKind).table.standings.separateClasses)+std::to_wstring(app.frame.connected)+std::to_wstring(app.frame.onTrack);
     for(int col:columns) signature+=L"|"+std::to_wstring(col); for(int col:feedColumns) signature+=L"E"+std::to_wstring(col);
     for(const auto& row:rows) { signature+=std::to_wstring(row.driver.index); for(int col:columns) signature+=L"|"+RaceStandingCell(row,col); }
     for(const auto& event:events) signature+=L"|"+std::to_wstring(event.id);

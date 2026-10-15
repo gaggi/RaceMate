@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <list>
 #include <map>
 #ifdef RACEMATE_DIAGNOSTICS
 #include <fstream>
@@ -141,8 +142,27 @@ struct DrawCommand {
             && color==o.color && shape==o.shape && text==o.text;
     }
 };
+struct FooterSettings { bool enabled=true; Slots metrics=DefaultFooter; };
+// What one Relative or Standings overlay shows; each kind ignores the other kind's part.
+struct TableSettings {
+    std::vector<int> columnOrder;
+    std::array<bool,DriverColumnCount> driverColumns{};
+    std::array<bool,ExtraColumnCount> extraColumns{};
+    std::array<bool,2> driverShortView{};
+    std::array<bool,3> driverFlags{true,true,true};
+    bool showDriver=true, showStatus=true, header=false, columnHeaders=false, classColors=true, brandLogo=true, brandName=true;
+    bool gapSigns=false; // + / - before gaps (and intervals in the Standings); off by default: the row order already tells.
+    int nameFormat=0;
+    Slots headerMetrics=DefaultHeader; FooterSettings footer;
+    int rows=7, gapDecimals=1; bool hidePit=false, best=false, last=false, lapColors=true; // Relative.
+    StandingsOptions standings; bool interval=false, laps=false, gained=false, progress=true; // Standings.
+};
+struct FuelSettings { std::array<bool,FuelModuleCount> display{}; std::array<bool,FuelMetricCount> figures{}; bool strip=false; };
+struct WeatherSettings { std::array<bool,WeatherModuleCount> display{}; bool strip=false; };
+// One overlay window. A kind can have several instances; the first keeps the kind's plain name and settings section.
 struct Overlay {
-    HWND window=nullptr; int kind=0; Placement place;
+    HWND window=nullptr; int kind=0, number=1; Placement place;
+    TableSettings table; FuelSettings fuel; WeatherSettings weather;
     HDC dc=nullptr; HBITMAP bitmap=nullptr; HGDIOBJ original=nullptr, originalFont=nullptr;
     std::array<HFONT,FontCount> fonts{}; int width=0,height=0,dpi=0;
     std::vector<DrawCommand> scene;
@@ -151,6 +171,8 @@ struct Overlay {
     mutable std::vector<Width> widths; // Measured text widths for the current fonts.
     struct Logo { int index, size; HBITMAP bitmap; };
     std::vector<Logo> logos; // Car brand logos at this overlay's size, premultiplied for AlphaBlend.
+    // Rows for the current model version.
+    mutable unsigned rowsVersion=~0u; mutable std::vector<Row> relativeRows; mutable std::vector<StandingsGroup> standingsGroups;
     void Free() {
         if(dc) { SelectObject(dc,originalFont); SelectObject(dc,original); DeleteObject(bitmap); DeleteDC(dc); }
         for(const auto& logo:logos) DeleteObject(logo.bitmap);
@@ -159,7 +181,6 @@ struct Overlay {
         dc=nullptr; bitmap=nullptr; width=height=dpi=0; scene.clear(); widths.clear();
     }
 };
-struct FooterSettings { bool enabled=true; Slots metrics=DefaultFooter; };
 // Global shortcuts, packed like the hotkey control: low byte virtual key, high byte HOTKEYF_* modifiers; 0 disables.
 constexpr int HotkeyCount=3;
 const wchar_t* HotkeyKeys[]={L"Move",L"Hide",L"Settings"};
@@ -168,33 +189,13 @@ constexpr WORD DefaultHotkeys[]={HotkeyAllModifiers|'E',HotkeyAllModifiers|'H',H
 struct App {
     HINSTANCE instance=nullptr; HWND main=nullptr; HBRUSH brush=nullptr;
     RECT windowRect{}; bool windowMaximized=false;
-    std::array<Overlay,OverlayCount> overlays;
+    std::list<Overlay> overlays; // Grouped by kind, in instance order; each stays at its address for its window.
     Frame frame; Session session; Telemetry telemetry; FuelCalculator fuel;
     EventRecorder events; PitHistory pitHistory; PitLimiterVisibility pitVisibility;
     RacePredictor predictor; FuelPlan fuelPlan;
     std::wstring config;
-    // Relative and Standings settings, indexed by kind.
-    std::array<std::vector<int>,2> columnOrder;
-    std::array<std::array<bool,DriverColumnCount>,2> driverColumns{};
-    std::array<std::array<bool,2>,2> driverShortView{};
-    std::array<std::array<bool,3>,2> driverFlags{{{true,true,true},{true,true,true}}};
-    std::array<std::array<bool,ExtraColumnCount>,2> extraColumns{};
-    std::array<bool,2> showDriver{true,true}, showStatus{true,true}, tableHeaders{}, columnHeaders{}, classColors{true,true}, brandLogos{true,true}, brandNames{true,true};
-    bool lapColors=true; // Relative only: red for cars a lap ahead, blue a lap behind.
-    bool standingsProgress=true; // Standings: session progress under the header.
     unsigned classBestVersion=~0u; std::vector<std::pair<int,double>> classBest;
-    std::array<int,2> nameFormat{};
-    std::array<Slots,2> headerMetrics{DefaultHeader,DefaultHeader};
-    std::array<FooterSettings,2> footers;
-    int rows=7, gapDecimals=1; bool relativeHidePit=false, relativeBest=false, relativeLast=false;
-    // + / - before gaps (and intervals in the Standings), per table; off by default: the row order already tells.
-    std::array<bool,2> gapSigns{};
-    StandingsOptions standings; bool showInterval=false, standingsLaps=false, standingsGained=false;
-    std::array<bool,FuelModuleCount> fuelDisplay{};
-    std::array<bool,FuelMetricCount> fuelRows{};
-    bool fuelStrip=false; // Fuel Calculator as one line of key values instead of the panel.
-    std::array<bool,WeatherModuleCount> weatherDisplay{};
-    bool weatherStrip=false; WeatherHistory weatherHistory;
+    WeatherHistory weatherHistory;
     bool preview=false, edit=false, hidden=false, diagnostics=false;
     bool startWithWindows=false, startMinimized=false, showTitleBar=false, checkUpdates=true;
     bool settingsError=false, trayAvailable=false;
@@ -202,11 +203,17 @@ struct App {
     std::map<std::wstring,std::wstring> savedSettings; unsigned settingsWrites=0;
     std::array<WORD,HotkeyCount> hotkeys{}; bool hotkeysEnabled=false; std::wstring hotkeyError;
     int rate=10,timerMs=0; ULONGLONG now=0;
-    unsigned modelVersion=0,relativeVersion=~0u,standingsVersion=~0u,planVersion=~0u,ratingVersion=~0u;
+    unsigned modelVersion=0,planVersion=~0u,ratingVersion=~0u;
     std::array<int,MaxCars> ratingChanges{};
-    std::vector<Row> relativeRows; std::vector<StandingsGroup> standingsGroups; std::vector<DrawCommand> sceneBuffer;
+    std::vector<DrawCommand> sceneBuffer; bool overlayClass=false;
     NOTIFYICONDATAW tray{};
 } app;
+std::wstring Numbered(const wchar_t* name,int number) { return number>1?std::wstring(name)+L" "+std::to_wstring(number):std::wstring(name); }
+std::wstring Name(const Overlay& o) { return Numbered(Titles[o.kind],o.number); }
+std::wstring Section(const Overlay& o) { return Numbered(Sections[o.kind],o.number); }
+// The first instance of every kind always exists; Race Control follows the first Standings.
+Overlay& First(int kind) { return *std::find_if(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return o.kind==kind && o.number==1;}); }
+int InstanceCount(int kind) { return static_cast<int>(std::count_if(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return o.kind==kind;})); }
 void OpenRaceControl();
 void UpdateRaceControl(bool force=false);
 void CloseRaceControl();
@@ -226,31 +233,32 @@ std::wstring Lap(double x) {
     wchar_t b[64]; swprintf_s(b,L"%d:%06.3f",static_cast<int>(x)/60,std::fmod(x,60)); return b;
 }
 const wchar_t* ColumnTitle(int id) { return Columns[id].title; }
-bool ColumnVisible(int kind,int id) {
+bool ColumnVisible(const Overlay& o,int id) {
+    const auto& t=o.table; const bool standings=o.kind==StandingsKind;
     switch(id) {
-    case DriverColumn: return app.showDriver[kind];
-    case StatusColumn: return false; // Drawn as the badge after the name; app.showStatus switches it.
-    case GainedColumn: return kind==StandingsKind && app.standingsGained;
-    case LapsColumn: return kind==StandingsKind && app.standingsLaps;
-    case IntervalColumn: return app.showInterval;
+    case DriverColumn: return t.showDriver;
+    case StatusColumn: return false; // Drawn as the badge after the name; showStatus switches it.
+    case GainedColumn: return standings && t.gained;
+    case LapsColumn: return standings && t.laps;
+    case IntervalColumn: return t.interval;
     // Always shown in the Standings, optional in the Relative.
-    case BestColumn: return kind==StandingsKind || app.relativeBest;
-    case LastColumn: return kind==StandingsKind || app.relativeLast;
+    case BestColumn: return standings || t.best;
+    case LastColumn: return standings || t.last;
     default:
-        if(id>=BrandColumn) return app.extraColumns[kind][id-BrandColumn];
-        return id>=LicenseColumn?app.driverColumns[kind][id-LicenseColumn]:true;
+        if(id>=BrandColumn) return t.extraColumns[id-BrandColumn];
+        return id>=LicenseColumn?t.driverColumns[id-LicenseColumn]:true;
     }
 }
 // Without column headings, columns shrink to fit their values.
-int ColumnWidth(int id,int kind) {
-    const bool compact=!app.columnHeaders[kind];
-    if(id==BrandColumn && !app.brandNames[kind]) return compact?30:44;
-    if(id==BrandColumn && !app.brandLogos[kind]) return compact?92:100;
-    if(compact && id==DriverColumn && app.nameFormat[kind]!=0) return 150;
-    if(compact && (id==LicenseColumn || id==IRatingColumn) && app.driverShortView[kind][id-LicenseColumn]) return 50;
+int ColumnWidth(const Overlay& o,int id) {
+    const auto& t=o.table; const bool compact=!t.columnHeaders;
+    if(id==BrandColumn && !t.brandName) return compact?30:44;
+    if(id==BrandColumn && !t.brandLogo) return compact?92:100;
+    if(compact && id==DriverColumn && t.nameFormat!=0) return 150;
+    if(compact && (id==LicenseColumn || id==IRatingColumn) && t.driverShortView[id-LicenseColumn]) return 50;
     return compact?Columns[id].compactWidth:Columns[id].width;
 }
-std::vector<int> VisibleColumns(int kind) { std::vector<int> result; for(int id:app.columnOrder[kind]) if(ColumnVisible(kind,id)) result.push_back(id); return result; }
+std::vector<int> VisibleColumns(const Overlay& o) { std::vector<int> result; for(int id:o.table.columnOrder) if(ColumnVisible(o,id)) result.push_back(id); return result; }
 int FuelFinishLap() {
     const auto& f=app.frame; const double distance=app.fuelPlan.lapsToFinish;
     return f.lapCompleted>=0 && std::isfinite(distance) && distance>=0?std::max(f.lapCompleted+1,f.lapCompleted+static_cast<int>(std::ceil(f.lapPct+distance-1e-6))):-1;
@@ -260,39 +268,39 @@ int StintCellCount() {
     return std::isfinite(average) && average>0 && std::isfinite(capacity) && capacity>0?static_cast<int>(std::clamp(std::ceil(capacity/average),1.0,10000.0)):0;
 }
 // Cells in the weather strip: condition, rain, both temperatures and wind (two cells wide).
-int WeatherStripCount() { const auto& d=app.weatherDisplay; return d[ConditionModule]+d[RainModule]+2*d[TemperatureModule]+2*d[WindModule]; }
+int WeatherStripCount(const Overlay& o) { const auto& d=o.weather.display; return d[ConditionModule]+d[RainModule]+2*d[TemperatureModule]+2*d[WindModule]; }
 constexpr int WeatherPanelWidth=360, WeatherStripCell=112, WindRoseWidth=124;
 // Only the wind rose: the overlay shrinks to the ring, small enough to sit in the middle of the screen.
-bool WindRoseOnly() {
-    const auto& d=app.weatherDisplay;
+bool WindRoseOnly(const Overlay& o) {
+    const auto& d=o.weather.display;
     return d[WindModule] && d[WindRose] && !d[WindText] && std::count(d.begin(),d.begin()+WeatherPanelCount,true)==1;
 }
-int WeatherHeight() {
-    if(app.weatherStrip) return 50;
-    const auto& d=app.weatherDisplay; constexpr int heights[]={36,84,36,62,76,0,32,32};
+int WeatherHeight(const Overlay& o) {
+    if(o.weather.strip) return 50;
+    const auto& d=o.weather.display; constexpr int heights[]={36,84,36,62,76,0,32,32};
     int h=0; for(int i=0;i<WeatherPanelCount;++i) if(d[i]) h+=heights[i];
     if(d[WindModule]) h+=d[WindRose]?108:(d[WindText]?76:0);
     return std::max(h,40);
 }
 // Values in the strip layout: tank and range, the 10-lap average, refuel, latest stop and two targets.
-int FuelStripCount() { const auto& d=app.fuelDisplay; return 2*d[TankModule]+d[FiguresModule]+d[RefuelCard]+d[WindowCard]+d[TargetRow]+d[OneLongerRow]; }
+int FuelStripCount(const Overlay& o) { const auto& d=o.fuel.display; return 2*d[TankModule]+d[FiguresModule]+d[RefuelCard]+d[WindowCard]+d[TargetRow]+d[OneLongerRow]; }
 constexpr int FuelPanelWidth=440, FuelStripCell=86;
-int FuelHeight() {
-    if(app.fuelStrip) return 50;
-    const auto& d=app.fuelDisplay; int h=0;
+int FuelHeight(const Overlay& o) {
+    if(o.fuel.strip) return 50;
+    const auto& d=o.fuel.display; int h=0;
     if(d[FuelHeaderModule]) h+=36;
     if(d[TankModule]) h+=112;
-    if(d[FiguresModule] && std::count(app.fuelRows.begin(),app.fuelRows.end(),true)) h+=52;
+    if(d[FiguresModule] && std::count(o.fuel.figures.begin(),o.fuel.figures.end(),true)) h+=52;
     if(d[HistoryModule]) h+=104;
     if(d[RefuelCard] || d[WindowCard]) h+=92;
     if(d[TimelineModule]) h+=46;
     if(const int targets=d[TargetRow]+d[OneLongerRow]+d[TwoLongerRow]+d[OneShorterRow]) h+=16+24*targets;
     return std::max(h,40);
 }
-int OverlayWidth(int kind) {
-    if(IsTable(kind)) { int width=16; for(int id:VisibleColumns(kind)) width+=ColumnWidth(id,kind); return std::max(120,width); }
-    if(kind==WeatherKind) return app.weatherStrip?std::max(1,WeatherStripCount())*WeatherStripCell:(WindRoseOnly()?WindRoseWidth:WeatherPanelWidth);
-    if(kind==FuelKind) return app.fuelStrip?std::max(1,FuelStripCount())*FuelStripCell:FuelPanelWidth;
+int OverlayWidth(const Overlay& o) {
+    if(IsTable(o.kind)) { int width=16; for(int id:VisibleColumns(o)) width+=ColumnWidth(o,id); return std::max(120,width); }
+    if(o.kind==WeatherKind) return o.weather.strip?std::max(1,WeatherStripCount(o))*WeatherStripCell:(WindRoseOnly(o)?WindRoseWidth:WeatherPanelWidth);
+    if(o.kind==FuelKind) return o.fuel.strip?std::max(1,FuelStripCount(o))*FuelStripCell:FuelPanelWidth;
     return 365;
 }
 COLORREF TireTextColor(const Row& row) {
@@ -311,33 +319,33 @@ std::wstring CompletedLaps(const Row& row) {
     return completed>=0?std::to_wstring(completed):L"—";
 }
 // Fuel Calculator and Weather draw their own header module instead of the title bar.
-bool ShowOverlayHeader(int kind) { return IsTable(kind)?app.tableHeaders[kind]:kind==PitLimiterKind && app.showTitleBar; }
+bool ShowOverlayHeader(const Overlay& o) { return IsTable(o.kind)?o.table.header:o.kind==PitLimiterKind && app.showTitleBar; }
 double SessionProgress();
 // The Standings' session progress bar, a row of its own under the header while the session has a known length.
-int ProgressHeight(int kind) { return kind==StandingsKind && app.standingsProgress && SessionProgress()>=0?24:0; }
-int TableRowsTop(int kind) { return 32+ProgressHeight(kind)+(app.columnHeaders[kind]?27:0); }
-std::wstring DriverName(const Row& row,int kind) {
+int ProgressHeight(const Overlay& o) { return o.kind==StandingsKind && o.table.progress && SessionProgress()>=0?24:0; }
+int TableRowsTop(const Overlay& o) { return 32+ProgressHeight(o)+(o.table.columnHeaders?27:0); }
+std::wstring DriverName(const Row& row,const TableSettings& t) {
     auto name=Wide(row.driver.name); const auto first=name.find_first_not_of(L" \t\r\n");
     if(first==std::wstring::npos) return L"—"; name=name.substr(first,name.find_last_not_of(L" \t\r\n")-first+1);
-    if(app.nameFormat[kind]==0) return name;
+    if(t.nameFormat==0) return name;
     const auto split=name.find_first_of(L" \t"); if(split==std::wstring::npos) return name;
     const auto last=name.find_first_not_of(L" \t",split); if(last==std::wstring::npos) return name;
     const size_t initial=(name[0]>=0xd800 && name[0]<=0xdbff && name.size()>1 && name[1]>=0xdc00 && name[1]<=0xdfff)?2:1;
-    return name.substr(0,initial)+(app.nameFormat[kind]==1?L". ":L" ")+name.substr(last);
+    return name.substr(0,initial)+(t.nameFormat==1?L". ":L" ")+name.substr(last);
 }
-std::wstring OverlayStatus(const Row& row,int kind) {
+std::wstring OverlayStatus(const Row& row,const TableSettings& t) {
     if(row.car.pit) return L"PIT";
     if(row.car.towing) return L"TOW";
-    if(app.driverFlags[kind][0] && (row.car.sessionFlags&SessionFlag::Disqualify)) return L"DQ";
-    if(app.driverFlags[kind][0] && (row.car.sessionFlags&SessionFlag::Black)) return L"BLACK";
-    if(app.driverFlags[kind][2] && (row.car.sessionFlags&SessionFlag::Repair)) return L"REPAIR";
-    if(app.driverFlags[kind][1] && (row.car.sessionFlags&SessionFlag::Furled)) return L"SLOW";
+    if(t.driverFlags[0] && (row.car.sessionFlags&SessionFlag::Disqualify)) return L"DQ";
+    if(t.driverFlags[0] && (row.car.sessionFlags&SessionFlag::Black)) return L"BLACK";
+    if(t.driverFlags[2] && (row.car.sessionFlags&SessionFlag::Repair)) return L"REPAIR";
+    if(t.driverFlags[1] && (row.car.sessionFlags&SessionFlag::Furled)) return L"SLOW";
     return row.car.outLap?L"OUT":L"";
 }
-// driverColumn counts from LicenseColumn; kind selects the overlay's short views, -1 for full values.
-std::wstring DriverValue(const Row& row,int driverColumn,int kind=-1) {
+// driverColumn counts from LicenseColumn; a table's settings select its short views, none gives full values.
+std::wstring DriverValue(const Row& row,int driverColumn,const TableSettings* t=nullptr) {
     const int id=LicenseColumn+driverColumn;
-    const bool shortView=kind>=0 && IsTable(kind) && (id==LicenseColumn || id==IRatingColumn) && app.driverShortView[kind][driverColumn];
+    const bool shortView=t && (id==LicenseColumn || id==IRatingColumn) && t->driverShortView[driverColumn];
     switch(id) {
     case LicenseColumn: {
         if(!shortView) return row.driver.license.empty()?L"—":Wide(row.driver.license);
@@ -383,48 +391,79 @@ Slots ReadSlots(const wchar_t* section,const wchar_t* const keys[],const Slots& 
     Slots slots{}; for(int i=0;i<SlotCount;++i) slots[i]=std::clamp(ReadInt(section,keys[i],defaults[i]),0,MetricCount-1); return slots;
 }
 int NormalizeScale(int scale) { return ((std::clamp(scale,50,150)+5)/10)*10; }
+void ReadTable(const wchar_t* section,int kind,TableSettings& t) {
+    t.columnOrder=ReadOrder(section,L"ColumnOrder",DefaultColumns[kind]);
+    for(int i=0;i<DriverColumnCount;++i) t.driverColumns[i]=ReadBool(section,DriverColumnKeys[i],false);
+    t.driverShortView={ReadBool(section,L"ShortLicenseView",false),ReadBool(section,L"ShortIRatingView",false)};
+    for(int i=0;i<ExtraColumnCount;++i) t.extraColumns[i]=ReadBool(section,ExtraColumnKeys[i],false);
+    t.classColors=ReadBool(section,L"ShowClassColor",true);
+    t.brandLogo=ReadBool(section,L"ShowCarLogo",true); t.brandName=ReadBool(section,L"ShowCarName",true);
+    t.gapSigns=ReadBool(section,L"ShowGapSigns",false);
+    t.driverFlags={ReadBool(section,L"ShowBlackFlag",true),ReadBool(section,L"ShowSlowdown",true),ReadBool(section,L"ShowRequiredRepairs",true)};
+    t.showDriver=ReadBool(section,L"ShowDriver",true);
+    t.showStatus=ReadBool(section,L"ShowStatus",true);
+    t.nameFormat=std::clamp(ReadInt(section,L"DriverNameFormat",0),0,2);
+    t.columnHeaders=ReadBool(section,L"ShowColumnHeaders",false);
+    t.header=ReadBool(section,L"ShowHeader",false);
+    t.headerMetrics=ReadSlots(section,HeaderKeys,DefaultHeader);
+    t.footer.enabled=ReadBool(section,L"ShowFooter",true);
+    t.footer.metrics=ReadSlots(section,FooterKeys,DefaultFooter);
+    t.interval=ReadBool(section,L"ShowInterval",false);
+    if(kind==RelativeKind) {
+        t.rows=RelativeRowCount(ReadInt(section,L"Rows",7));
+        t.gapDecimals=std::clamp(ReadInt(section,L"GapDecimals",1),0,3);
+        t.hidePit=ReadBool(section,L"HideDriversInPit",false);
+        t.lapColors=ReadBool(section,L"ShowLapColors",true);
+        t.best=ReadBool(section,L"ShowBestLap",false); t.last=ReadBool(section,L"ShowLastLap",false);
+    } else {
+        auto& standings=t.standings;
+        standings.separateClasses=ReadBool(section,L"SeparateClasses",true);
+        standings.ownClass=ReadBool(section,L"OwnClass",false);
+        standings.liveGaps=ReadBool(section,L"LiveGaps",false);
+        standings.fallbackByRating=ReadBool(section,L"FallbackByIRating",false);
+        standings.leaders=std::clamp(ReadInt(section,L"Leaders",3),0,MaxCars);
+        standings.ahead=std::clamp(ReadInt(section,L"Ahead",2),0,MaxCars);
+        standings.behind=std::clamp(ReadInt(section,L"Behind",2),0,MaxCars);
+        t.progress=ReadBool(section,L"ShowProgress",true);
+        t.laps=ReadBool(section,L"ShowLaps",false);
+        t.gained=ReadBool(section,L"ShowPositionsGained",false);
+    }
+}
+void CreateOverlayWindow(Overlay& o);
+void DestroyOverlay(Overlay& o) { if(o.window) DestroyWindow(o.window); o.window=nullptr; }
+// Adds instance number of a kind after the kind's other instances, without settings or window yet.
+Overlay& AddInstance(int kind,int number) {
+    auto next=std::find_if(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return o.kind>kind || (o.kind==kind && o.number>number);});
+    auto& o=*app.overlays.emplace(next); o.kind=kind; o.number=number;
+    return o;
+}
+void ReadInstance(Overlay& o) {
+    const auto section=Section(o); const int kind=o.kind;
+    auto& p=o.place; const int offset=(o.number-1)*30; // Later instances start a little below and to the right.
+    p.x=ReadInt(section.c_str(),L"X",DefaultPositions[kind].x+offset); p.y=ReadInt(section.c_str(),L"Y",DefaultPositions[kind].y+offset);
+    p.scale=NormalizeScale(ReadInt(section.c_str(),L"Scale",100)); p.opacity=std::clamp(ReadInt(section.c_str(),L"Opacity",90),40,100);
+    const int rate=ReadInt(section.c_str(),L"RefreshHz",DefaultRates[kind]);
+    p.rate=*std::find_if(std::begin(OverlayRates),std::end(OverlayRates)-1,[&](int choice){return choice>=rate;});
+    p.enabled=ReadBool(section.c_str(),L"Enabled",true); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
+    if(IsTable(kind)) ReadTable(section.c_str(),kind,o.table);
+    for(int i=0;i<FuelModuleCount;++i) o.fuel.display[i]=ReadBool(section.c_str(),FuelModules[i].key,FuelModules[i].on);
+    for(int i=0;i<FuelMetricCount;++i) o.fuel.figures[i]=ReadBool(section.c_str(),FuelFigures[i].key,FuelFigures[i].on);
+    o.fuel.strip=ReadInt(section.c_str(),L"Layout",0)==1;
+    for(int i=0;i<WeatherModuleCount;++i) o.weather.display[i]=ReadBool(section.c_str(),WeatherModules[i].key,WeatherModules[i].on);
+    o.weather.strip=o.fuel.strip;
+}
 void Load() {
     app.savedSettings.clear(); // The next Save() writes everything once.
-    for(int kind:{RelativeKind,StandingsKind}) {
-        const auto* section=Sections[kind];
-        app.columnOrder[kind]=ReadOrder(section,L"ColumnOrder",DefaultColumns[kind]);
-        for(int i=0;i<DriverColumnCount;++i) app.driverColumns[kind][i]=ReadBool(section,DriverColumnKeys[i],false);
-        app.driverShortView[kind]={ReadBool(section,L"ShortLicenseView",false),ReadBool(section,L"ShortIRatingView",false)};
-        for(int i=0;i<ExtraColumnCount;++i) app.extraColumns[kind][i]=ReadBool(section,ExtraColumnKeys[i],false);
-        app.classColors[kind]=ReadBool(section,L"ShowClassColor",true);
-        app.brandLogos[kind]=ReadBool(section,L"ShowCarLogo",true); app.brandNames[kind]=ReadBool(section,L"ShowCarName",true);
-        app.gapSigns[kind]=ReadBool(section,L"ShowGapSigns",false);
-        app.driverFlags[kind]={ReadBool(section,L"ShowBlackFlag",true),ReadBool(section,L"ShowSlowdown",true),ReadBool(section,L"ShowRequiredRepairs",true)};
-        app.showDriver[kind]=ReadBool(section,L"ShowDriver",true);
-        app.showStatus[kind]=ReadBool(section,L"ShowStatus",true);
-        app.nameFormat[kind]=std::clamp(ReadInt(section,L"DriverNameFormat",0),0,2);
-        app.columnHeaders[kind]=ReadBool(section,L"ShowColumnHeaders",false);
-        app.tableHeaders[kind]=ReadBool(section,L"ShowHeader",false);
-        app.headerMetrics[kind]=ReadSlots(section,HeaderKeys,DefaultHeader);
-        app.footers[kind].enabled=ReadBool(section,L"ShowFooter",true);
-        app.footers[kind].metrics=ReadSlots(section,FooterKeys,DefaultFooter);
+    // Each kind's section counts its instances; the Pit Limiter has only one.
+    for(int kind=0;kind<OverlayCount;++kind) {
+        const int count=kind==PitLimiterKind?1:std::clamp(ReadInt(Sections[kind],L"Instances",1),1,99);
+        for(int number=1;number<=count;++number)
+            if(std::none_of(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return o.kind==kind && o.number==number;})) AddInstance(kind,number);
+        for(auto it=app.overlays.begin();it!=app.overlays.end();) {
+            if(it->kind==kind && it->number>count) { DestroyOverlay(*it); it=app.overlays.erase(it); } else ++it;
+        }
     }
-    app.rows=RelativeRowCount(ReadInt(L"Relative",L"Rows",7));
-    app.gapDecimals=std::clamp(ReadInt(L"Relative",L"GapDecimals",1),0,3);
-    app.relativeHidePit=ReadBool(L"Relative",L"HideDriversInPit",false);
-    app.lapColors=ReadBool(L"Relative",L"ShowLapColors",true); app.standingsProgress=ReadBool(L"Standings",L"ShowProgress",true);
-    app.relativeBest=ReadBool(L"Relative",L"ShowBestLap",false); app.relativeLast=ReadBool(L"Relative",L"ShowLastLap",false);
-    auto& standings=app.standings;
-    standings.separateClasses=ReadBool(L"Standings",L"SeparateClasses",true);
-    standings.ownClass=ReadBool(L"Standings",L"OwnClass",false);
-    standings.liveGaps=ReadBool(L"Standings",L"LiveGaps",false);
-    standings.fallbackByRating=ReadBool(L"Standings",L"FallbackByIRating",false);
-    standings.leaders=std::clamp(ReadInt(L"Standings",L"Leaders",3),0,MaxCars);
-    standings.ahead=std::clamp(ReadInt(L"Standings",L"Ahead",2),0,MaxCars);
-    standings.behind=std::clamp(ReadInt(L"Standings",L"Behind",2),0,MaxCars);
-    app.showInterval=ReadBool(L"Standings",L"ShowInterval",false);
-    app.standingsLaps=ReadBool(L"Standings",L"ShowLaps",false);
-    app.standingsGained=ReadBool(L"Standings",L"ShowPositionsGained",false);
-    for(int i=0;i<FuelModuleCount;++i) app.fuelDisplay[i]=ReadBool(L"Fuel Calculator",FuelModules[i].key,FuelModules[i].on);
-    for(int i=0;i<FuelMetricCount;++i) app.fuelRows[i]=ReadBool(L"Fuel Calculator",FuelFigures[i].key,FuelFigures[i].on);
-    app.fuelStrip=ReadInt(L"Fuel Calculator",L"Layout",0)==1;
-    for(int i=0;i<WeatherModuleCount;++i) app.weatherDisplay[i]=ReadBool(L"Weather",WeatherModules[i].key,WeatherModules[i].on);
-    app.weatherStrip=ReadInt(L"Weather",L"Layout",0)==1;
+    for(auto& o:app.overlays) { ReadInstance(o); if(!o.window && app.overlayClass) CreateOverlayWindow(o); }
     app.showTitleBar=ReadBool(L"General",L"ShowTitleBar",false);
     app.checkUpdates=ReadBool(L"General",L"CheckForUpdates",true);
     app.rate=std::clamp(ReadInt(L"General",L"RefreshHz",10),2,20);
@@ -433,14 +472,6 @@ void Load() {
     app.windowRect={ReadInt(L"General",L"WindowLeft",0),ReadInt(L"General",L"WindowTop",0),ReadInt(L"General",L"WindowRight",0),ReadInt(L"General",L"WindowBottom",0)};
     app.windowMaximized=ReadBool(L"General",L"WindowMaximized",false);
     for(int i=0;i<HotkeyCount;++i) { const WORD hotkey=static_cast<WORD>(ReadInt(L"Hotkeys",HotkeyKeys[i],DefaultHotkeys[i])); app.hotkeys[i]=LOBYTE(hotkey)?hotkey:0; }
-    for(int kind=0;kind<OverlayCount;++kind) {
-        auto& p=app.overlays[kind].place; const auto* section=Sections[kind];
-        p.x=ReadInt(section,L"X",DefaultPositions[kind].x); p.y=ReadInt(section,L"Y",DefaultPositions[kind].y);
-        p.scale=NormalizeScale(ReadInt(section,L"Scale",100)); p.opacity=std::clamp(ReadInt(section,L"Opacity",90),40,100);
-        const int rate=ReadInt(section,L"RefreshHz",DefaultRates[kind]);
-        p.rate=*std::find_if(std::begin(OverlayRates),std::end(OverlayRates)-1,[&](int choice){return choice>=rate;});
-        p.enabled=ReadBool(section,L"Enabled",true); p.growLeft=ReadBool(section,L"GrowLeft",false); p.growUp=ReadBool(section,L"GrowUp",false);
-    }
 }
 // Each WritePrivateProfileString call rewrites the file; all keys take about 100 ms, so
 // only keys whose value changed since the last write go out. A missing file gets all.
@@ -458,30 +489,44 @@ void Save() {
     auto order=[&](const wchar_t* section,const wchar_t* key,const std::vector<int>& ids) {
         std::wstring text; for(int id:ids) { if(!text.empty()) text+=L","; text+=std::to_wstring(id); } write(section,key,text);
     };
-    for(int kind:{RelativeKind,StandingsKind}) {
-        const auto* section=Sections[kind];
-        order(section,L"ColumnOrder",app.columnOrder[kind]);
-        for(int i=0;i<DriverColumnCount;++i) number(section,DriverColumnKeys[i],app.driverColumns[kind][i]);
-        number(section,L"ShortLicenseView",app.driverShortView[kind][0]); number(section,L"ShortIRatingView",app.driverShortView[kind][1]);
-        for(int i=0;i<ExtraColumnCount;++i) number(section,ExtraColumnKeys[i],app.extraColumns[kind][i]);
-        number(section,L"ShowClassColor",app.classColors[kind]); number(section,L"ShowCarLogo",app.brandLogos[kind]); number(section,L"ShowCarName",app.brandNames[kind]);
-        number(section,L"ShowBlackFlag",app.driverFlags[kind][0]); number(section,L"ShowSlowdown",app.driverFlags[kind][1]); number(section,L"ShowRequiredRepairs",app.driverFlags[kind][2]);
-        number(section,L"ShowDriver",app.showDriver[kind]); number(section,L"ShowStatus",app.showStatus[kind]); number(section,L"DriverNameFormat",app.nameFormat[kind]);
-        number(section,L"ShowColumnHeaders",app.columnHeaders[kind]); number(section,L"ShowGapSigns",app.gapSigns[kind]); number(section,L"ShowHeader",app.tableHeaders[kind]); number(section,L"ShowFooter",app.footers[kind].enabled);
-        for(int i=0;i<SlotCount;++i) { number(section,HeaderKeys[i],app.headerMetrics[kind][i]); number(section,FooterKeys[i],app.footers[kind].metrics[i]); }
+    for(int kind=0;kind<OverlayCount;++kind) if(kind!=PitLimiterKind) number(Sections[kind],L"Instances",InstanceCount(kind));
+    for(const auto& o:app.overlays) {
+        const auto name=Section(o); const auto* section=name.c_str(); const auto& p=o.place;
+        number(section,L"X",p.x); number(section,L"Y",p.y); number(section,L"Scale",p.scale); number(section,L"Opacity",p.opacity);
+        number(section,L"RefreshHz",p.rate); number(section,L"Enabled",p.enabled); number(section,L"GrowLeft",p.growLeft); number(section,L"GrowUp",p.growUp);
+        if(IsTable(o.kind)) {
+            const auto& t=o.table;
+            order(section,L"ColumnOrder",t.columnOrder);
+            for(int i=0;i<DriverColumnCount;++i) number(section,DriverColumnKeys[i],t.driverColumns[i]);
+            number(section,L"ShortLicenseView",t.driverShortView[0]); number(section,L"ShortIRatingView",t.driverShortView[1]);
+            for(int i=0;i<ExtraColumnCount;++i) number(section,ExtraColumnKeys[i],t.extraColumns[i]);
+            number(section,L"ShowClassColor",t.classColors); number(section,L"ShowCarLogo",t.brandLogo); number(section,L"ShowCarName",t.brandName);
+            number(section,L"ShowBlackFlag",t.driverFlags[0]); number(section,L"ShowSlowdown",t.driverFlags[1]); number(section,L"ShowRequiredRepairs",t.driverFlags[2]);
+            number(section,L"ShowDriver",t.showDriver); number(section,L"ShowStatus",t.showStatus); number(section,L"DriverNameFormat",t.nameFormat);
+            number(section,L"ShowColumnHeaders",t.columnHeaders); number(section,L"ShowGapSigns",t.gapSigns); number(section,L"ShowHeader",t.header); number(section,L"ShowFooter",t.footer.enabled);
+            for(int i=0;i<SlotCount;++i) { number(section,HeaderKeys[i],t.headerMetrics[i]); number(section,FooterKeys[i],t.footer.metrics[i]); }
+            number(section,L"ShowInterval",t.interval);
+            if(o.kind==RelativeKind) {
+                number(section,L"Rows",t.rows); number(section,L"GapDecimals",t.gapDecimals); number(section,L"HideDriversInPit",t.hidePit);
+                number(section,L"ShowLapColors",t.lapColors); number(section,L"ShowBestLap",t.best); number(section,L"ShowLastLap",t.last);
+            } else {
+                const auto& standings=t.standings;
+                number(section,L"SeparateClasses",standings.separateClasses); number(section,L"OwnClass",standings.ownClass);
+                number(section,L"LiveGaps",standings.liveGaps); number(section,L"FallbackByIRating",standings.fallbackByRating);
+                number(section,L"Leaders",standings.leaders); number(section,L"Ahead",standings.ahead); number(section,L"Behind",standings.behind);
+                number(section,L"ShowProgress",t.progress); number(section,L"ShowLaps",t.laps); number(section,L"ShowPositionsGained",t.gained);
+            }
+        }
+        if(o.kind==FuelKind) {
+            for(int i=0;i<FuelModuleCount;++i) number(section,FuelModules[i].key,o.fuel.display[i]);
+            for(int i=0;i<FuelMetricCount;++i) number(section,FuelFigures[i].key,o.fuel.figures[i]);
+            number(section,L"Layout",o.fuel.strip);
+        }
+        if(o.kind==WeatherKind) {
+            for(int i=0;i<WeatherModuleCount;++i) number(section,WeatherModules[i].key,o.weather.display[i]);
+            number(section,L"Layout",o.weather.strip);
+        }
     }
-    number(L"Relative",L"Rows",app.rows); number(L"Relative",L"GapDecimals",app.gapDecimals); number(L"Relative",L"HideDriversInPit",app.relativeHidePit);
-    number(L"Relative",L"ShowLapColors",app.lapColors); number(L"Standings",L"ShowProgress",app.standingsProgress); number(L"Relative",L"ShowBestLap",app.relativeBest); number(L"Relative",L"ShowLastLap",app.relativeLast);
-    const auto& standings=app.standings;
-    number(L"Standings",L"SeparateClasses",standings.separateClasses); number(L"Standings",L"OwnClass",standings.ownClass);
-    number(L"Standings",L"LiveGaps",standings.liveGaps); number(L"Standings",L"FallbackByIRating",standings.fallbackByRating);
-    number(L"Standings",L"Leaders",standings.leaders); number(L"Standings",L"Ahead",standings.ahead); number(L"Standings",L"Behind",standings.behind);
-    number(L"Standings",L"ShowInterval",app.showInterval); number(L"Standings",L"ShowLaps",app.standingsLaps); number(L"Standings",L"ShowPositionsGained",app.standingsGained);
-    for(int i=0;i<FuelModuleCount;++i) number(L"Fuel Calculator",FuelModules[i].key,app.fuelDisplay[i]);
-    for(int i=0;i<FuelMetricCount;++i) number(L"Fuel Calculator",FuelFigures[i].key,app.fuelRows[i]);
-    number(L"Fuel Calculator",L"Layout",app.fuelStrip);
-    for(int i=0;i<WeatherModuleCount;++i) number(L"Weather",WeatherModules[i].key,app.weatherDisplay[i]);
-    number(L"Weather",L"Layout",app.weatherStrip);
     number(L"General",L"ShowTitleBar",app.showTitleBar); number(L"General",L"RefreshHz",app.rate);
     number(L"General",L"StartWithWindows",app.startWithWindows); number(L"General",L"StartMinimized",app.startMinimized); number(L"General",L"CheckForUpdates",app.checkUpdates);
     if(app.windowRect.right>app.windowRect.left) {
@@ -490,12 +535,24 @@ void Save() {
         number(L"General",L"WindowMaximized",app.windowMaximized);
     }
     for(int i=0;i<HotkeyCount;++i) number(L"Hotkeys",HotkeyKeys[i],app.hotkeys[i]);
-    for(int kind=0;kind<OverlayCount;++kind) {
-        const auto& p=app.overlays[kind].place; const auto* section=Sections[kind];
-        number(section,L"X",p.x); number(section,L"Y",p.y); number(section,L"Scale",p.scale); number(section,L"Opacity",p.opacity);
-        number(section,L"RefreshHz",p.rate); number(section,L"Enabled",p.enabled); number(section,L"GrowLeft",p.growLeft); number(section,L"GrowUp",p.growUp);
-    }
     if(!success && !app.settingsError) { app.settingsError=true; MessageBoxW(app.main,L"Could not save settings. Please check write access to the RaceMate configuration folder.",L"RaceMate",MB_OK|MB_ICONWARNING); }
+}
+// Removes an added instance with its settings section; the first instance of a kind stays.
+void RemoveInstance(Overlay& o) {
+    if(o.number==1) return;
+    const auto section=Section(o);
+    WritePrivateProfileStringW(section.c_str(),nullptr,nullptr,app.config.c_str());
+    for(auto it=app.savedSettings.begin();it!=app.savedSettings.end();) it=it->first.rfind(section+L"\n",0)==0?app.savedSettings.erase(it):std::next(it);
+    // Later instances move up a number, so their sections are written again under the new names.
+    const int kind=o.kind, number=o.number;
+    DestroyOverlay(o); app.overlays.remove_if([&](const Overlay& other){return &other==&o;});
+    for(auto& other:app.overlays) if(other.kind==kind && other.number>number) {
+        const auto old=Section(other);
+        WritePrivateProfileStringW(old.c_str(),nullptr,nullptr,app.config.c_str());
+        for(auto it=app.savedSettings.begin();it!=app.savedSettings.end();) it=it->first.rfind(old+L"\n",0)==0?app.savedSettings.erase(it):std::next(it);
+        --other.number;
+    }
+    Save();
 }
 UINT HotkeyModifiers(WORD hotkey) {
     const BYTE flags=HIBYTE(hotkey); UINT modifiers=MOD_NOREPEAT;
@@ -538,18 +595,18 @@ const FuelPlan& Plan() {
     }
     return app.fuelPlan;
 }
-const std::vector<Row>& RelativeRows() {
-    if(app.relativeVersion!=app.modelVersion) { app.relativeRows=Relative(app.session,app.frame,app.rows,false,app.relativeHidePit); app.relativeVersion=app.modelVersion; }
-    return app.relativeRows;
+const std::vector<Row>& RelativeRows(const Overlay& o) {
+    if(o.rowsVersion!=app.modelVersion) { o.relativeRows=Relative(app.session,app.frame,o.table.rows,false,o.table.hidePit); o.rowsVersion=app.modelVersion; }
+    return o.relativeRows;
 }
-const std::vector<StandingsGroup>& StandingsGroups() {
-    if(app.standingsVersion!=app.modelVersion) { app.standingsGroups=SelectStandings(app.session,app.frame,app.standings); app.standingsVersion=app.modelVersion; }
-    return app.standingsGroups;
+const std::vector<StandingsGroup>& StandingsGroups(const Overlay& o) {
+    if(o.rowsVersion!=app.modelVersion) { o.standingsGroups=SelectStandings(app.session,app.frame,o.table.standings); o.rowsVersion=app.modelVersion; }
+    return o.standingsGroups;
 }
-std::vector<Row> Rows(int kind) {
-    if(kind==RelativeKind) return RelativeRows();
+std::vector<Row> Rows(const Overlay& o) {
+    if(o.kind==RelativeKind) return RelativeRows(o);
     std::vector<Row> rows;
-    for(const auto& group:StandingsGroups()) rows.insert(rows.end(),group.rows.begin(),group.rows.end());
+    for(const auto& group:StandingsGroups(o)) rows.insert(rows.end(),group.rows.begin(),group.rows.end());
     return rows;
 }
 #include "Footer.inc"
@@ -558,34 +615,36 @@ int BrandLogo(const std::string& brand) {
     for(int i=0;i<static_cast<int>(std::size(BrandLogoNames));++i) if(brand==BrandLogoNames[i]) return i;
     return -1;
 }
-int HeightWithTitle(int kind) {
-    if(kind==RelativeKind) return TableRowsTop(kind)+app.rows*27+(app.footers[kind].enabled?28:0);
-    if(kind==StandingsKind) {
-        int height=TableRowsTop(kind)+(app.footers[kind].enabled?28:0),count=0;
-        for(const auto& group:StandingsGroups()) {
-            height+=static_cast<int>(group.rows.size())*27+(app.standings.separateClasses?25:0); count+=static_cast<int>(group.rows.size());
+int HeightWithTitle(const Overlay& o) {
+    const auto& t=o.table;
+    if(o.kind==RelativeKind) return TableRowsTop(o)+t.rows*27+(t.footer.enabled?28:0);
+    if(o.kind==StandingsKind) {
+        int height=TableRowsTop(o)+(t.footer.enabled?28:0),count=0;
+        for(const auto& group:StandingsGroups(o)) {
+            height+=static_cast<int>(group.rows.size())*27+(t.standings.separateClasses?25:0); count+=static_cast<int>(group.rows.size());
         }
         return height+(count==0?54:0);
     }
-    if(kind==FuelKind) return 32+FuelHeight();
-    return kind==WeatherKind?32+WeatherHeight():90;
+    if(o.kind==FuelKind) return 32+FuelHeight(o);
+    return o.kind==WeatherKind?32+WeatherHeight(o):90;
 }
-int BaseHeight(int kind) { return HeightWithTitle(kind)-(ShowOverlayHeader(kind)?0:32); }
-std::wstring Gap(const Row& r,int kind) {
-    if(kind==RelativeKind) {
-        if(r.player) return Format(0,app.gapDecimals);
+int BaseHeight(const Overlay& o) { return HeightWithTitle(o)-(ShowOverlayHeader(o)?0:32); }
+std::wstring Gap(const Row& r,const Overlay& o) {
+    const auto& t=o.table;
+    if(o.kind==RelativeKind) {
+        if(r.player) return Format(0,t.gapDecimals);
         if(!std::isfinite(r.gap)) return L"—";
-        const std::wstring sign=app.gapSigns[RelativeKind]?(r.gap>0?L"+":L"−"):L"";
-        return sign+Format(std::abs(r.gap),app.gapDecimals);
+        const std::wstring sign=t.gapSigns?(r.gap>0?L"+":L"−"):L"";
+        return sign+Format(std::abs(r.gap),t.gapDecimals);
     }
-    const std::wstring plus=app.gapSigns[StandingsKind]?L"+":L"";
-    if((app.standings.separateClasses?r.car.classPosition:r.car.position)==1) return app.session.type!="Race" && !(r.car.best>0)?L"—":L"LEADER";
+    const std::wstring plus=t.gapSigns?L"+":L"";
+    if((t.standings.separateClasses?r.car.classPosition:r.car.position)==1) return app.session.type!="Race" && !(r.car.best>0)?L"—":L"LEADER";
     if(r.lapDifference>0) return plus+std::to_wstring(r.lapDifference)+L" L";
     return std::isfinite(r.gap)?plus+Format(r.gap):L"—";
 }
-std::wstring Interval(const Row& row) {
-    const std::wstring plus=app.gapSigns[StandingsKind]?L"+":L"";
-    if((app.standings.separateClasses?row.car.classPosition:row.car.position)==1) return L"—";
+std::wstring Interval(const Row& row,const TableSettings& t) {
+    const std::wstring plus=t.gapSigns?L"+":L"";
+    if((t.standings.separateClasses?row.car.classPosition:row.car.position)==1) return L"—";
     if(row.intervalLaps>0) return plus+std::to_wstring(row.intervalLaps)+L" L";
     return std::isfinite(row.interval)?plus+Format(row.interval):L"—";
 }
@@ -664,70 +723,70 @@ void SetBadge(Cell& c,std::wstring status) {
     else if(status==L"BLACK" || status==L"DQ") { c.badgeFill=RGB(214,64,56); c.badgeInk=RGB(255,255,255); }
     c.badge=std::move(status);
 }
-using CellRenderer=void(*)(const Row&,int kind,Cell&);
+using CellRenderer=void(*)(const Row&,const Overlay&,Cell&);
 // Indexed by Column, shared by Relative and Standings.
 const CellRenderer CellRenderers[]={
-    +[](const Row& r,int kind,Cell& c) {
-        const int position=kind==StandingsKind && app.standings.separateClasses?r.car.classPosition:r.car.position;
+    +[](const Row& r,const Overlay& o,Cell& c) {
+        const int position=o.kind==StandingsKind && o.table.standings.separateClasses?r.car.classPosition:r.car.position;
         c.text=position>0?std::to_wstring(position):L"—"; c.ink=Ink::Muted; },
-    +[](const Row& r,int kind,Cell& c) {
+    +[](const Row& r,const Overlay& o,Cell& c) {
         c.box=Cell::Filled; c.font=Bold; c.text=L"#"+Wide(r.driver.number);
-        if(!app.classColors[kind]) { c.boxColor=Ink::NeutralBadge; c.ink=Ink::White; return; }
+        if(!o.table.classColors) { c.boxColor=Ink::NeutralBadge; c.ink=Ink::White; return; }
         const unsigned col=r.driver.classColor; c.boxColor=ColorOf(col);
         c.ink=(299*((col>>16)&255)+587*((col>>8)&255)+114*(col&255)>100000)?Ink::Panel:RGB(255,255,255); },
-    +[](const Row& r,int kind,Cell& c) {
-        c.text=DriverName(r,kind); if(r.player) c.font=Bold;
-        if(app.showStatus[kind]) if(auto status=OverlayStatus(r,kind); !status.empty()) SetBadge(c,std::move(status)); },
-    +[](const Row& r,int kind,Cell& c) { c.text=Gap(r,kind); if(kind==RelativeKind) { c.font=Bold; if(r.player) c.ink=Ink::Accent; } },
-    +[](const Row& r,int,Cell& c) { c.text=Interval(r); c.ink=Ink::Muted; },
-    +[](const Row& r,int,Cell& c) { c.text=Lap(r.car.best); c.ink=r.car.best>0 && r.car.best<=ClassBest(r.driver.classId)+1e-4?Ink::Purple:Ink::Value; },
+    +[](const Row& r,const Overlay& o,Cell& c) {
+        c.text=DriverName(r,o.table); if(r.player) c.font=Bold;
+        if(o.table.showStatus) if(auto status=OverlayStatus(r,o.table); !status.empty()) SetBadge(c,std::move(status)); },
+    +[](const Row& r,const Overlay& o,Cell& c) { c.text=Gap(r,o); if(o.kind==RelativeKind) { c.font=Bold; if(r.player) c.ink=Ink::Accent; } },
+    +[](const Row& r,const Overlay& o,Cell& c) { c.text=Interval(r,o.table); c.ink=Ink::Muted; },
+    +[](const Row& r,const Overlay&,Cell& c) { c.text=Lap(r.car.best); c.ink=r.car.best>0 && r.car.best<=ClassBest(r.driver.classId)+1e-4?Ink::Purple:Ink::Value; },
     // A last lap equal to the car's best is a personal best.
-    +[](const Row& r,int,Cell& c) { c.text=Lap(r.car.last); c.ink=r.car.last>0 && r.car.best>0 && r.car.last<=r.car.best+1e-4?Ink::Green:Ink::Value; },
-    +[](const Row& r,int kind,Cell& c) {
-        c.text=DriverValue(r,0,kind); if(c.text==L"—") { c.ink=Ink::Muted; return; }
+    +[](const Row& r,const Overlay&,Cell& c) { c.text=Lap(r.car.last); c.ink=r.car.last>0 && r.car.best>0 && r.car.last<=r.car.best+1e-4?Ink::Green:Ink::Value; },
+    +[](const Row& r,const Overlay& o,Cell& c) {
+        c.text=DriverValue(r,0,&o.table); if(c.text==L"—") { c.ink=Ink::Muted; return; }
         c.box=Cell::Filled; c.boxColor=LicenseFill(r.driver); c.ink=RGB(255,255,255); c.font=SmallBold; },
-    +[](const Row& r,int kind,Cell& c) { c.text=DriverValue(r,IRatingColumn-LicenseColumn,kind); c.ink=Ink::Value; },
-    +[](const Row& r,int,Cell& c) {
+    +[](const Row& r,const Overlay& o,Cell& c) { c.text=DriverValue(r,IRatingColumn-LicenseColumn,&o.table); c.ink=Ink::Value; },
+    +[](const Row& r,const Overlay&,Cell& c) {
         // The compound's initial in a ring: D dry, W wet, or S/M/H, P/A where a car has several dry compounds.
         const auto label=TireLabel(r.driver,r.car.tireCompound);
         if(label.empty()) { c.text=L"—"; c.ink=Ink::Muted; return; }
         c.box=Cell::Ringed; c.font=SmallBold; c.text=std::wstring(1,static_cast<wchar_t>(label[0]));
         c.ink=label=="Wet"?Ink::Wet:(label=="Soft"?Ink::Red:(label=="Medium"?Ink::Yellow:Ink::Value));
         if(label=="Alternate") c.ink=r.driver.carPath.find("dw12")!=std::string::npos || r.driver.carName.find("DW12")!=std::string::npos?Ink::Red:Ink::Green; },
-    +[](const Row& r,int kind,Cell& c) { c.text=DriverValue(r,PitLapColumn-LicenseColumn,kind); c.ink=Ink::Value; },
-    +[](const Row& r,int kind,Cell& c) { c.text=DriverValue(r,PitTimeColumn-LicenseColumn,kind); c.ink=Ink::Value; },
-    +[](const Row& r,int kind,Cell& c) { c.text=DriverValue(r,PitStopColumn-LicenseColumn,kind); c.ink=Ink::Value; },
-    +[](const Row& r,int,Cell& c) { c.text=CompletedLaps(r); c.ink=Ink::Value; },
-    +[](const Row& r,int,Cell& c) {
-        const int gained=PositionsGained(app.session,r,app.standings.separateClasses);
+    +[](const Row& r,const Overlay& o,Cell& c) { c.text=DriverValue(r,PitLapColumn-LicenseColumn,&o.table); c.ink=Ink::Value; },
+    +[](const Row& r,const Overlay& o,Cell& c) { c.text=DriverValue(r,PitTimeColumn-LicenseColumn,&o.table); c.ink=Ink::Value; },
+    +[](const Row& r,const Overlay& o,Cell& c) { c.text=DriverValue(r,PitStopColumn-LicenseColumn,&o.table); c.ink=Ink::Value; },
+    +[](const Row& r,const Overlay&,Cell& c) { c.text=CompletedLaps(r); c.ink=Ink::Value; },
+    +[](const Row& r,const Overlay& o,Cell& c) {
+        const int gained=PositionsGained(app.session,r,o.table.standings.separateClasses);
         c.text=gained==-MaxCars?L"—":(gained==0?L"–":(gained>0?L"\u25B2":L"\u25BC")+std::to_wstring(std::abs(gained)));
         c.ink=gained==-MaxCars || gained==0?Ink::Muted:(gained>0?Ink::Green:Ink::Red); },
-    +[](const Row& r,int kind,Cell& c) {
-        c.text=OverlayStatus(r,kind);
+    +[](const Row& r,const Overlay& o,Cell& c) {
+        c.text=OverlayStatus(r,o.table);
         c.ink=c.text==L"BLACK" || c.text==L"DQ"?Ink::Red:(c.text==L"TOW" || c.text==L"REPAIR" || c.text==L"SLOW"?RGB(245,163,65):Ink::Yellow); },
-    +[](const Row& r,int kind,Cell& c) {
+    +[](const Row& r,const Overlay& o,Cell& c) {
         // The brand's logo (its initial where there is none) and name, each with its own switch.
         auto brand=Wide(r.driver.brand); if(brand.empty()) { c.text=L"—"; c.ink=Ink::Muted; return; }
         CharUpperBuffW(brand.data(),static_cast<DWORD>(brand.size()));
-        if(app.brandLogos[kind]) { c.logo=BrandLogo(r.driver.brand); if(c.logo<0) c.icon=brand.substr(0,1); }
-        if(app.brandNames[kind]) c.text=std::move(brand);
+        if(o.table.brandLogo) { c.logo=BrandLogo(r.driver.brand); if(c.logo<0) c.icon=brand.substr(0,1); }
+        if(o.table.brandName) c.text=std::move(brand);
         c.font=SmallBold; c.ink=Ink::Brand; },
-    +[](const Row& r,int,Cell& c) {
+    +[](const Row& r,const Overlay&,Cell& c) {
         const int index=r.driver.index, change=index>=0 && index<MaxCars?RatingChanges()[index]:NoRatingChange;
         if(change==NoRatingChange) { c.text=L"—"; c.ink=Ink::Muted; return; }
         c.text=change>0?L"+"+std::to_wstring(change):(change<0?L"\u2212"+std::to_wstring(-change):L"0");
         c.ink=change>0?Ink::Green:(change<0?Ink::Red:Ink::Muted); },
-    +[](const Row& r,int,Cell& c) {
+    +[](const Row& r,const Overlay&,Cell& c) {
         c.box=Cell::Framed; c.boxColor=Ink::Frame; c.font=Small; c.ink=Ink::Value;
         c.text=r.car.stintLaps>=0?L"L"+std::to_wstring(r.car.stintLaps):L"L-"; },
-    +[](const Row& r,int,Cell& c) { c.text=r.car.stops>=0?std::to_wstring(r.car.stops):L"?"; c.ink=r.car.stops>=0?Ink::Value:Ink::Muted; }};
+    +[](const Row& r,const Overlay&,Cell& c) { c.text=r.car.stops>=0?std::to_wstring(r.car.stops):L"?"; c.ink=r.car.stops>=0?Ink::Value:Ink::Muted; }};
 static_assert(std::size(CellRenderers)==ColumnCount);
 // Describes an overlay in physical pixels. Comparing it with the previous scene yields the exact changed areas.
 void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCommand>& out) {
     out.clear();
     auto px=[&](int v){return MulDiv(v,dpi*o.place.scale,9600);};
     auto rect=[&](int x,int y,int w,int h){return RECT{px(x),px(y),px(x+w),px(y+h)};};
-    const int titleOffset=ShowOverlayHeader(o.kind)?0:px(32);
+    const int titleOffset=ShowOverlayHeader(o)?0:px(32);
     auto fill=[&](RECT r,COLORREF color) { r.top-=titleOffset; r.bottom-=titleOffset; out.push_back({DrawCommand::Fill,Regular,0,r,color}); };
     auto label=[&](std::wstring text,RECT r,COLORREF color,FontId font,UINT align=DT_LEFT) {
         r.top-=titleOffset; r.bottom-=titleOffset; out.push_back({DrawCommand::Text,font,align,r,color,{},std::move(text)});
@@ -751,7 +810,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         const int margin=px(14),gap=px(14);
         std::array<MetricText,SlotCount> texts; std::array<std::array<int,4>,SlotCount> parts{}; std::array<int,SlotCount> widths{}; int right=0;
         for(int slot=0;slot<SlotCount;++slot) {
-            texts[slot]=Metric(metrics[slot],o.kind);
+            texts[slot]=Metric(metrics[slot],&o);
             for(int part=0;part<4;++part) widths[slot]+=parts[slot][part]=measure(texts[slot].parts[part],part%2?Bold:Regular);
             if(slot && widths[slot]) right+=widths[slot]+(right?gap:0);
         }
@@ -767,10 +826,10 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         int x=std::max(width-margin-right,margin+widths[0]+gap);
         for(int slot=1;slot<SlotCount;++slot) if(widths[slot]) { draw(slot,x); x+=widths[slot]+gap; }
     };
-    if(ShowOverlayHeader(o.kind)) {
+    if(ShowOverlayHeader(o)) {
         fill({0,0,width,px(32)},Ink::Band);
         fill({0,px(31),width,px(32)},Ink::Line);
-        if(IsTable(o.kind)) slots(app.headerMetrics[o.kind],{0,0,width,px(31)});
+        if(IsTable(o.kind)) slots(o.table.headerMetrics,{0,0,width,px(31)});
         else {
             label(o.kind==PitLimiterKind?L"PIT LANE":Titles[o.kind],rect(12,0,230,32),white,Bold);
             const auto mode=app.frame.replay?L"REPLAY":(!app.frame.onTrack?L"SPOTTING":Wide(app.session.type));
@@ -778,8 +837,8 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         }
     }
     if(IsTable(o.kind)) {
-        const auto columns=VisibleColumns(o.kind); int headerX=12;
-        if(ProgressHeight(o.kind)) {
+        const auto columns=VisibleColumns(o); int headerX=12;
+        if(ProgressHeight(o)) {
             // Like the fuel tank: the session done in the accent color on a dark track, the percentage after it.
             const double progress=SessionProgress(); const int left=px(14), right=width-px(58), top=px(39);
             // The part still to drive is hatched, in neutral grey since it isn't a warning like missing fuel.
@@ -788,23 +847,23 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             if(done<right) out.push_back({DrawCommand::Hatch,Regular,0,{done,top-titleOffset,right,top+px(10)-titleOffset},Ink::HatchGrey,{static_cast<float>(Ink::BarBack)}});
             label(Format(progress*100,0)+L" %",{right,px(32),width-px(14),px(56)},Ink::Muted,Small,DT_RIGHT);
         }
-        if(app.columnHeaders[o.kind]) for(int id:columns) { label(id==GapColumn && o.kind==RelativeKind?L"GAP ≈":ColumnTitle(id),rect(headerX,34+ProgressHeight(o.kind),ColumnWidth(id,o.kind)-8,24),Ink::Label,Regular,Columns[id].align); headerX+=ColumnWidth(id,o.kind); }
-        int y=TableRowsTop(o.kind);
+        if(o.table.columnHeaders) for(int id:columns) { label(id==GapColumn && o.kind==RelativeKind?L"GAP ≈":ColumnTitle(id),rect(headerX,34+ProgressHeight(o),ColumnWidth(o,id)-8,24),Ink::Label,Regular,Columns[id].align); headerX+=ColumnWidth(o,id); }
+        int y=TableRowsTop(o);
         static const std::vector<Row> noRows; static const std::vector<StandingsGroup> noGroups;
-        const auto& rows=o.kind==RelativeKind?RelativeRows():noRows;
-        const auto& groups=o.kind==StandingsKind?StandingsGroups():noGroups;
+        const auto& rows=o.kind==RelativeKind?RelativeRows(o):noRows;
+        const auto& groups=o.kind==StandingsKind?StandingsGroups(o):noGroups;
         const bool rowsEmpty=o.kind==RelativeKind?rows.empty():std::none_of(groups.begin(),groups.end(),[](const StandingsGroup& group){return !group.rows.empty();});
         auto drawRow=[&](const Row& r) {
             fill({0,px(y),width,px(y+27)},r.player?Ink::OwnRow:Ink::Panel);
-            if(app.classColors[o.kind]) fill(rect(0,y,3,27),ColorOf(r.driver.classColor));
+            if(o.table.classColors) fill(rect(0,y,3,27),ColorOf(r.driver.classColor));
             COLORREF color=white;
-            const bool lapColors=o.kind==RelativeKind && app.lapColors && app.session.type=="Race" && !r.player;
+            const bool lapColors=o.kind==RelativeKind && o.table.lapColors && app.session.type=="Race" && !r.player;
             if(lapColors && r.lapDifference>0) color=Ink::LapsAhead;
             if(lapColors && r.lapDifference<0) color=Ink::LapsBehind;
             int x=12;
             for(int id:columns) {
-                const int w=ColumnWidth(id,o.kind), inner=w-8; Cell cell{{},color};
-                CellRenderers[id](r,o.kind,cell);
+                const int w=ColumnWidth(o,id), inner=w-8; Cell cell{{},color};
+                CellRenderers[id](r,o,cell);
                 if(cell.box==Cell::Ringed) {
                     const int left=x+(inner-19)/2;
                     out.push_back({DrawCommand::Ring,cell.font,0,{px(left),px(y+4)-titleOffset,px(left+19),px(y+23)-titleOffset},cell.ink,{std::max(1.f,1.6f*px(100)/100.f)},std::move(cell.text)});
@@ -832,11 +891,11 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         };
         if(o.kind==RelativeKind) {
             const auto reference=std::find_if(rows.begin(),rows.end(),[](const Row& row){return row.player;});
-            if(reference!=rows.end()) y+=(app.rows/2-static_cast<int>(reference-rows.begin()))*27;
+            if(reference!=rows.end()) y+=(o.table.rows/2-static_cast<int>(reference-rows.begin()))*27;
             for(const auto& row:rows) drawRow(row);
         }
         else for(const auto& group:groups) {
-            if(app.standings.separateClasses) {
+            if(o.table.standings.separateClasses) {
                 fill({0,px(y),width,px(y+25)},Ink::ClassBand); fill(rect(0,y,3,25),ColorOf(group.color));
                 int cars=0; const int sof=ClassSof(group.classId,cars);
                 auto name=Wide(group.name); const int nameWidth=measure(name,Bold);
@@ -846,21 +905,21 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             }
             int previous=0;
             for(const auto& row:group.rows) {
-                const int position=app.standings.separateClasses?row.car.classPosition:row.car.position;
+                const int position=o.table.standings.separateClasses?row.car.classPosition:row.car.position;
                 const bool skipped=previous && position>previous+1;
                 drawRow(row);
                 if(skipped) out.push_back({DrawCommand::DottedLine,Regular,0,{px(12),px(y-27)-titleOffset,width-px(12),px(y-27)-titleOffset+1},Ink::Divider});
                 previous=position;
             }
         }
-        if(rowsEmpty) label(L"Waiting for driver and position data …",rect(12,TableRowsTop(o.kind)+16,335,28),muted,Regular);
-        if(app.footers[o.kind].enabled) {
-            const int footer=o.kind==RelativeKind?TableRowsTop(o.kind)+app.rows*27:y+(rowsEmpty?54:0);
+        if(rowsEmpty) label(L"Waiting for driver and position data …",rect(12,TableRowsTop(o)+16,335,28),muted,Regular);
+        if(o.table.footer.enabled) {
+            const int footer=o.kind==RelativeKind?TableRowsTop(o)+o.table.rows*27:y+(rowsEmpty?54:0);
             fill({0,px(footer),width,height+titleOffset},Ink::Band); fill({0,px(footer),width,px(footer)+std::max(1,px(1))},Ink::Line);
-            slots(app.footers[o.kind].metrics,{0,px(footer),width,height+titleOffset});
+            slots(o.table.footer.metrics,{0,px(footer),width,height+titleOffset});
         }
     } else if(o.kind==FuelKind) {
-        const auto& p=Plan(); const auto& f=app.frame; const auto& on=app.fuelDisplay;
+        const auto& p=Plan(); const auto& f=app.frame; const auto& on=o.fuel.display;
         double pace=p.prediction.ownPace; if(pace<=0) pace=f.lastLap>0?f.lastLap:f.bestLap;
         const auto& basis=p.estimates[FuelBasis]; const double burn=basis.samples?basis.consumption:-1;
         const auto window=CalculatePitWindow(app.session,f,p.lapsToFinish,burn,pace);
@@ -877,8 +936,8 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         auto target=[&](int extra){ const double distance=targetDistance+extra; return tankKnown && targetDistance>0 && distance>.05?f.fuel/distance:-1.0; };
         auto targetInk=[&](double value){ return value<0 || burn<=0?Ink::Muted:(value>=burn?Ink::Green:(value>=.9*burn?Ink::Yellow:Ink::Red)); };
         auto litres=[](double value,bool plus=false){ return value<0?std::wstring(L"—"):(plus?L"+":L"")+Format(value,1)+L" L"; };
-        const int W=OverlayWidth(FuelKind); int y=32;
-        if(app.fuelStrip) {
+        const int W=OverlayWidth(o); int y=32;
+        if(o.fuel.strip) {
             int n=0;
             auto item=[&](const wchar_t* head,std::wstring value,COLORREF ink) {
                 const int x=n++*FuelStripCell; if(x) fill(rect(x,y+1,1,48),Ink::Line);
@@ -927,10 +986,10 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                 if(needed>=0) { fill(rect(246,y+96,2,10),RGB(255,255,255)); label(L"Needed "+litres(needed)+L" · "+Format(p.lapsToFinish,1)+L" laps",rect(253,y+92,W-269,18),Ink::Muted,Small); }
                 y+=112;
             }
-            const int figures=static_cast<int>(std::count(app.fuelRows.begin(),app.fuelRows.end(),true));
+            const int figures=static_cast<int>(std::count(o.fuel.figures.begin(),o.fuel.figures.end(),true));
             if(on[FiguresModule] && figures) {
                 fill(rect(0,y,W,1),Ink::Line);
-                for(int i=0,index=0;i<FuelMetricCount;++i) if(app.fuelRows[i]) {
+                for(int i=0,index=0;i<FuelMetricCount;++i) if(o.fuel.figures[i]) {
                     const auto& figure=FuelFigures[i]; const auto& estimate=p.estimates[figure.metric];
                     const int left=W*index/figures,cell=W*(index+1)/figures-left; ++index;
                     if(left) fill(rect(left,y+1,1,50),Ink::Line);
@@ -1021,8 +1080,8 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             }
         }
     } else if(o.kind==WeatherKind) {
-        const auto& f=app.frame; const auto& on=app.weatherDisplay; const auto& history=app.weatherHistory;
-        const int W=OverlayWidth(WeatherKind), wet=f.trackWetness>=0 && f.trackWetness<8?f.trackWetness:0; int y=32;
+        const auto& f=app.frame; const auto& on=o.weather.display; const auto& history=app.weatherHistory;
+        const int W=OverlayWidth(o), wet=f.trackWetness>=0 && f.trackWetness<8?f.trackWetness:0; int y=32;
         const COLORREF wetInk=RGB(140,198,255);
         auto degrees=[](double value){ if(!std::isfinite(value)) return std::wstring(L"—"); wchar_t text[24]; swprintf_s(text,L"%.1f°",value); return std::wstring(text); };
         auto percent=[](double fraction){ return std::isfinite(fraction) && fraction>=0?Format(fraction*100,0)+L" %":std::wstring(L"—"); };
@@ -1045,7 +1104,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         auto octant=[&](double radians){ return static_cast<int>(std::lround(std::fmod(std::fmod(radians,2*pi)+2*pi,2*pi)/(pi/4)))%8; };
         const std::wstring speed=f.windSpeed>=0?Format(f.windSpeed*3.6,0):L"—", from=std::isfinite(f.windDirection)?Compass[octant(f.windDirection)]:L"";
         const std::wstring side=std::isfinite(angle)?Sides[octant(angle)]:L"";
-        if(app.weatherStrip) {
+        if(o.weather.strip) {
             int n=0;
             auto item=[&](const wchar_t* head,std::wstring value,COLORREF ink,Trend extra,int cells=1) {
                 const int x=n*WeatherStripCell, cell=cells*WeatherStripCell; n+=cells; if(x) fill(rect(x,y+1,1,48),Ink::Line);
@@ -1320,13 +1379,13 @@ void CaptureOverlayCorner(Overlay& o) {
 }
 void SetOverlayOrigin(Overlay& o,int x,int y) {
     const int dpi=GetDpiForWindow(o.window);
-    o.place.x=x+(o.place.growLeft?MulDiv(OverlayWidth(o.kind),dpi*o.place.scale,9600):0);
-    o.place.y=y+(o.place.growUp?MulDiv(BaseHeight(o.kind),dpi*o.place.scale,9600):0);
+    o.place.x=x+(o.place.growLeft?MulDiv(OverlayWidth(o),dpi*o.place.scale,9600):0);
+    o.place.y=y+(o.place.growUp?MulDiv(BaseHeight(o),dpi*o.place.scale,9600):0);
 }
 void Fit(Overlay& o,bool recover=false) {
     InvalidateModel();
     const int dpi=GetDpiForWindow(o.window);
-    const int w=MulDiv(OverlayWidth(o.kind),dpi*o.place.scale,9600),h=MulDiv(BaseHeight(o.kind),dpi*o.place.scale,9600);
+    const int w=MulDiv(OverlayWidth(o),dpi*o.place.scale,9600),h=MulDiv(BaseHeight(o),dpi*o.place.scale,9600);
     int x=o.place.x-(o.place.growLeft?w:0),y=o.place.y-(o.place.growUp?h:0);
     RECT r{x,y,x+w,y+h};
     HMONITOR monitor=MonitorFromRect(&r,MONITOR_DEFAULTTONULL);
@@ -1344,12 +1403,16 @@ void Fit(Overlay& o,bool recover=false) {
     const int diameter=2*MulDiv(CornerRadius,dpi*o.place.scale,9600);
     SetWindowRgn(o.window,CreateRoundRectRgn(0,0,w+1,h+1,diameter,diameter),TRUE);
 }
+void CreateOverlayWindow(Overlay& o) {
+    CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_LAYERED|WS_EX_TRANSPARENT,L"RaceMate.Overlay",Name(o).c_str(),WS_POPUP,o.place.x,o.place.y,365,200,nullptr,nullptr,app.instance,&o);
+    Fit(o,true);
+}
 // Ticks refresh each overlay at its own rate; everything else (settings, hide, diagnostics) forces a refresh.
 void UpdateOverlays(bool force=true) {
     InvalidateModel();
     const bool pitVisible=app.pitVisibility.Update(app.session,app.frame);
     for(auto& o:app.overlays) {
-        bool visible=o.place.enabled && !app.hidden && (o.kind!=WeatherKind || std::any_of(app.weatherDisplay.begin(),app.weatherDisplay.begin()+WeatherPanelCount,[](bool value){return value;})) && (app.preview || (app.frame.connected && (o.kind!=PitLimiterKind || pitVisible)));
+        bool visible=o.place.enabled && !app.hidden && (o.kind!=WeatherKind || std::any_of(o.weather.display.begin(),o.weather.display.begin()+WeatherPanelCount,[](bool value){return value;})) && (app.preview || (app.frame.connected && (o.kind!=PitLimiterKind || pitVisible)));
         auto style=GetWindowLongPtrW(o.window,GWL_EXSTYLE);
         const auto desired=app.edit?(style&~WS_EX_TRANSPARENT):(style|WS_EX_TRANSPARENT);
         if(style!=desired) SetWindowLongPtrW(o.window,GWL_EXSTYLE,desired);
@@ -1361,7 +1424,7 @@ void UpdateOverlays(bool force=true) {
             // Half a timer period of slack keeps a 10 Hz overlay on a 10 Hz timer from skipping ticks.
             if(!force && app.now+app.timerMs/2<o.due) continue;
             o.due=app.now+1000/o.place.rate;
-            if(client.bottom!=MulDiv(BaseHeight(o.kind),dpi*o.place.scale,9600) || client.right!=MulDiv(OverlayWidth(o.kind),dpi*o.place.scale,9600)) { Fit(o); InvalidateModel(); }
+            if(client.bottom!=MulDiv(BaseHeight(o),dpi*o.place.scale,9600) || client.right!=MulDiv(OverlayWidth(o),dpi*o.place.scale,9600)) { Fit(o); InvalidateModel(); }
             RefreshOverlay(o);
         }
     }
@@ -1563,8 +1626,13 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
     else { MessageBoxW(nullptr,L"Could not open the configuration folder.",L"RaceMate",MB_OK|MB_ICONERROR); if(mutex) CloseHandle(mutex); return 1; }
     Load();
     if(diagnostics) {
-        app.weatherDisplay.fill(true); app.footers={}; app.columnHeaders.fill(false); app.rows=9; app.rate=10; app.standings={}; app.fuelRows.fill(true); app.fuelDisplay.fill(true); app.startWithWindows=app.startMinimized=false;
-        for(int kind=0;kind<OverlayCount;++kind) { auto& p=app.overlays[kind].place; p={}; p.x=DefaultPositions[kind].x; p.y=DefaultPositions[kind].y; }
+        // One instance per kind with known settings, as the checks expect.
+        for(auto it=app.overlays.begin();it!=app.overlays.end();) it=it->number>1?app.overlays.erase(it):std::next(it);
+        app.rate=10; app.startWithWindows=app.startMinimized=false;
+        for(auto& o:app.overlays) {
+            o.weather.display.fill(true); o.table.footer={}; o.table.columnHeaders=false; o.table.rows=9; o.table.standings={}; o.fuel.figures.fill(true); o.fuel.display.fill(true);
+            auto& p=o.place; p={}; p.x=DefaultPositions[o.kind].x; p.y=DefaultPositions[o.kind].y;
+        }
     }
     INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_STANDARD_CLASSES|ICC_LISTVIEW_CLASSES|ICC_HOTKEY_CLASS}; InitCommonControlsEx(&controls);
     app.brush=CreateSolidBrush(Background);
@@ -1573,14 +1641,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
     const UINT dpi=GetDpiForSystem(); RECT size{0,0,MulDiv(1000,dpi,96),MulDiv(720,dpi,96)}; AdjustWindowRectExForDpi(&size,style,FALSE,WS_EX_CONTROLPARENT,dpi);
     app.main=CreateWindowExW(WS_EX_CONTROLPARENT,cls.lpszClassName,L"RaceMate",style,CW_USEDEFAULT,CW_USEDEFAULT,size.right-size.left,size.bottom-size.top,nullptr,nullptr,instance,nullptr);
     if(!app.main) { DeleteObject(app.brush); if(mutex) CloseHandle(mutex); return 1; }
-    // The Overlays page reads each overlay's kind as soon as CreateMainUi builds it.
-    for(int i=0;i<OverlayCount;++i) app.overlays[i].kind=i;
     CreateMainUi();
     cls.lpfnWndProc=OverlayProc; cls.hbrBackground=nullptr; cls.lpszClassName=L"RaceMate.Overlay"; RegisterClassExW(&cls);
-    for(int i=0;i<OverlayCount;++i) {
-        auto& o=app.overlays[i];
-        CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_LAYERED|WS_EX_TRANSPARENT,cls.lpszClassName,Titles[i],WS_POPUP,o.place.x,o.place.y,365,200,nullptr,nullptr,instance,&o); Fit(o,true);
-    }
+    app.overlayClass=true;
+    for(auto& o:app.overlays) CreateOverlayWindow(o);
 #ifdef RACEMATE_DIAGNOSTICS
     if(diagnostics) return RunDiagnostics();
     if(wcsstr(args,L"--benchmark-tick")) return RunTickBenchmark();

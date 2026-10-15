@@ -1,4 +1,7 @@
 // Render checks and regression diagnostics; excluded from the production build.
+// Both tables' settings, saved and restored around checks that change many of them.
+std::array<TableSettings,2> Tables() { return {First(RelativeKind).table,First(StandingsKind).table}; }
+void RestoreTables(const std::array<TableSettings,2>& tables) { First(RelativeKind).table=tables[0]; First(StandingsKind).table=tables[1]; }
 bool Export(HWND window,const std::wstring& path) {
     RECT r{}; GetClientRect(window,&r); const int w=r.right,h=r.bottom;
     BITMAPINFO info{}; info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER); info.bmiHeader.biWidth=w; info.bmiHeader.biHeight=-h;
@@ -19,11 +22,11 @@ bool Export(HWND window,const std::wstring& path) {
 // A DPI change rebuilds fonts and the current page in place.
 bool MainDpiDiagnostics(std::ostream& report) {
     bool ok=true;
-    OpenOverlay(RelativeKind);
+    OpenOverlay(First(RelativeKind));
     for(UINT target:{96u,192u,GetDpiForWindow(app.main)}) {
         RECT bounds{}; GetWindowRect(app.main,&bounds);
         SendMessageW(app.main,WM_DPICHANGED,MAKEWPARAM(target,target),reinterpret_cast<LPARAM>(&bounds));
-        const bool same=ui.page==Page::Overlay && ui.overlayKind==RelativeKind && ui.host.Content()!=nullptr && ui.text!=nullptr;
+        const bool same=ui.page==Page::Overlay && ui.overlay==&First(RelativeKind) && ui.host.Content()!=nullptr && ui.text!=nullptr;
         report<<"DPI "<<target<<": page kept="<<same<<"\n"; ok=same && ok;
     }
     ShowPage(Page::Overlays);
@@ -49,8 +52,8 @@ int RunDiagnostics() {
         ShowPage(Page::Settings); UpdateWindow(app.main); ok=Export(app.main,L"build\\qa\\main-settings.bmp") && ok;
         bool pagesOk=ui.page==Page::Settings && ui.host.Content()!=nullptr;
         for(int kind=0;kind<OverlayCount;++kind) {
-            OpenOverlay(kind); UpdateWindow(app.main);
-            pagesOk=ui.page==Page::Overlay && ui.overlayKind==kind && IsWindowVisible(ui.back) && pagesOk;
+            OpenOverlay(First(kind)); UpdateWindow(app.main);
+            pagesOk=ui.page==Page::Overlay && ui.overlay==&First(kind) && IsWindowVisible(ui.back) && pagesOk;
             ok=Export(app.main,L"build\\qa\\main-"+std::to_wstring(kind)+L".bmp") && ok;
         }
         ShowPage(Page::Overlays); UpdateWindow(app.main); pagesOk=!IsWindowVisible(ui.back) && pagesOk;
@@ -71,158 +74,158 @@ int RunDiagnostics() {
     }
     {
         // Caution laps never count now, so the fuel page has a layout and modules instead of a filter.
-        const bool savedStrip=app.fuelStrip; const auto savedModules=app.fuelDisplay; bool fuelOk=true;
-        app.fuelStrip=true; app.fuelDisplay[TwoLongerRow]=true; SettingChanged(); Load();
-        fuelOk=app.fuelStrip && app.fuelDisplay[TwoLongerRow] && OverlayWidth(FuelKind)==FuelStripCount()*FuelStripCell && HeightWithTitle(FuelKind)==32+50 && fuelOk;
-        app.fuelStrip=savedStrip; app.fuelDisplay=savedModules; SettingChanged();
+        const auto savedFuel=First(FuelKind).fuel; bool fuelOk=true;
+        First(FuelKind).fuel.strip=true; First(FuelKind).fuel.display[TwoLongerRow]=true; SettingChanged(); Load();
+        fuelOk=First(FuelKind).fuel.strip && First(FuelKind).fuel.display[TwoLongerRow] && OverlayWidth(First(FuelKind))==FuelStripCount(First(FuelKind))*FuelStripCell && HeightWithTitle(First(FuelKind))==32+50 && fuelOk;
+        First(FuelKind).fuel=savedFuel; SettingChanged();
         report<<"Fuel layout and modules persist; the strip's width follows its values: "<<(fuelOk?"PASS":"FAIL")<<"\n"; ok=fuelOk && ok;
     }
     UpdateOverlays();
     for(auto& o:app.overlays) ok=Export(o.window,L"build\\qa\\overlay-"+std::to_wstring(o.kind)+L".bmp")&&ok;
     {
-        const auto savedDriver=app.showDriver, savedStatus=app.showStatus, savedHeaders=app.tableHeaders, savedHeadings=app.columnHeaders;
-        const auto savedFormats=app.nameFormat; const auto savedFooters=app.footers; const auto savedHeaderMetrics=app.headerMetrics; const auto savedFrame=app.frame; bool displayOk=true;
+        const auto savedTables=Tables();
+        const auto savedFrame=app.frame; bool displayOk=true;
         app.frame.cars[1].outLap=true; app.frame.cars[1].sessionFlags=0x80000u; app.frame.cars[2].pit=true; app.frame.cars[2].sessionFlags=0x100000u;
         for(int kind=0;kind<2;++kind) {
-            app.showDriver[kind]=app.showStatus[kind]=app.columnHeaders[kind]=true; app.tableHeaders[kind]=false; app.footers[kind].enabled=true; app.nameFormat[kind]=0; Save(); UpdateOverlays();
+            First(kind).table.showDriver=First(kind).table.showStatus=First(kind).table.columnHeaders=true; First(kind).table.header=false; First(kind).table.footer.enabled=true; First(kind).table.nameFormat=0; Save(); UpdateOverlays();
             Row test; test.driver.name="Daniel Fischer";
             for(int format=0;format<3;++format) {
-                app.nameFormat[kind]=format; SettingChanged();
-                const wchar_t* expected[]={L"Daniel Fischer",L"D. Fischer",L"D Fischer"}; displayOk=DriverName(test,kind)==expected[format] && displayOk;
+                First(kind).table.nameFormat=format; SettingChanged();
+                const wchar_t* expected[]={L"Daniel Fischer",L"D. Fischer",L"D Fischer"}; displayOk=DriverName(test,First(kind).table)==expected[format] && displayOk;
             }
-            test.driver.name="Éric van der Meer"; app.nameFormat[kind]=1; displayOk=DriverName(test,kind)==L"É. van der Meer" && displayOk;
+            test.driver.name="Éric van der Meer"; First(kind).table.nameFormat=1; displayOk=DriverName(test,First(kind).table)==L"É. van der Meer" && displayOk;
             Row status; status.car.pit=status.car.towing=status.car.outLap=true; status.car.sessionFlags=0x190000u;
-            displayOk=OverlayStatus(status,kind)==L"PIT" && displayOk; status.car.pit=false;
-            displayOk=OverlayStatus(status,kind)==L"TOW" && displayOk; status.car.towing=false;
-            displayOk=OverlayStatus(status,kind)==L"BLACK" && displayOk; status.car.sessionFlags&=~0x10000u;
-            displayOk=OverlayStatus(status,kind)==L"REPAIR" && displayOk; status.car.sessionFlags&=~0x100000u;
-            displayOk=OverlayStatus(status,kind)==L"SLOW" && displayOk; status.car.sessionFlags=0;
-            displayOk=OverlayStatus(status,kind)==L"OUT" && displayOk;
-            app.nameFormat[kind]=1; SettingChanged();
-            int before=BaseHeight(kind);
-            app.tableHeaders[kind]=true; SettingChanged(); displayOk=BaseHeight(kind)==before+32 && displayOk;
-            app.headerMetrics[kind]={OverlayNameMetric,TrackTempMetric,LocalTimeMetric}; SettingChanged();
-            Load(); displayOk=app.headerMetrics[kind]==Slots{OverlayNameMetric,TrackTempMetric,LocalTimeMetric} && FooterValue(OverlayNameMetric,kind)==Titles[kind] && app.footers[kind].metrics==savedFooters[kind].metrics && displayOk;
-            OpenOverlay(kind); Export(app.main,L"build\\qa\\integrated-settings-"+std::to_wstring(kind)+L".bmp"); Export(app.overlays[kind].window,L"build\\qa\\configured-header-status-"+std::to_wstring(kind)+L".bmp");
-            const int expandedWidth=OverlayWidth(kind);
-            app.columnHeaders[kind]=false; SettingChanged(); displayOk=BaseHeight(kind)==before+5 && OverlayWidth(kind)<expandedWidth && displayOk;
-            Export(app.overlays[kind].window,L"build\\qa\\compact-status-"+std::to_wstring(kind)+L".bmp");
-            int width=OverlayWidth(kind);
-            SetColumnVisible(kind,DriverColumn,false); displayOk=!ColumnVisible(kind,DriverColumn) && OverlayWidth(kind)==width-ColumnWidth(DriverColumn,kind) && displayOk;
-            width=OverlayWidth(kind);
-            SetColumnVisible(kind,StatusColumn,false); displayOk=!app.showStatus[kind] && OverlayWidth(kind)==width && displayOk;
-            app.footers[kind].enabled=false; SettingChanged();
-            displayOk=BaseHeight(kind)==before+5-28 && displayOk;
-            Load(); displayOk=!app.showDriver[kind] && !app.showStatus[kind] && !app.columnHeaders[kind] && app.tableHeaders[kind] && !app.footers[kind].enabled && app.nameFormat[kind]==1 && displayOk;
+            displayOk=OverlayStatus(status,First(kind).table)==L"PIT" && displayOk; status.car.pit=false;
+            displayOk=OverlayStatus(status,First(kind).table)==L"TOW" && displayOk; status.car.towing=false;
+            displayOk=OverlayStatus(status,First(kind).table)==L"BLACK" && displayOk; status.car.sessionFlags&=~0x10000u;
+            displayOk=OverlayStatus(status,First(kind).table)==L"REPAIR" && displayOk; status.car.sessionFlags&=~0x100000u;
+            displayOk=OverlayStatus(status,First(kind).table)==L"SLOW" && displayOk; status.car.sessionFlags=0;
+            displayOk=OverlayStatus(status,First(kind).table)==L"OUT" && displayOk;
+            First(kind).table.nameFormat=1; SettingChanged();
+            int before=BaseHeight(First(kind));
+            First(kind).table.header=true; SettingChanged(); displayOk=BaseHeight(First(kind))==before+32 && displayOk;
+            First(kind).table.headerMetrics={OverlayNameMetric,TrackTempMetric,LocalTimeMetric}; SettingChanged();
+            Load(); displayOk=First(kind).table.headerMetrics==Slots{OverlayNameMetric,TrackTempMetric,LocalTimeMetric} && FooterValue(OverlayNameMetric,&First(kind))==Titles[kind] && First(kind).table.footer.metrics==savedTables[kind].footer.metrics && displayOk;
+            OpenOverlay(First(kind)); Export(app.main,L"build\\qa\\integrated-settings-"+std::to_wstring(kind)+L".bmp"); Export(First(kind).window,L"build\\qa\\configured-header-status-"+std::to_wstring(kind)+L".bmp");
+            const int expandedWidth=OverlayWidth(First(kind));
+            First(kind).table.columnHeaders=false; SettingChanged(); displayOk=BaseHeight(First(kind))==before+5 && OverlayWidth(First(kind))<expandedWidth && displayOk;
+            Export(First(kind).window,L"build\\qa\\compact-status-"+std::to_wstring(kind)+L".bmp");
+            int width=OverlayWidth(First(kind));
+            SetColumnVisible(First(kind),DriverColumn,false); displayOk=!ColumnVisible(First(kind),DriverColumn) && OverlayWidth(First(kind))==width-ColumnWidth(First(kind),DriverColumn) && displayOk;
+            width=OverlayWidth(First(kind));
+            SetColumnVisible(First(kind),StatusColumn,false); displayOk=!First(kind).table.showStatus && OverlayWidth(First(kind))==width && displayOk;
+            First(kind).table.footer.enabled=false; SettingChanged();
+            displayOk=BaseHeight(First(kind))==before+5-28 && displayOk;
+            Load(); displayOk=!First(kind).table.showDriver && !First(kind).table.showStatus && !First(kind).table.columnHeaders && First(kind).table.header && !First(kind).table.footer.enabled && First(kind).table.nameFormat==1 && displayOk;
         }
-        app.showDriver=savedDriver; app.showStatus=savedStatus; app.tableHeaders=savedHeaders; app.columnHeaders=savedHeadings; app.nameFormat=savedFormats; app.footers=savedFooters; app.headerMetrics=savedHeaderMetrics; app.frame=savedFrame; Save(); UpdateOverlays();
+        RestoreTables(savedTables); app.frame=savedFrame; Save(); UpdateOverlays();
         report<<"Table page settings, name formats, single status priority, configurable headers and independent footer persistence: "<<(displayOk?"PASS":"FAIL")<<"\n"; ok=displayOk && ok;
     }
     {
         // Best and last lap: optional in the Relative (off by default), always in the Standings.
-        bool lapsOk=!ColumnVisible(RelativeKind,BestColumn) && !ColumnVisible(RelativeKind,LastColumn) && ColumnVisible(StandingsKind,BestColumn) && ColumnVisible(StandingsKind,LastColumn);
-        const int width=OverlayWidth(RelativeKind);
-        SetColumnVisible(RelativeKind,BestColumn,true); SetColumnVisible(RelativeKind,LastColumn,true);
-        lapsOk=OverlayWidth(RelativeKind)==width+ColumnWidth(BestColumn,RelativeKind)+ColumnWidth(LastColumn,RelativeKind) && lapsOk;
-        const auto columns=VisibleColumns(RelativeKind);
+        bool lapsOk=!ColumnVisible(First(RelativeKind),BestColumn) && !ColumnVisible(First(RelativeKind),LastColumn) && ColumnVisible(First(StandingsKind),BestColumn) && ColumnVisible(First(StandingsKind),LastColumn);
+        const int width=OverlayWidth(First(RelativeKind));
+        SetColumnVisible(First(RelativeKind),BestColumn,true); SetColumnVisible(First(RelativeKind),LastColumn,true);
+        lapsOk=OverlayWidth(First(RelativeKind))==width+ColumnWidth(First(RelativeKind),BestColumn)+ColumnWidth(First(RelativeKind),LastColumn) && lapsOk;
+        const auto columns=VisibleColumns(First(RelativeKind));
         const auto gap=std::find(columns.begin(),columns.end(),GapColumn);
         lapsOk=gap!=columns.end() && gap+2<columns.end() && gap[1]==BestColumn && gap[2]==LastColumn && lapsOk;
-        UpdateOverlays(); lapsOk=Export(app.overlays[RelativeKind].window,L"build\\qa\\relative-lap-times.bmp") && lapsOk;
-        SetColumnVisible(StandingsKind,BestColumn,false); lapsOk=ColumnVisible(StandingsKind,BestColumn) && lapsOk;
-        Load(); lapsOk=app.relativeBest && app.relativeLast && lapsOk;
-        SetColumnVisible(RelativeKind,BestColumn,false); SetColumnVisible(RelativeKind,LastColumn,false);
-        Load(); lapsOk=!app.relativeBest && !app.relativeLast && OverlayWidth(RelativeKind)==width && lapsOk;
+        UpdateOverlays(); lapsOk=Export(First(RelativeKind).window,L"build\\qa\\relative-lap-times.bmp") && lapsOk;
+        SetColumnVisible(First(StandingsKind),BestColumn,false); lapsOk=ColumnVisible(First(StandingsKind),BestColumn) && lapsOk;
+        Load(); lapsOk=First(RelativeKind).table.best && First(RelativeKind).table.last && lapsOk;
+        SetColumnVisible(First(RelativeKind),BestColumn,false); SetColumnVisible(First(RelativeKind),LastColumn,false);
+        Load(); lapsOk=!First(RelativeKind).table.best && !First(RelativeKind).table.last && OverlayWidth(First(RelativeKind))==width && lapsOk;
         report<<"Relative best and last lap columns: "<<(lapsOk?"PASS":"FAIL")<<"\n"; ok=lapsOk && ok;
     }
     {
         // Gap signs: off by default; the row order tells ahead from behind.
-        const auto savedSigns=app.gapSigns; const auto savedOptions=app.standings;
-        app.standings.separateClasses=false;
+        const auto savedTables=Tables();
+        First(StandingsKind).table.standings.separateClasses=false;
         Row ahead; ahead.gap=-7.5; Row behind; behind.gap=2.5;
         Row standing; standing.car.position=3; standing.gap=2.6; standing.interval=1.2;
         Row lapped=standing; lapped.lapDifference=1; lapped.intervalLaps=1;
-        bool signsOk=!app.gapSigns[RelativeKind] && !app.gapSigns[StandingsKind];
-        signsOk=Gap(ahead,RelativeKind)==Format(7.5,app.gapDecimals) && Gap(behind,RelativeKind)==Format(2.5,app.gapDecimals) && signsOk;
-        signsOk=Gap(standing,StandingsKind)==L"2.6" && Interval(standing)==L"1.2" && Gap(lapped,StandingsKind)==L"1 L" && Interval(lapped)==L"1 L" && signsOk;
-        SetGapSigns(RelativeKind,true);
-        signsOk=Gap(ahead,RelativeKind)==L"−"+Format(7.5,app.gapDecimals) && Gap(behind,RelativeKind)==L"+"+Format(2.5,app.gapDecimals) && Gap(standing,StandingsKind)==L"2.6" && signsOk;
-        SetGapSigns(StandingsKind,true);
-        signsOk=Gap(standing,StandingsKind)==L"+2.6" && Interval(standing)==L"+1.2" && Gap(lapped,StandingsKind)==L"+1 L" && Interval(lapped)==L"+1 L" && signsOk;
-        Load(); signsOk=app.gapSigns[RelativeKind] && app.gapSigns[StandingsKind] && signsOk;
-        app.gapSigns=savedSigns; app.standings=savedOptions; Save();
+        bool signsOk=!First(RelativeKind).table.gapSigns && !First(StandingsKind).table.gapSigns;
+        signsOk=Gap(ahead,First(RelativeKind))==Format(7.5,First(RelativeKind).table.gapDecimals) && Gap(behind,First(RelativeKind))==Format(2.5,First(RelativeKind).table.gapDecimals) && signsOk;
+        signsOk=Gap(standing,First(StandingsKind))==L"2.6" && Interval(standing,First(StandingsKind).table)==L"1.2" && Gap(lapped,First(StandingsKind))==L"1 L" && Interval(lapped,First(StandingsKind).table)==L"1 L" && signsOk;
+        SetGapSigns(First(RelativeKind),true);
+        signsOk=Gap(ahead,First(RelativeKind))==L"−"+Format(7.5,First(RelativeKind).table.gapDecimals) && Gap(behind,First(RelativeKind))==L"+"+Format(2.5,First(RelativeKind).table.gapDecimals) && Gap(standing,First(StandingsKind))==L"2.6" && signsOk;
+        SetGapSigns(First(StandingsKind),true);
+        signsOk=Gap(standing,First(StandingsKind))==L"+2.6" && Interval(standing,First(StandingsKind).table)==L"+1.2" && Gap(lapped,First(StandingsKind))==L"+1 L" && Interval(lapped,First(StandingsKind).table)==L"+1 L" && signsOk;
+        Load(); signsOk=First(RelativeKind).table.gapSigns && First(StandingsKind).table.gapSigns && signsOk;
+        RestoreTables(savedTables); Save();
         report<<"Gap signs switch per table, off by default: "<<(signsOk?"PASS":"FAIL")<<"\n"; ok=signsOk && ok;
     }
     {
-        const auto savedFlags=app.driverFlags; const auto savedFrame=app.frame; bool flagsOk=true;
+        const auto savedTables=Tables(); const auto savedFrame=app.frame; bool flagsOk=true;
         app.frame.cars[0].sessionFlags=0x10000u; app.frame.cars[1].sessionFlags=0x80000u; app.frame.cars[2].sessionFlags=0x100000u; app.frame.cars[3].sessionFlags=0x190000u;
         for(int kind=0;kind<2;++kind) {
-            app.driverFlags[kind]={true,true,true}; SettingChanged(); OpenOverlay(kind);
-            Export(app.main,L"build\\qa\\driver-flags-settings-"+std::to_wstring(kind)+L".bmp"); Export(app.overlays[kind].window,L"build\\qa\\driver-flags-overlay-"+std::to_wstring(kind)+L".bmp");
-            app.driverFlags[kind]={false,false,false}; SettingChanged();
-            Load(); flagsOk=app.showStatus[kind] && std::none_of(app.driverFlags[kind].begin(),app.driverFlags[kind].end(),[](bool v){return v;}) && flagsOk;
+            First(kind).table.driverFlags={true,true,true}; SettingChanged(); OpenOverlay(First(kind));
+            Export(app.main,L"build\\qa\\driver-flags-settings-"+std::to_wstring(kind)+L".bmp"); Export(First(kind).window,L"build\\qa\\driver-flags-overlay-"+std::to_wstring(kind)+L".bmp");
+            First(kind).table.driverFlags={false,false,false}; SettingChanged();
+            Load(); flagsOk=First(kind).table.showStatus && std::none_of(First(kind).table.driverFlags.begin(),First(kind).table.driverFlags.end(),[](bool v){return v;}) && flagsOk;
         }
-        app.driverFlags=savedFlags; app.frame=savedFrame; Save(); UpdateOverlays();
+        RestoreTables(savedTables); app.frame=savedFrame; Save(); UpdateOverlays();
         report<<"Driver flag display settings, independent overlays and persisted disabled flags with PIT/OUT status retained: "<<(flagsOk?"PASS":"FAIL")<<"\n"; ok=flagsOk && ok;
     }
     {
         // Every new column, the status badge and class colors on and off; the previews are for review.
-        const auto savedExtra=app.extraColumns; const auto savedColumns=app.driverColumns; const auto savedHeaders=app.tableHeaders; const auto savedClass=app.classColors;
+        const auto savedTables=Tables();
         const auto savedFrame=app.frame; bool columnsOk=true;
         app.frame.cars[1].outLap=true; app.frame.cars[2].pit=true; app.frame.cars[2].best=app.frame.cars[2].last;
         for(int i=0;i<10;++i) app.frame.cars[i].stintLaps=i==4?-1:i;
         for(int kind=0;kind<2;++kind) {
-            const int before=OverlayWidth(kind);
-            for(auto& on:app.extraColumns[kind]) on=true;
-            app.driverColumns[kind][0]=app.driverColumns[kind][1]=app.driverColumns[kind][2]=true; app.tableHeaders[kind]=true; SettingChanged();
-            columnsOk=OverlayWidth(kind)>before && Export(app.overlays[kind].window,L"build\\qa\\columns-all-"+std::to_wstring(kind)+L".bmp") && columnsOk;
-            const int both=OverlayWidth(kind);
-            app.brandNames[kind]=false; SettingChanged(); columnsOk=OverlayWidth(kind)<both && columnsOk;
-            columnsOk=Export(app.overlays[kind].window,L"build\\qa\\columns-logo-only-"+std::to_wstring(kind)+L".bmp") && columnsOk;
-            app.brandNames[kind]=true; app.brandLogos[kind]=false; SettingChanged(); Load(); columnsOk=!app.brandLogos[kind] && app.brandNames[kind] && OverlayWidth(kind)<both && columnsOk;
-            app.brandLogos[kind]=true; SettingChanged();
-            app.classColors[kind]=false; SettingChanged();
-            columnsOk=Export(app.overlays[kind].window,L"build\\qa\\columns-neutral-"+std::to_wstring(kind)+L".bmp") && columnsOk;
-            Load(); columnsOk=!app.classColors[kind] && std::all_of(app.extraColumns[kind].begin(),app.extraColumns[kind].end(),[](bool on){return on;}) && columnsOk;
+            const int before=OverlayWidth(First(kind));
+            for(auto& on:First(kind).table.extraColumns) on=true;
+            First(kind).table.driverColumns[0]=First(kind).table.driverColumns[1]=First(kind).table.driverColumns[2]=true; First(kind).table.header=true; SettingChanged();
+            columnsOk=OverlayWidth(First(kind))>before && Export(First(kind).window,L"build\\qa\\columns-all-"+std::to_wstring(kind)+L".bmp") && columnsOk;
+            const int both=OverlayWidth(First(kind));
+            First(kind).table.brandName=false; SettingChanged(); columnsOk=OverlayWidth(First(kind))<both && columnsOk;
+            columnsOk=Export(First(kind).window,L"build\\qa\\columns-logo-only-"+std::to_wstring(kind)+L".bmp") && columnsOk;
+            First(kind).table.brandName=true; First(kind).table.brandLogo=false; SettingChanged(); Load(); columnsOk=!First(kind).table.brandLogo && First(kind).table.brandName && OverlayWidth(First(kind))<both && columnsOk;
+            First(kind).table.brandLogo=true; SettingChanged();
+            First(kind).table.classColors=false; SettingChanged();
+            columnsOk=Export(First(kind).window,L"build\\qa\\columns-neutral-"+std::to_wstring(kind)+L".bmp") && columnsOk;
+            Load(); columnsOk=!First(kind).table.classColors && std::all_of(First(kind).table.extraColumns.begin(),First(kind).table.extraColumns.end(),[](bool on){return on;}) && columnsOk;
         }
         columnsOk=RatingChanges()[0]>0 && RatingChanges()[9]<0 && columnsOk;
         // Logos for every brand the demo uses, decoded once per size and the atlas released after painting.
-        columnsOk=BrandLogo("BMW")>=0 && BrandLogo("Aston Martin")>=0 && BrandLogo("Unknown")<0 && !app.overlays[0].logos.empty() && !logoAtlas.bitmap && columnsOk;
-        app.extraColumns=savedExtra; app.driverColumns=savedColumns; app.tableHeaders=savedHeaders; app.classColors=savedClass; app.frame=savedFrame; Save(); UpdateOverlays();
+        columnsOk=BrandLogo("BMW")>=0 && BrandLogo("Aston Martin")>=0 && BrandLogo("Unknown")<0 && !First(0).logos.empty() && !logoAtlas.bitmap && columnsOk;
+        RestoreTables(savedTables); app.frame=savedFrame; Save(); UpdateOverlays();
         report<<"Car, iRating change and stint columns, license pills, status badge and neutral class colors: "<<(columnsOk?"PASS":"FAIL")<<"\n"; ok=columnsOk && ok;
     }
     {
-        const auto savedShort=app.driverShortView; const auto savedColumns=app.driverColumns;
+        const auto savedTables=Tables();
         bool shortOk=true;
         for(int kind=0;kind<2;++kind) {
-            app.driverShortView[kind]={false,false}; app.driverColumns[kind][0]=app.driverColumns[kind][1]=true;
-            app.driverShortView[kind]={true,true}; SettingChanged();
-            Load(); shortOk=app.driverShortView[kind][0] && app.driverShortView[kind][1] && shortOk;
+            First(kind).table.driverShortView={false,false}; First(kind).table.driverColumns[0]=First(kind).table.driverColumns[1]=true;
+            First(kind).table.driverShortView={true,true}; SettingChanged();
+            Load(); shortOk=First(kind).table.driverShortView[0] && First(kind).table.driverShortView[1] && shortOk;
             Row test; test.driver.license="A 3.45"; test.driver.rating=2400;
-            shortOk=DriverValue(test,0,kind)==L"3,45" && DriverValue(test,1,kind)==L"2,4K" && DriverValue(test,0)==L"A 3.45" && shortOk;
+            shortOk=DriverValue(test,0,&First(kind).table)==L"3,45" && DriverValue(test,1,&First(kind).table)==L"2,4K" && DriverValue(test,0)==L"A 3.45" && shortOk;
             test.driver.license="Pro 4.99"; test.driver.rating=3450;
-            shortOk=DriverValue(test,0,kind)==L"4,99" && DriverValue(test,1,kind)==L"3,5K" && shortOk;
+            shortOk=DriverValue(test,0,&First(kind).table)==L"4,99" && DriverValue(test,1,&First(kind).table)==L"3,5K" && shortOk;
             test.driver.license=""; test.driver.rating=0;
-            shortOk=DriverValue(test,0,kind)==L"—" && DriverValue(test,1,kind)==L"—" && shortOk;
-            OpenOverlay(kind); Export(app.main,L"build\\qa\\short-view-settings-"+std::to_wstring(kind)+L".bmp");
-            UpdateOverlays(); Export(app.overlays[kind].window,L"build\\qa\\short-view-overlay-"+std::to_wstring(kind)+L".bmp");
+            shortOk=DriverValue(test,0,&First(kind).table)==L"—" && DriverValue(test,1,&First(kind).table)==L"—" && shortOk;
+            OpenOverlay(First(kind)); Export(app.main,L"build\\qa\\short-view-settings-"+std::to_wstring(kind)+L".bmp");
+            UpdateOverlays(); Export(First(kind).window,L"build\\qa\\short-view-overlay-"+std::to_wstring(kind)+L".bmp");
             // Hiding the column keeps its short-view choice.
-            for(int i=0;i<2;++i) { SetColumnVisible(kind,LicenseColumn+i,false); shortOk=!ColumnVisible(kind,LicenseColumn+i) && app.driverShortView[kind][i] && shortOk; }
+            for(int i=0;i<2;++i) { SetColumnVisible(First(kind),LicenseColumn+i,false); shortOk=!ColumnVisible(First(kind),LicenseColumn+i) && First(kind).table.driverShortView[i] && shortOk; }
         }
-        app.driverShortView=savedShort; app.driverColumns=savedColumns; Save(); UpdateOverlays();
+        RestoreTables(savedTables); Save(); UpdateOverlays();
         report<<"Independent short license/iRating views, formatting, missing values, kept choice when hidden and persistence: "<<(shortOk?"PASS":"FAIL")<<"\n"; ok=shortOk && ok;
     }
     {
         const Frame originalFrame=app.frame; const Session originalSession=app.session;
         bool footerOk=true;
         for(int kind=0;kind<2;++kind) {
-            app.footers[kind].metrics={TrackTempMetric,CurrentLapMetric,TimeRemainingMetric}; SettingChanged();
-            Save(); Load(); footerOk=app.footers[kind].metrics==Slots{TrackTempMetric,CurrentLapMetric,TimeRemainingMetric} && footerOk;
-            footerOk=Export(app.overlays[kind].window,L"build\\qa\\footer-custom-"+std::to_wstring(kind)+L".bmp") && footerOk;
-            const int before=HeightWithTitle(kind);
-            app.footers[kind].enabled=false; SettingChanged();
-            Load(); footerOk=!app.footers[kind].enabled && HeightWithTitle(kind)==before-28 && footerOk;
-            footerOk=Export(app.overlays[kind].window,L"build\\qa\\footer-hidden-"+std::to_wstring(kind)+L".bmp") && footerOk;
-            app.footers[kind]={}; SettingChanged();
+            First(kind).table.footer.metrics={TrackTempMetric,CurrentLapMetric,TimeRemainingMetric}; SettingChanged();
+            Save(); Load(); footerOk=First(kind).table.footer.metrics==Slots{TrackTempMetric,CurrentLapMetric,TimeRemainingMetric} && footerOk;
+            footerOk=Export(First(kind).window,L"build\\qa\\footer-custom-"+std::to_wstring(kind)+L".bmp") && footerOk;
+            const int before=HeightWithTitle(First(kind));
+            First(kind).table.footer.enabled=false; SettingChanged();
+            Load(); footerOk=!First(kind).table.footer.enabled && HeightWithTitle(First(kind))==before-28 && footerOk;
+            footerOk=Export(First(kind).window,L"build\\qa\\footer-hidden-"+std::to_wstring(kind)+L".bmp") && footerOk;
+            First(kind).table.footer={}; SettingChanged();
         }
         footerOk=FooterValue(9)==L"Lap 8 / ~20" && FooterValue(10)==L"~12.6 laps" && FooterValue(16).find(L"SOF ")==0 && footerOk;
         for(int metric=1;metric<MetricCount;++metric) footerOk=!FooterValue(metric).empty() && footerOk;
@@ -242,83 +245,103 @@ int RunDiagnostics() {
     }
     {
         const auto saved=app.frame; constexpr double pi=3.141592653589793;
-        PreviewWeather(); bool windOk=OverlayWidth(4)==WeatherPanelWidth && BaseHeight(4)==WeatherHeight();
+        PreviewWeather(); bool windOk=OverlayWidth(First(4))==WeatherPanelWidth && BaseHeight(First(4))==WeatherHeight(First(WeatherKind));
         for(int direction=0;direction<5;++direction) {
             const double angle=direction==4?25*pi/180:direction*pi/2;
             app.frame.yawNorth=.4; app.frame.windDirection=.4+angle; app.frame.windSpeed=5;
             UpdateOverlays(); windOk=std::abs(RelativeWindAngle(app.frame)-angle)<.001 && windOk;
-            windOk=Export(app.overlays[4].window,L"build\\qa\\wind-"+std::to_wstring(direction)+L".bmp") && windOk;
+            windOk=Export(First(4).window,L"build\\qa\\wind-"+std::to_wstring(direction)+L".bmp") && windOk;
         }
-        app.frame.onTrack=false; UpdateOverlays(); windOk=Export(app.overlays[4].window,L"build\\qa\\wind-unavailable.bmp") && windOk;
+        app.frame.onTrack=false; UpdateOverlays(); windOk=Export(First(4).window,L"build\\qa\\wind-unavailable.bmp") && windOk;
         app.frame=saved; UpdateOverlays();
         report<<"Wind overlay cardinal and arbitrary source angles, speed, missing heading and rendering: "<<(windOk?"PASS":"FAIL")<<"\n"; ok=windOk && ok;
     }
     {
-        bool weatherOk=true; OpenOverlay(WeatherKind);
+        bool weatherOk=true; OpenOverlay(First(WeatherKind));
         weatherOk=Export(app.main,L"build\\qa\\weather-settings.bmp") && weatherOk;
-        for(int module=0;module<WeatherModuleCount;++module) { app.weatherDisplay[module]=false; SettingChanged(); Load(); weatherOk=!app.weatherDisplay[module] && weatherOk; }
-        weatherOk=!IsWindowVisible(app.overlays[4].window) && BaseHeight(4)==40 && weatherOk;
-        app.weatherDisplay.fill(true); SettingChanged(); PreviewWeather(); UpdateOverlays();
-        weatherOk=IsWindowVisible(app.overlays[4].window) && BaseHeight(4)==36+84+36+62+76+108+32+32 && weatherOk;
-        weatherOk=Export(app.overlays[4].window,L"build\\qa\\weather-all.bmp") && weatherOk;
+        for(int module=0;module<WeatherModuleCount;++module) { First(WeatherKind).weather.display[module]=false; SettingChanged(); Load(); weatherOk=!First(WeatherKind).weather.display[module] && weatherOk; }
+        weatherOk=!IsWindowVisible(First(4).window) && BaseHeight(First(4))==40 && weatherOk;
+        First(WeatherKind).weather.display.fill(true); SettingChanged(); PreviewWeather(); UpdateOverlays();
+        weatherOk=IsWindowVisible(First(4).window) && BaseHeight(First(4))==36+84+36+62+76+108+32+32 && weatherOk;
+        weatherOk=Export(First(4).window,L"build\\qa\\weather-all.bmp") && weatherOk;
         // Only the wind rose: the overlay narrows to the ring.
-        const auto allModules=app.weatherDisplay;
-        app.weatherDisplay.fill(false); app.weatherDisplay[WindModule]=app.weatherDisplay[WindRose]=app.weatherDisplay[WindRelative]=true; SettingChanged(); Load();
-        weatherOk=WindRoseOnly() && OverlayWidth(4)==WindRoseWidth && BaseHeight(4)==108 && Export(app.overlays[4].window,L"build\\qa\\weather-wind-rose.bmp") && weatherOk;
-        app.weatherDisplay[WindRose]=false; app.weatherDisplay[WindText]=true; SettingChanged();
-        weatherOk=!WindRoseOnly() && OverlayWidth(4)==WeatherPanelWidth && BaseHeight(4)==76 && Export(app.overlays[4].window,L"build\\qa\\weather-wind-text.bmp") && weatherOk;
-        app.weatherDisplay=allModules; SettingChanged();
-        app.weatherStrip=true; SettingChanged(); Load();
-        weatherOk=app.weatherStrip && OverlayWidth(4)==WeatherStripCount()*WeatherStripCell && Export(app.overlays[4].window,L"build\\qa\\weather-strip.bmp") && weatherOk;
-        app.weatherStrip=false; SettingChanged();
+        const auto allModules=First(WeatherKind).weather.display;
+        First(WeatherKind).weather.display.fill(false); First(WeatherKind).weather.display[WindModule]=First(WeatherKind).weather.display[WindRose]=First(WeatherKind).weather.display[WindRelative]=true; SettingChanged(); Load();
+        weatherOk=WindRoseOnly(First(WeatherKind)) && OverlayWidth(First(4))==WindRoseWidth && BaseHeight(First(4))==108 && Export(First(4).window,L"build\\qa\\weather-wind-rose.bmp") && weatherOk;
+        First(WeatherKind).weather.display[WindRose]=false; First(WeatherKind).weather.display[WindText]=true; SettingChanged();
+        weatherOk=!WindRoseOnly(First(WeatherKind)) && OverlayWidth(First(4))==WeatherPanelWidth && BaseHeight(First(4))==76 && Export(First(4).window,L"build\\qa\\weather-wind-text.bmp") && weatherOk;
+        First(WeatherKind).weather.display=allModules; SettingChanged();
+        First(WeatherKind).weather.strip=true; SettingChanged(); Load();
+        weatherOk=First(WeatherKind).weather.strip && OverlayWidth(First(4))==WeatherStripCount(First(WeatherKind))*WeatherStripCell && Export(First(4).window,L"build\\qa\\weather-strip.bmp") && weatherOk;
+        First(WeatherKind).weather.strip=false; SettingChanged();
         report<<"Weather modules, strip layout, persistence and all-hidden visibility: "<<(weatherOk?"PASS":"FAIL")<<"\n"; ok=weatherOk && ok;
     }
     {
-        const auto rosterSession=app.session; const auto rosterFrame=app.frame; const auto rosterOptions=app.standings;
+        // A second Weather as a copy reduced to the wind rose, a second Relative with defaults; both survive a reload and go again.
+        bool instancesOk=true;
+        auto& wind=NewInstance(WeatherKind,&First(WeatherKind));
+        instancesOk=InstanceCount(WeatherKind)==2 && wind.number==2 && Name(wind)==L"Weather 2" && wind.window && wind.weather.display==First(WeatherKind).weather.display && instancesOk;
+        wind.weather.display.fill(false); wind.weather.display[WindModule]=wind.weather.display[WindRose]=true; SettingChanged();
+        instancesOk=OverlayWidth(wind)==WindRoseWidth && OverlayWidth(First(WeatherKind))==WeatherPanelWidth && instancesOk;
+        auto& second=NewInstance(RelativeKind);
+        instancesOk=second.table.columnOrder==DefaultColumns[RelativeKind] && second.table.rows==7 && !Rows(second).empty() && instancesOk;
+        Load(); instancesOk=InstanceCount(WeatherKind)==2 && InstanceCount(RelativeKind)==2 && WindRoseOnly(wind) && instancesOk;
+        PreviewWeather(); UpdateOverlays();
+        instancesOk=Export(wind.window,L"build\\qa\\weather-2-wind-rose.bmp") && instancesOk;
+        ShowPage(Page::Overlays); instancesOk=Export(app.main,L"build\\qa\\main-instances.bmp") && instancesOk;
+        // Removing an added instance takes its settings section along.
+        RemoveInstance(second); RemoveInstance(wind);
+        wchar_t left[8]{}; GetPrivateProfileStringW(L"Weather 2",L"X",L"",left,8,app.config.c_str());
+        instancesOk=InstanceCount(WeatherKind)==1 && InstanceCount(RelativeKind)==1 && !left[0] && instancesOk;
+        Load(); instancesOk=InstanceCount(WeatherKind)==1 && InstanceCount(RelativeKind)==1 && instancesOk;
+        report<<"Further instances: copy, defaults, own size, persistence, removal of settings: "<<(instancesOk?"PASS":"FAIL")<<"\n"; ok=instancesOk && ok;
+    }
+    {
+        const auto rosterSession=app.session; const auto rosterFrame=app.frame; const auto rosterOptions=First(StandingsKind).table.standings;
         app.session.type="Qualify"; app.session.results={}; for(auto& car:app.frame.cars) car=Car{};
-        app.frame.camera=-1; app.frame.onTrack=true; app.standings.ownClass=false; app.standings.leaders=MaxCars;
-        UpdateOverlays(); bool rosterOk=!Rows(1).empty() && Rows(0).size()==1 && Rows(0)[0].gap==0 && Rows(0)[0].car.position==0;
-        Export(app.overlays[0].window,L"build\\qa\\relative-missing-progress.bmp"); Export(app.overlays[1].window,L"build\\qa\\qualifying-untimed.bmp");
-        app.standings.fallbackByRating=true; SettingChanged();
-        Load(); rosterOk=app.standings.fallbackByRating && rosterOk;
-        app.session=rosterSession; app.frame=rosterFrame; app.standings=rosterOptions; Save(); UpdateOverlays();
+        app.frame.camera=-1; app.frame.onTrack=true; First(StandingsKind).table.standings.ownClass=false; First(StandingsKind).table.standings.leaders=MaxCars;
+        UpdateOverlays(); bool rosterOk=!Rows(First(1)).empty() && Rows(First(0)).size()==1 && Rows(First(0))[0].gap==0 && Rows(First(0))[0].car.position==0;
+        Export(First(0).window,L"build\\qa\\relative-missing-progress.bmp"); Export(First(1).window,L"build\\qa\\qualifying-untimed.bmp");
+        First(StandingsKind).table.standings.fallbackByRating=true; SettingChanged();
+        Load(); rosterOk=First(StandingsKind).table.standings.fallbackByRating && rosterOk;
+        app.session=rosterSession; app.frame=rosterFrame; First(StandingsKind).table.standings=rosterOptions; Save(); UpdateOverlays();
         report<<"Untimed qualifying roster, relative missing progress and sort preference persistence: "<<(rosterOk?"PASS":"FAIL")<<"\n"; ok=rosterOk && ok;
-        const bool savedGained=app.standingsGained; const auto gainedGrid=app.session.gridPositions;
-        app.standingsGained=false; Save(); const int gainedWidth=OverlayWidth(1);
-        SetColumnVisible(StandingsKind,GainedColumn,true);
-        Load(); bool gainedOk=app.standingsGained && ColumnVisible(1,14) && !ColumnVisible(0,14) && OverlayWidth(1)==gainedWidth+ColumnWidth(14,1);
+        const bool savedGained=First(StandingsKind).table.gained; const auto gainedGrid=app.session.gridPositions;
+        First(StandingsKind).table.gained=false; Save(); const int gainedWidth=OverlayWidth(First(1));
+        SetColumnVisible(First(StandingsKind),GainedColumn,true);
+        Load(); bool gainedOk=First(StandingsKind).table.gained && ColumnVisible(First(1),14) && !ColumnVisible(First(0),14) && OverlayWidth(First(1))==gainedWidth+ColumnWidth(First(1),14);
         for(const auto& driver:app.session.drivers) app.session.gridPositions[driver.index]=driver.index+2;
         app.session.gridPositions[0]=3; app.session.gridPositions[1]=2;
         app.frame.cars[2].towing=true; UpdateOverlays();
-        Export(app.overlays[1].window,L"build\\qa\\standings-gained-tow.bmp");
+        Export(First(1).window,L"build\\qa\\standings-gained-tow.bmp");
         app.frame.cars[2].towing=false;
-        app.standingsGained=savedGained; app.session.gridPositions=gainedGrid; Save();
+        First(StandingsKind).table.gained=savedGained; app.session.gridPositions=gainedGrid; Save();
         report<<"Standings gained column settings: "<<(gainedOk?"PASS":"FAIL")<<"\n"; ok=gainedOk && ok;
-        const auto savedSession=app.session; const auto savedFrame=app.frame; const auto savedOrder=app.columnOrder[1]; const bool savedLaps=app.standingsLaps;
-        app.standingsLaps=false; Save(); UpdateOverlays(); const int before=OverlayWidth(1);
-        SetColumnVisible(StandingsKind,LapsColumn,true);
-        Load(); bool lapsOk=app.standingsLaps && OverlayWidth(1)==before+ColumnWidth(13,1) && ColumnVisible(1,13) && !ColumnVisible(0,13);
+        const auto savedSession=app.session; const auto savedFrame=app.frame; const auto savedOrder=First(1).table.columnOrder; const bool savedLaps=First(StandingsKind).table.laps;
+        First(StandingsKind).table.laps=false; Save(); UpdateOverlays(); const int before=OverlayWidth(First(1));
+        SetColumnVisible(First(StandingsKind),LapsColumn,true);
+        Load(); bool lapsOk=First(StandingsKind).table.laps && OverlayWidth(First(1))==before+ColumnWidth(First(1),13) && ColumnVisible(First(1),13) && !ColumnVisible(First(0),13);
         Row row; row.driver.index=0; row.car.completed=5; row.car.lap=7; lapsOk=CompletedLaps(row)==L"5" && lapsOk;
         row.car.completed=-1; row.car.lap=1; lapsOk=CompletedLaps(row)==L"0" && lapsOk;
         row.car.lap=-1; app.session.number=app.frame.session; app.session.results[0].completed=9; lapsOk=CompletedLaps(row)==L"9" && lapsOk;
         app.session.number=app.frame.session+1; lapsOk=CompletedLaps(row)==L"—" && lapsOk;
         app.session=savedSession;
         app.frame.cars[0].completed=6; app.frame.cars[0].lap=7;
-        UpdateOverlays(); lapsOk=Export(app.overlays[1].window,L"build\\qa\\standings-laps.bmp") && lapsOk;
-        OpenOverlay(StandingsKind); lapsOk=Export(app.main,L"build\\qa\\standings-laps-settings.bmp") && lapsOk;
-        const int index=static_cast<int>(std::find(app.columnOrder[1].begin(),app.columnOrder[1].end(),LapsColumn)-app.columnOrder[1].begin());
-        for(int step=0;step<index;++step) MoveInOrder(app.columnOrder[1],LapsColumn,-1);
-        Load(); lapsOk=app.columnOrder[1].front()==13 && app.standingsLaps && lapsOk;
-        lapsOk=Export(app.overlays[1].window,L"build\\qa\\standings-laps-first.bmp") && lapsOk;
-        SetColumnVisible(StandingsKind,LapsColumn,false);
-        lapsOk=!app.standingsLaps && OverlayWidth(1)==before && lapsOk;
-        app.session=savedSession; app.frame=savedFrame; app.columnOrder[1]=savedOrder; app.standingsLaps=savedLaps; Save(); UpdateOverlays();
+        UpdateOverlays(); lapsOk=Export(First(1).window,L"build\\qa\\standings-laps.bmp") && lapsOk;
+        OpenOverlay(First(StandingsKind)); lapsOk=Export(app.main,L"build\\qa\\standings-laps-settings.bmp") && lapsOk;
+        const int index=static_cast<int>(std::find(First(1).table.columnOrder.begin(),First(1).table.columnOrder.end(),LapsColumn)-First(1).table.columnOrder.begin());
+        for(int step=0;step<index;++step) MoveInOrder(First(1).table.columnOrder,LapsColumn,-1);
+        Load(); lapsOk=First(1).table.columnOrder.front()==13 && First(StandingsKind).table.laps && lapsOk;
+        lapsOk=Export(First(1).window,L"build\\qa\\standings-laps-first.bmp") && lapsOk;
+        SetColumnVisible(First(StandingsKind),LapsColumn,false);
+        lapsOk=!First(StandingsKind).table.laps && OverlayWidth(First(1))==before && lapsOk;
+        app.session=savedSession; app.frame=savedFrame; First(1).table.columnOrder=savedOrder; First(StandingsKind).table.laps=savedLaps; Save(); UpdateOverlays();
         report<<"Standings completed laps: toggle, width, persistence, column order, live count, zero laps, session fallback and missing data: "<<(lapsOk?"PASS":"FAIL")<<"\n"; ok=lapsOk && ok;
     }
     {
         LARGE_INTEGER frequency{}; QueryPerformanceFrequency(&frequency);
         for(int kind:{1,4}) {
-            auto& overlay=app.overlays[kind]; InvalidateModel(); RefreshOverlay(overlay);
+            auto& overlay=First(kind); InvalidateModel(); RefreshOverlay(overlay);
             const DWORD handles=GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS);
             LARGE_INTEGER begin{},end{}; QueryPerformanceCounter(&begin);
             for(int pass=0;pass<300;++pass) { overlay.scene.clear(); InvalidateModel(); RefreshOverlay(overlay); }
@@ -327,75 +350,75 @@ int RunDiagnostics() {
         }
     }
     {
-        const auto savedFrame=app.frame; const auto savedSession=app.session; const int savedRows=app.rows; const bool savedHide=app.relativeHidePit;
+        const auto savedFrame=app.frame; const auto savedSession=app.session; const int savedRows=First(RelativeKind).table.rows; const bool savedHide=First(RelativeKind).table.hidePit;
         bool centerOk=true;
-        app.rows=9; app.relativeHidePit=true; app.session.type="Practice";
+        First(RelativeKind).table.rows=9; First(RelativeKind).table.hidePit=true; app.session.type="Practice";
         for(const auto& driver:app.session.drivers) if(driver.index!=app.frame.player) app.frame.cars[driver.index].surface=-1;
         app.frame.cars[app.frame.player].pit=true;
-        UpdateOverlays(); centerOk=Export(app.overlays[0].window,L"build\\qa\\relative-centered-alone.bmp") && centerOk;
-        auto& overlay=app.overlays[0]; const int centerDpi=GetDpiForWindow(overlay.window),factor=centerDpi*overlay.place.scale;
-        const int midY=MulDiv(TableRowsTop(0)+(app.rows/2)*27+13-(ShowOverlayHeader(0)?0:32),factor,9600);
+        UpdateOverlays(); centerOk=Export(First(0).window,L"build\\qa\\relative-centered-alone.bmp") && centerOk;
+        auto& overlay=First(0); const int centerDpi=GetDpiForWindow(overlay.window),factor=centerDpi*overlay.place.scale;
+        const int midY=MulDiv(TableRowsTop(First(0))+(First(RelativeKind).table.rows/2)*27+13-(ShowOverlayHeader(First(0))?0:32),factor,9600);
         centerOk=GetPixel(overlay.dc,MulDiv(8,factor,9600),midY)==Ink::OwnRow && centerOk;
         app.frame=savedFrame; app.session=savedSession; app.session.type="Practice";
-        app.frame.incidents=18; app.frame.incidentsKnown=true; app.session.incidentLimit=25; app.footers[0].metrics={1,0,2};
+        app.frame.incidents=18; app.frame.incidentsKnown=true; app.session.incidentLimit=25; First(0).table.footer.metrics={1,0,2};
         UpdateOverlays(); centerOk=FooterValue(2)==L"18x" && centerOk;
-        centerOk=Export(app.overlays[0].window,L"build\\qa\\relative-practice-colors.bmp") && centerOk;
-        app.rows=savedRows; app.relativeHidePit=savedHide; app.frame=savedFrame; app.session=savedSession; Save(); UpdateOverlays();
+        centerOk=Export(First(0).window,L"build\\qa\\relative-practice-colors.bmp") && centerOk;
+        First(RelativeKind).table.rows=savedRows; First(RelativeKind).table.hidePit=savedHide; app.frame=savedFrame; app.session=savedSession; Save(); UpdateOverlays();
         report<<"Relative center with empty slots and reference in pit; practice footer has incidents without race limit: "<<(centerOk?"PASS":"FAIL")<<"\n"; ok=centerOk && ok;
     }
     const double savedCapacity=app.session.fuelCapacity,savedFuel=app.frame.fuel;
     app.session.fuelCapacity=100; UpdateOverlays();
     auto fuelSummary=CalculatePitWindow(app.session,app.frame,Plan().lapsToFinish,Plan().estimates[5].consumption,Plan().prediction.ownPace);
     ok=fuelSummary.openNow && fuelSummary.timeEmpty>0 && fuelSummary.fuelAtEnd<0 && ok;
-    ok=Export(app.overlays[2].window,L"build\\qa\\fuel-open.bmp") && ok;
+    ok=Export(First(2).window,L"build\\qa\\fuel-open.bmp") && ok;
     app.frame.fuel=50; UpdateOverlays();
     fuelSummary=CalculatePitWindow(app.session,app.frame,Plan().lapsToFinish,Plan().estimates[5].consumption);
     ok=fuelSummary.stops==0 && fuelSummary.fuelAtEnd>0 && ok;
-    ok=Export(app.overlays[2].window,L"build\\qa\\fuel-surplus.bmp") && ok;
+    ok=Export(First(2).window,L"build\\qa\\fuel-surplus.bmp") && ok;
     app.session.fuelCapacity=14; app.frame.fuel=12; UpdateOverlays();
     fuelSummary=CalculatePitWindow(app.session,app.frame,Plan().lapsToFinish,Plan().estimates[5].consumption);
     ok=fuelSummary.stops==3 && ok;
-    ok=Export(app.overlays[2].window,L"build\\qa\\fuel-three-stops.bmp") && ok;
+    ok=Export(First(2).window,L"build\\qa\\fuel-three-stops.bmp") && ok;
     app.session.fuelCapacity=-1; UpdateOverlays();
     fuelSummary=CalculatePitWindow(app.session,app.frame,Plan().lapsToFinish,Plan().estimates[5].consumption);
     ok=fuelSummary.status==PitWindowStatus::Unavailable && !fuelSummary.openNow && ok;
-    ok=Export(app.overlays[2].window,L"build\\qa\\fuel-window-unknown.bmp") && ok;
+    ok=Export(First(2).window,L"build\\qa\\fuel-window-unknown.bmp") && ok;
     app.session.fuelCapacity=savedCapacity; app.frame.fuel=savedFuel; UpdateOverlays();
     report<<"Fuel time empty, signed finish fuel, open/closed text and three-stop UI: "<<(ok?"PASS":"FAIL")<<"\n";
     for(int kind=0;kind<OverlayCount;++kind) {
-        OpenOverlay(kind);
-        ok=ui.page==Page::Overlay && ui.overlayKind==kind && ok;
+        OpenOverlay(First(kind));
+        ok=ui.page==Page::Overlay && ui.overlay==&First(kind) && ok;
         ok=Export(app.main,L"build\\qa\\settings-"+std::to_wstring(kind)+L".bmp")&&ok;
         if(kind==RelativeKind) {
-            app.rows=RelativeRowCount(6); SettingChanged();
-            ok=app.rows==7 && ok;
+            First(RelativeKind).table.rows=RelativeRowCount(6); SettingChanged();
+            ok=First(RelativeKind).table.rows==7 && ok;
         } else if(kind==StandingsKind) {
-            const int originalWidth=OverlayWidth(1); app.showInterval=false; Fit(app.overlays[1]);
-            SetColumnVisible(StandingsKind,IntervalColumn,true);
-            ok=app.showInterval && OverlayWidth(1)>=originalWidth && ok;
-            app.standings.liveGaps=true; SettingChanged();
-            ok=app.standings.liveGaps && ok; Save(); Load(); ok=app.standings.liveGaps && ok;
-            app.standings.liveGaps=false; SettingChanged();
-            ok=!app.standings.liveGaps && ok;
-            ok=Export(app.overlays[1].window,L"build\\qa\\standings-interval.bmp") && ok;
-            app.standings.leaders=2; app.standings.ahead=1; app.standings.behind=1; app.standings.separateClasses=false; SettingChanged();
-            const auto groups=SelectStandings(app.session,app.frame,app.standings);
-            ok=(!app.standings.separateClasses && groups.size()==1 && groups[0].rows.size()==5 && app.rows==7)&&ok;
-            ok=Export(app.overlays[1].window,L"build\\qa\\standings-combined.bmp")&&ok;
-            app.standings.ownClass=true; SettingChanged();
-            ok=app.standings.ownClass && Rows(0).size()<=7 && ok;
+            const int originalWidth=OverlayWidth(First(1)); First(StandingsKind).table.interval=false; Fit(First(1));
+            SetColumnVisible(First(StandingsKind),IntervalColumn,true);
+            ok=First(StandingsKind).table.interval && OverlayWidth(First(1))>=originalWidth && ok;
+            First(StandingsKind).table.standings.liveGaps=true; SettingChanged();
+            ok=First(StandingsKind).table.standings.liveGaps && ok; Save(); Load(); ok=First(StandingsKind).table.standings.liveGaps && ok;
+            First(StandingsKind).table.standings.liveGaps=false; SettingChanged();
+            ok=!First(StandingsKind).table.standings.liveGaps && ok;
+            ok=Export(First(1).window,L"build\\qa\\standings-interval.bmp") && ok;
+            First(StandingsKind).table.standings.leaders=2; First(StandingsKind).table.standings.ahead=1; First(StandingsKind).table.standings.behind=1; First(StandingsKind).table.standings.separateClasses=false; SettingChanged();
+            const auto groups=SelectStandings(app.session,app.frame,First(StandingsKind).table.standings);
+            ok=(!First(StandingsKind).table.standings.separateClasses && groups.size()==1 && groups[0].rows.size()==5 && First(RelativeKind).table.rows==7)&&ok;
+            ok=Export(First(1).window,L"build\\qa\\standings-combined.bmp")&&ok;
+            First(StandingsKind).table.standings.ownClass=true; SettingChanged();
+            ok=First(StandingsKind).table.standings.ownClass && Rows(First(0)).size()<=7 && ok;
         } else if(kind==FuelKind) {
-            app.fuelRows[1]=false; SettingChanged(); ok=!app.fuelRows[1] && ok;
-            for(int i=0;i<FuelModuleCount;++i) { app.fuelDisplay[i]=false; SettingChanged(); }
-            ok=HeightWithTitle(2)==32+40 && OverlayWidth(2)==FuelPanelWidth && ok;
+            First(FuelKind).fuel.figures[1]=false; SettingChanged(); ok=!First(FuelKind).fuel.figures[1] && ok;
+            for(int i=0;i<FuelModuleCount;++i) { First(FuelKind).fuel.display[i]=false; SettingChanged(); }
+            ok=HeightWithTitle(First(2))==32+40 && OverlayWidth(First(2))==FuelPanelWidth && ok;
             Save(); Load();
-            ok=std::none_of(app.fuelDisplay.begin(),app.fuelDisplay.end(),[](bool value){return value;}) && ok;
-            ok=Export(app.overlays[2].window,L"build\\qa\\fuel-compact.bmp") && ok;
-            app.fuelDisplay.fill(true); SettingChanged();
-            ok=HeightWithTitle(2)==32+36+112+52+104+92+46+16+4*24 && ok;
-            ok=Export(app.overlays[2].window,L"build\\qa\\fuel-all.bmp") && ok;
-            app.fuelStrip=true; SettingChanged(); ok=Export(app.overlays[2].window,L"build\\qa\\fuel-strip.bmp") && ok;
-            app.fuelStrip=false; SettingChanged();
+            ok=std::none_of(First(FuelKind).fuel.display.begin(),First(FuelKind).fuel.display.end(),[](bool value){return value;}) && ok;
+            ok=Export(First(2).window,L"build\\qa\\fuel-compact.bmp") && ok;
+            First(FuelKind).fuel.display.fill(true); SettingChanged();
+            ok=HeightWithTitle(First(2))==32+36+112+52+104+92+46+16+4*24 && ok;
+            ok=Export(First(2).window,L"build\\qa\\fuel-all.bmp") && ok;
+            First(FuelKind).fuel.strip=true; SettingChanged(); ok=Export(First(2).window,L"build\\qa\\fuel-strip.bmp") && ok;
+            First(FuelKind).fuel.strip=false; SettingChanged();
             const auto savedFrame=app.frame; const double savedDistance=app.fuelPlan.lapsToFinish;
             app.frame.lapCompleted=7; app.frame.lapPct=.2; app.fuelPlan.lapsToFinish=12.02;
             ok=FuelFinishLap()==20 && ok;
@@ -405,9 +428,9 @@ int RunDiagnostics() {
             app.frame=savedFrame; app.fuelPlan.lapsToFinish=savedDistance;
         }
         if(IsTable(kind)) {
-            SetColumnVisible(kind,PitStopColumn,true);
-            ok=app.driverColumns[kind][5] && DriverValue(Rows(kind).front(),5).find(L" s")!=std::wstring::npos && ok;
-            ok=Export(app.overlays[kind].window,L"build\\qa\\pit-stop-"+std::to_wstring(kind)+L".bmp") && ok;
+            SetColumnVisible(First(kind),PitStopColumn,true);
+            ok=First(kind).table.driverColumns[5] && DriverValue(Rows(First(kind)).front(),5).find(L" s")!=std::wstring::npos && ok;
+            ok=Export(First(kind).window,L"build\\qa\\pit-stop-"+std::to_wstring(kind)+L".bmp") && ok;
         }
     }
     ShowPage(Page::Overlays);
@@ -469,8 +492,8 @@ int RunDiagnostics() {
     SetRaceReplayMode(1);
     report<<"Race Control banner, standings status, event filters, replay bar, keep on top and close/reopen: "<<(ok?"PASS":"FAIL")<<"\n";
     {
-        bool rcOk=true; const auto savedFields=raceControl.fields; const auto savedEvents=raceControl.eventFields; const auto savedOptions=app.standings; const auto savedDrivers=app.session.drivers;
-        app.standings.ownClass=false; UpdateRaceControl(true);
+        bool rcOk=true; const auto savedFields=raceControl.fields; const auto savedEvents=raceControl.eventFields; const auto savedOptions=First(StandingsKind).table.standings; const auto savedDrivers=app.session.drivers;
+        First(StandingsKind).table.standings.ownClass=false; UpdateRaceControl(true);
         DWORD_PTR headerData=0; rcOk=GetWindowSubclass(ListView_GetHeader(raceControl.standings),RaceHeaderProc,1,&headerData) && rcOk;
         ShowRaceControlPage(); rcOk=ui.page==Page::RaceControl && rcOk;
         rcOk=SetRaceField(false,6,false) && SetRaceField(true,2,false) && !SetRaceField(true,0,true) && rcOk;
@@ -500,7 +523,7 @@ int RunDiagnostics() {
         SetRaceEventFilter(3); rcOk=raceControl.events.empty() && rcOk;
         Export(raceControl.window,L"build\\qa\\race-control-filtered.bmp");
         SendMessageW(raceControl.window,WM_COMMAND,MAKEWPARAM(RaceCarPillId,BN_CLICKED),0); rcOk=raceControl.car<0 && !IsWindowVisible(RaceItem(RaceCarPillId)) && rcOk;
-        raceControl.fields=savedFields; raceControl.eventFields=savedEvents; app.standings=savedOptions; app.session.drivers=savedDrivers;
+        raceControl.fields=savedFields; raceControl.eventFields=savedEvents; First(StandingsKind).table.standings=savedOptions; app.session.drivers=savedDrivers;
         raceControl.sortColumn=-1; raceControl.eventSortColumn=2; raceControl.eventSortDescending=true; SaveRaceFields();
         SetRaceEventFilter(0);
         report<<"Race Control field visibility, numeric sorting, missing values, event sorting, car/type filters and replay for the filtered event: "<<(rcOk?"PASS":"FAIL")<<"\n"; ok=rcOk && ok;
@@ -536,14 +559,14 @@ int RunDiagnostics() {
     report<<"Update version comparison, version row states, no network in diagnostics: "<<(updateOk?"PASS":"FAIL")<<"\n";
     SetStartWithWindows(true); SetStartMinimized(true);
     Load();
-    ok=app.driverColumns[0][5] && app.driverColumns[1][5] && app.showInterval && app.rows==7 && app.standings.leaders==2 && app.standings.ahead==1 && app.standings.behind==1 && app.standings.ownClass && !app.standings.separateClasses && !app.fuelRows[1] && app.startWithWindows && app.startMinimized && ok;
+    ok=First(0).table.driverColumns[5] && First(1).table.driverColumns[5] && First(StandingsKind).table.interval && First(RelativeKind).table.rows==7 && First(StandingsKind).table.standings.leaders==2 && First(StandingsKind).table.standings.ahead==1 && First(StandingsKind).table.standings.behind==1 && First(StandingsKind).table.standings.ownClass && !First(StandingsKind).table.standings.separateClasses && !First(FuelKind).fuel.figures[1] && app.startWithWindows && app.startMinimized && ok;
     ShowWindow(app.main,StartupShowCommand(true,SW_SHOW)); UpdateOverlays();
-    ok=!IsWindowVisible(app.main) && IsWindowVisible(app.overlays[0].window) && ok;
+    ok=!IsWindowVisible(app.main) && IsWindowVisible(First(0).window) && ok;
     ShowWindow(app.main,StartupShowCommand(false,SW_SHOW)); ok=IsWindowVisible(app.main) && ok;
     const auto startup=StartupCommand(); ok=(!startup.empty() && startup.front()==L'"' && startup.back()==L'"') && ok;
     SendMessageW(app.main,WM_CLOSE,0,0); ok=!IsWindowVisible(app.main) && IsWindow(app.main) && ok;
     report<<"Overlay pages, independent options, class view switch, fuel rows, close-to-tray and persistence: "<<(ok?"PASS":"FAIL")<<"\n";
-    app.rows=9; app.standings={}; app.fuelRows.fill(true); app.fuelDisplay.fill(true); app.startWithWindows=app.startMinimized=false;
+    First(RelativeKind).table.rows=9; First(StandingsKind).table.standings={}; First(FuelKind).fuel.figures.fill(true); First(FuelKind).fuel.display.fill(true); app.startWithWindows=app.startMinimized=false;
     {
         const auto savedSession=app.session; const auto savedFrame=app.frame; const bool savedPreview=app.preview;
         app.preview=false; app.fuel.Reset(); app.predictor.Reset(); app.session.type="Race"; app.session.number=app.frame.session;
@@ -556,7 +579,7 @@ int RunDiagnostics() {
         auto& own=app.frame.cars[app.frame.player]; own.lap=2; own.completed=1; own.pct=0; own.estTime=0; own.best=own.last=100; own.position=own.classPosition=1; own.surface=3;
         app.fuel.Update(app.session,app.frame); UpdateOverlays();
         ok=Plan().estimates[0].samples==1 && std::abs(Plan().estimates[0].consumption-3.2)<.001 && Plan().estimates[5].samples==1 && ok;
-        ok=Export(app.overlays[2].window,L"build\\qa\\fuel-first-race-lap.bmp") && ok;
+        ok=Export(First(2).window,L"build\\qa\\fuel-first-race-lap.bmp") && ok;
         report<<"Fuel Last Lap and Average populated immediately after observed first race lap: "<<(ok?"PASS":"FAIL")<<"\n";
         app.session=savedSession; app.frame=savedFrame; app.preview=savedPreview; app.fuel.Reset(); app.predictor.Reset(); UpdateOverlays();
     }
@@ -569,106 +592,106 @@ int RunDiagnostics() {
         auto& car=app.frame.cars[driver.index];
         car.best=car.last=car.f2Time=-1; car.position=car.classPosition=0;
     }
-    const auto historicalRows=Rows(1);
+    const auto historicalRows=Rows(First(1));
     ok=historicalRows.size()==9 && ok;
     for(const auto& row:historicalRows) ok=row.car.best>0 && row.car.last>0 && ok;
-    UpdateOverlays(); ok=Export(app.overlays[1].window,L"build\\qa\\standings-history.bmp")&&ok;
+    UpdateOverlays(); ok=Export(First(1).window,L"build\\qa\\standings-history.bmp")&&ok;
     report<<"Late-join standings populated from session results only: "<<(ok?"PASS":"FAIL")<<"\n";
     {
         app.session.results={}; for(auto& car:app.frame.cars) { car.best=car.last=car.f2Time=-1; car.position=car.classPosition=0; car.surface=-1; }
-        UpdateOverlays(); const auto practiceRows=Rows(1);
+        UpdateOverlays(); const auto practiceRows=Rows(First(1));
         ok=!practiceRows.empty() && std::none_of(practiceRows.begin(),practiceRows.end(),[](const Row& row){return row.car.best>0;}) && ok;
-        ok=Export(app.overlays[1].window,L"build\\qa\\practice-no-times.bmp") && ok;
+        ok=Export(First(1).window,L"build\\qa\\practice-no-times.bmp") && ok;
         app.frame.cars[9].best=125; UpdateOverlays();
         const auto rankedPractice=Standings(app.session,app.frame,MaxCars,false);
         ok=!rankedPractice.empty() && rankedPractice.front().driver.index==9 && ok;
-        ok=Export(app.overlays[1].window,L"build\\qa\\practice-first-time.bmp") && ok;
+        ok=Export(First(1).window,L"build\\qa\\practice-first-time.bmp") && ok;
         report<<"Untimed practice roster, car-number order and first timed lap: "<<(ok?"PASS":"FAIL")<<"\n";
     }
     app.session=demoSession; app.frame=demoFrame; app.preview=true;
     {
         app.preview=false; app.session.type="Race"; app.session.number=app.frame.session; app.frame.state=3;
-        app.frame.bestLap=app.frame.lastLap=-1; app.standings.liveGaps=true;
+        app.frame.bestLap=app.frame.lastLap=-1; First(StandingsKind).table.standings.liveGaps=true;
         for(auto& driver:app.session.drivers) {
             driver.estimatedLapTime=140; app.session.results[driver.index]={};
             auto& car=app.frame.cars[driver.index]; car.position=car.classPosition=0; car.completed=-1; car.lap=0; car.best=car.last=car.f2Time=-1; car.estTime=car.pct*140;
         }
         UpdateOverlays();
-        ok=!Rows(1).empty() && ok;
-        const auto earlyRows=Rows(0); for(const auto& row:earlyRows) ok=std::isfinite(row.gap) && ok;
-        ok=Export(app.overlays[0].window,L"build\\qa\\relative-formation.bmp") && ok;
-        ok=Export(app.overlays[1].window,L"build\\qa\\standings-formation.bmp") && ok;
+        ok=!Rows(First(1)).empty() && ok;
+        const auto earlyRows=Rows(First(0)); for(const auto& row:earlyRows) ok=std::isfinite(row.gap) && ok;
+        ok=Export(First(0).window,L"build\\qa\\relative-formation.bmp") && ok;
+        ok=Export(First(1).window,L"build\\qa\\standings-formation.bmp") && ok;
         app.frame.state=4; for(auto& car:app.frame.cars) if(car.surface>=0) { car.completed=0; car.lap=1; }
-        UpdateOverlays(); ok=!Rows(1).empty() && ok;
-        ok=Export(app.overlays[1].window,L"build\\qa\\standings-first-lap.bmp") && ok;
+        UpdateOverlays(); ok=!Rows(First(1)).empty() && ok;
+        ok=Export(First(1).window,L"build\\qa\\standings-first-lap.bmp") && ok;
         report<<"Formation / first-lap standings, early relative gaps and live-gap settings: "<<(ok?"PASS":"FAIL")<<"\n";
-        app.session=demoSession; app.frame=demoFrame; app.preview=true; app.standings.liveGaps=false;
+        app.session=demoSession; app.frame=demoFrame; app.preview=true; First(StandingsKind).table.standings.liveGaps=false;
     }
-    app.frame.limiter=false; ok=Export(app.overlays[3].window,L"build\\qa\\pit-red.bmp")&&ok;
+    app.frame.limiter=false; ok=Export(First(3).window,L"build\\qa\\pit-red.bmp")&&ok;
     {
-        const auto savedFrame=app.frame; const auto savedSession=app.session; const auto savedStandings=app.standings;
-        app.preview=false; app.session.type="Race"; app.frame.state=4; app.standings={}; app.standings.liveGaps=true;
+        const auto savedFrame=app.frame; const auto savedSession=app.session; const auto savedStandings=First(StandingsKind).table.standings;
+        app.preview=false; app.session.type="Race"; app.frame.state=4; First(StandingsKind).table.standings={}; First(StandingsKind).table.standings.liveGaps=true;
         app.frame.cars[app.frame.player].pct=.52; app.frame.cars[app.frame.player].estTime=.52*138.2;
-        UpdateOverlays(); const auto liveRows=Rows(1); const auto liveRelative=Rows(0);
+        UpdateOverlays(); const auto liveRows=Rows(First(1)); const auto liveRelative=Rows(First(0));
         const auto player=std::find_if(liveRelative.begin(),liveRelative.end(),[](const Row& row){return row.player;});
         ok=player!=liveRelative.end() && player->car.position==1 && !liveRows.empty() && liveRows.front().player && liveRows.front().car.classPosition==1 && ok;
-        ok=Export(app.overlays[0].window,L"build\\qa\\relative-live-overtake.bmp") && ok;
-        ok=Export(app.overlays[1].window,L"build\\qa\\standings-live-overtake.bmp") && ok;
-        app.frame=savedFrame; app.session=savedSession; app.standings=savedStandings; app.preview=true;
+        ok=Export(First(0).window,L"build\\qa\\relative-live-overtake.bmp") && ok;
+        ok=Export(First(1).window,L"build\\qa\\standings-live-overtake.bmp") && ok;
+        app.frame=savedFrame; app.session=savedSession; First(StandingsKind).table.standings=savedStandings; app.preview=true;
         report<<"Live overtake updates Relative P and Standings row order / class P: "<<(ok?"PASS":"FAIL")<<"\n";
     }
     app.pitVisibility.Reset();
     app.preview=false; app.hidden=false; app.frame.pit=false; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(app.overlays[i].window))==(i!=3))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3))&&ok;
     const auto originalSurface=app.frame.cars[app.frame.player].surface;
-    app.frame.cars[app.frame.player].surface=2; UpdateOverlays(); ok=IsWindowVisible(app.overlays[3].window) && ok;
-    ok=Export(app.overlays[3].window,L"build\\qa\\pit-approach.bmp") && ok;
-    app.frame.cars[app.frame.player].surface=3; app.frame.pit=true; app.frame.time+=1; UpdateOverlays(); ok=IsWindowVisible(app.overlays[3].window) && ok;
-    app.frame.pit=false; app.frame.limiter=true; app.frame.time+=1; UpdateOverlays(); ok=IsWindowVisible(app.overlays[3].window) && ok;
-    app.frame.limiter=false; app.frame.time+=1; UpdateOverlays(); ok=!IsWindowVisible(app.overlays[3].window) && ok;
-    app.frame.cars[app.frame.player].surface=2; app.frame.time+=1; UpdateOverlays(); ok=IsWindowVisible(app.overlays[3].window) && ok;
+    app.frame.cars[app.frame.player].surface=2; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
+    ok=Export(First(3).window,L"build\\qa\\pit-approach.bmp") && ok;
+    app.frame.cars[app.frame.player].surface=3; app.frame.pit=true; app.frame.time+=1; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
+    app.frame.pit=false; app.frame.limiter=true; app.frame.time+=1; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
+    app.frame.limiter=false; app.frame.time+=1; UpdateOverlays(); ok=!IsWindowVisible(First(3).window) && ok;
+    app.frame.cars[app.frame.player].surface=2; app.frame.time+=1; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
     app.frame.cars[app.frame.player].surface=originalSurface;
-    app.frame.pit=true; UpdateOverlays(); ok=IsWindowVisible(app.overlays[3].window)&&ok;
+    app.frame.pit=true; UpdateOverlays(); ok=IsWindowVisible(First(3).window)&&ok;
     app.frame.onTrack=false; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(app.overlays[i].window))==(i!=3))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3))&&ok;
     app.frame.camera=4; app.frame.replay=true; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(app.overlays[i].window))==(i!=3))&&ok;
-    ok=ReferenceCar(app.frame)==4 && !Rows(0).empty() && ok;
-    ok=Export(app.overlays[0].window,L"build\\qa\\relative-replay.bmp")&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3))&&ok;
+    ok=ReferenceCar(app.frame)==4 && !Rows(First(0)).empty() && ok;
+    ok=Export(First(0).window,L"build\\qa\\relative-replay.bmp")&&ok;
     app.frame.replay=false; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(app.overlays[i].window))==(i!=3))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3))&&ok;
     app.frame.connected=false; UpdateOverlays();
     for(auto& o:app.overlays) ok=!IsWindowVisible(o.window)&&ok;
     app.preview=true; app.hidden=true; UpdateOverlays();
     for(auto& o:app.overlays) ok=!IsWindowVisible(o.window)&&ok;
-    app.overlays[0].place.x=123; app.overlays[0].place.scale=130; Save();
-    app.overlays[0].place.x=0; app.overlays[0].place.scale=50; Load();
-    ok=(app.overlays[0].place.x==123 && app.overlays[0].place.scale==130 && !app.settingsError)&&ok;
+    First(0).place.x=123; First(0).place.scale=130; Save();
+    First(0).place.x=0; First(0).place.scale=50; Load();
+    ok=(First(0).place.x==123 && First(0).place.scale==130 && !app.settingsError)&&ok;
     report<<"Visibility in car, spotting, replay, pause, disconnect, pit lane, hide and saved placement: "<<(ok?"PASS":"FAIL")<<"\n";
     app.preview=true; PreviewData(0);
     bool orderOk=true;
     for(int kind=0;kind<2;++kind) {
-        const auto original=app.columnOrder[kind]; const auto other=app.columnOrder[1-kind];
-        orderOk=!MoveInOrder(app.columnOrder[kind],original.front(),-1) && app.columnOrder[kind]==original && orderOk;
-        orderOk=MoveInOrder(app.columnOrder[kind],original.front(),1) && orderOk;
-        orderOk=app.columnOrder[kind][0]==original[1] && app.columnOrder[1-kind]==other && orderOk;
-        app.columnOrder[kind]=original;
-        for(size_t i=1;i<original.size();++i) MoveInOrder(app.columnOrder[kind],original.back(),-1);
-        const auto changed=app.columnOrder[kind]; Load(); orderOk=app.columnOrder[kind]==changed && changed.front()==original.back() && orderOk;
-        OpenOverlay(kind); ok=Export(app.main,L"build\\qa\\column-order-"+std::to_wstring(kind)+L".bmp") && ok;
-        UpdateOverlays(); ok=Export(app.overlays[kind].window,L"build\\qa\\reordered-"+std::to_wstring(kind)+L".bmp") && ok;
-        app.columnOrder[kind]=original; SettingChanged();
+        const auto original=First(kind).table.columnOrder; const auto other=First(1-kind).table.columnOrder;
+        orderOk=!MoveInOrder(First(kind).table.columnOrder,original.front(),-1) && First(kind).table.columnOrder==original && orderOk;
+        orderOk=MoveInOrder(First(kind).table.columnOrder,original.front(),1) && orderOk;
+        orderOk=First(kind).table.columnOrder[0]==original[1] && First(1-kind).table.columnOrder==other && orderOk;
+        First(kind).table.columnOrder=original;
+        for(size_t i=1;i<original.size();++i) MoveInOrder(First(kind).table.columnOrder,original.back(),-1);
+        const auto changed=First(kind).table.columnOrder; Load(); orderOk=First(kind).table.columnOrder==changed && changed.front()==original.back() && orderOk;
+        OpenOverlay(First(kind)); ok=Export(app.main,L"build\\qa\\column-order-"+std::to_wstring(kind)+L".bmp") && ok;
+        UpdateOverlays(); ok=Export(First(kind).window,L"build\\qa\\reordered-"+std::to_wstring(kind)+L".bmp") && ok;
+        First(kind).table.columnOrder=original; SettingChanged();
     }
     ShowPage(Page::Overlays);
     ok=orderOk && ok; report<<"Independent column ordering, move boundaries, hidden-column positions and persistence: "<<(orderOk?"PASS":"FAIL")<<"\n";
     bool cornersOk=true;
     for(int kind=0;kind<OverlayCount;++kind) {
-        auto& overlay=app.overlays[kind]; const auto original=overlay.place;
+        auto& overlay=First(kind); const auto original=overlay.place;
         overlay.place.growLeft=overlay.place.growUp=false; overlay.place.scale=100;
         SetOverlayOrigin(overlay,monitor.rcWork.left+300,monitor.rcWork.top+250); Fit(overlay);
         for(int corner=0;corner<4;++corner) {
             RECT before{},grown{},shrunk{}; GetWindowRect(overlay.window,&before);
-            SetOverlayCorner(kind,corner);
+            SetOverlayCorner(First(kind),corner);
             GetWindowRect(overlay.window,&shrunk);
             cornersOk=EqualRect(&before,&shrunk) && cornersOk;
             overlay.place.scale=130; Fit(overlay); GetWindowRect(overlay.window,&grown);
@@ -677,7 +700,7 @@ int RunDiagnostics() {
             overlay.place.scale=100; Fit(overlay); GetWindowRect(overlay.window,&shrunk);
             cornersOk=EqualRect(&before,&shrunk) && cornersOk;
         }
-        ok=Export(app.overlays[kind].window,L"build\\qa\\fixed-corner-"+std::to_wstring(kind)+L".bmp") && ok;
+        ok=Export(First(kind).window,L"build\\qa\\fixed-corner-"+std::to_wstring(kind)+L".bmp") && ok;
         const int anchorX=overlay.place.x,anchorY=overlay.place.y; Save();
         overlay.place.growLeft=overlay.place.growUp=false; overlay.place.x=overlay.place.y=0; Load();
         cornersOk=overlay.place.growLeft && overlay.place.growUp && overlay.place.x==anchorX && overlay.place.y==anchorY && cornersOk;
@@ -687,7 +710,7 @@ int RunDiagnostics() {
     report<<"Fixed corner: all four corners on every overlay, resize/shrink, no jump on selection and persisted anchors: "<<(cornersOk?"PASS":"FAIL")<<"\n";
     Frame liveFrame; Session liveSession;
     if(app.telemetry.Read(liveFrame,liveSession)) {
-        app.preview=false; app.frame=liveFrame; app.session=liveSession; app.standings={}; raceControl.message.clear();
+        app.preview=false; app.frame=liveFrame; app.session=liveSession; First(StandingsKind).table.standings={}; raceControl.message.clear();
         OpenRaceControl(); UpdateRaceControl(true); ok=Export(raceControl.window,L"build\\qa\\race-control-live.bmp") && ok;
         int counters=0; for(const auto& d:liveSession.drivers) counters+=d.incidentCount>=0;
         report<<"Live Race Control: rows="<<raceControl.rows.size()<<"; incident counters="<<counters<<"; track meters="<<liveSession.trackMeters<<"; camera group="<<liveFrame.cameraGroup<<"; replay session="<<liveFrame.replaySession<<"\n";
@@ -709,8 +732,8 @@ int RunTickBenchmark() {
     // Move mode drops WS_EX_TRANSPARENT so UpdateWindow paints synchronously instead of deferring to the message loop.
     app.preview=false; app.edit=true; app.hidden=false;
     for(auto& o:app.overlays) { o.place.enabled=true; o.place.scale=100; o.place.rate=DefaultRates[o.kind]; }
-    app.weatherDisplay.fill(true); app.fuelDisplay.fill(true); app.fuelRows.fill(true);
-    app.showInterval=true; app.driverColumns[1][0]=app.driverColumns[1][1]=app.driverColumns[0][4]=true;
+    First(WeatherKind).weather.display.fill(true); First(FuelKind).fuel.display.fill(true); First(FuelKind).fuel.figures.fill(true);
+    First(StandingsKind).table.interval=true; First(1).table.driverColumns[0]=First(1).table.driverColumns[1]=First(0).table.driverColumns[4]=true;
     Session session=DemoSession(); session.drivers.clear(); session.key="benchmark"; session.number=0; session.trackMeters=7004;
     const char* classes[]={"GTP","LMP2","GT3"}; const unsigned colors[]={0xffda59,0x33ceff,0xff5888};
     for(int i=0;i<60;++i) session.drivers.push_back({i,i%3+1,1500+i*37,colors[i%3],false,false,"Driver Number "+std::to_string(i),std::to_string(i+1),classes[i%3],"Car","car",0,"A 3.45"});

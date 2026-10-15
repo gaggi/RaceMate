@@ -23,7 +23,7 @@ void SaveRaceFields() {
 void LoadRaceFields() {
     // New installs start narrow enough to fit beside the event feed without scrolling.
     for(int i=0;i<RaceFieldCount;++i) {
-        const bool fallback=i<=2 || i==4 || i==5 || i==8 || i==RaceIncidentsField || (i>=9 && i<15 && app.driverColumns[1][i-9]);
+        const bool fallback=i<=2 || i==4 || i==5 || i==8 || i==RaceIncidentsField || (i>=9 && i<15 && First(StandingsKind).table.driverColumns[i-9]);
         raceControl.fields[i]=ReadInt(L"RaceControl",(L"Field"+std::to_wstring(i)).c_str(),fallback)!=0;
     }
     raceControl.eventFields={};
@@ -46,7 +46,7 @@ double RaceSortNumber(const Row& row,int col) {
     const double missing=std::numeric_limits<double>::quiet_NaN();
     auto positive=[&](double v){return v>0?v:missing;}; auto known=[&](double v){return v>=0?v:missing;};
     switch(col) {
-    case 0:return positive(app.standings.separateClasses?row.car.classPosition:row.car.position);
+    case 0:return positive(First(StandingsKind).table.standings.separateClasses?row.car.classPosition:row.car.position);
     case 1:return RaceNumber(row.driver.number);
     case 4:return row.lapDifference>0?row.lapDifference*86400.0:row.gap;
     case 5:return row.intervalLaps>0?row.intervalLaps*86400.0:row.interval;
@@ -55,7 +55,7 @@ double RaceSortNumber(const Row& row,int col) {
     case 10:return positive(row.driver.rating); case 11:return known(row.car.tireCompound); case 12:return known(row.car.lastPitLap);
     case 13:return known(row.car.lastPitDuration); case 14:return known(row.car.pit?row.car.pitStationary:row.car.lastPitStationary);
     case 16: { int laps=row.car.completed; if(laps<0 && row.car.lap>=0) laps=std::max(0,row.car.lap-1); if(laps<0 && app.session.number==app.frame.session) laps=app.session.results[row.driver.index].completed; return known(laps); }
-    case 17: { int gained=PositionsGained(app.session,row,app.standings.separateClasses); return gained==-MaxCars?missing:gained; }
+    case 17: { int gained=PositionsGained(app.session,row,First(StandingsKind).table.standings.separateClasses); return gained==-MaxCars?missing:gained; }
     case RaceIncidentsField: return known(RaceIncidents(row));
     }
     return missing;

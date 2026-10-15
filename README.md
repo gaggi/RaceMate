@@ -27,6 +27,8 @@ Overlays stay visible during spotting, replays and paused playback, and follow t
 
 On the Overlays page, each overlay's row expands to its size, opacity, **fixed corner** and **update rate** (1–20 Hz; default 10 Hz for Relative and Pit Limiter, 1 Hz for Standings, Fuel Calculator and Weather). The fixed corner stays in place when the overlay grows or shrinks (more rows, extra columns, header or footer). **Settings** in the row opens the overlay's own page.
 
+**Add overlay** adds another Relative, Standings, Fuel Calculator or Weather with its own settings and place, for example a second Weather that shows only the wind rose in the middle of the screen. The copy button in an overlay's row adds one with the same settings; the bin removes an added overlay with its settings. Added overlays are numbered (Weather 2) and saved in their own section of `settings.ini`.
+
 ### Relative
 
 Nearby cars centered on the reference car, with position, class-colored number badge, driver with status badge and estimated gap. In races, cars a lap ahead are red and a lap behind blue (switch **Lap colors**).

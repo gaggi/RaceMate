@@ -3,7 +3,7 @@
 // has nothing to choose, so its page only explains when and how it shows.
 class ElementsPage : public PageWindow {
 public:
-    explicit ElementsPage(int kind) : PageWindow(ui.heading,ui.text), kind_(kind) {}
+    explicit ElementsPage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
     enum class Key { None, Layout, Module, Info };
     static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210;
@@ -16,16 +16,16 @@ private:
     }
     void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
 
-    bool Fuel() const { return kind_==FuelKind; }
+    bool Fuel() const { return o_.kind==FuelKind; }
     const ModuleInfo* Modules() const { return Fuel()?FuelModules:WeatherModules; }
     // Wind rose and wind text are switched in the wind module's expanded row, not as modules of their own.
     int ModuleCount() const { return Fuel()?FuelModuleCount:WindRose; }
     int Expandable() const { return Fuel()?FiguresModule:WindModule; }
-    bool& Shown(int id) { return Fuel()?app.fuelDisplay[id]:app.weatherDisplay[id]; }
-    bool& Strip() { return Fuel()?app.fuelStrip:app.weatherStrip; }
-    static std::wstring FiguresDetail() {
+    bool& Shown(int id) { return Fuel()?o_.fuel.display[id]:o_.weather.display[id]; }
+    bool& Strip() { return Fuel()?o_.fuel.strip:o_.weather.strip; }
+    std::wstring FiguresDetail() const {
         std::wstring text;
-        for(int i=0;i<FuelMetricCount;++i) if(app.fuelRows[i]) text+=(text.empty()?L"":L", ")+std::wstring(FuelFigures[i].title);
+        for(int i=0;i<FuelMetricCount;++i) if(o_.fuel.figures[i]) text+=(text.empty()?L"":L", ")+std::wstring(FuelFigures[i].title);
         return text.empty()?L"No values, so the row is hidden":text;
     }
     void Refresh() {
@@ -35,7 +35,7 @@ private:
         auto info=[&](const wchar_t* title,const wchar_t* detail,const wchar_t* pill=L"",RowList::Tone tone=RowList::Tone::Neutral) {
             RowList::Row row; row.title=title; row.detail=detail; row.pill=pill; row.pillTone=tone; push(std::move(row),Key::Info);
         };
-        if(kind_==PitLimiterKind) {
+        if(o_.kind==PitLimiterKind) {
             header(L"When it shows");
             info(L"On pit approach and in the pit lane",L"Only while you drive your own car, not while spotting or in replays.");
             info(L"After pit exit",L"Stays until you switch the limiter off; with the limiter off it hides at pit exit.");
@@ -54,7 +54,7 @@ private:
         for(int id=0;id<ModuleCount();++id) {
             if(!Fuel() && id==TrendArrows) header(L"Display");
             RowList::Row row; row.title=Modules()[id].title; row.detail=Fuel() && id==FiguresModule?FiguresDetail():Modules()[id].detail;
-            if(!Fuel() && id==WindModule) row.detail=app.weatherDisplay[WindRose] && app.weatherDisplay[WindText]?L"Wind rose and text":(app.weatherDisplay[WindRose]?L"Wind rose":(app.weatherDisplay[WindText]?L"Wind text":L"Nothing chosen"));
+            if(!Fuel() && id==WindModule) row.detail=o_.weather.display[WindRose] && o_.weather.display[WindText]?L"Wind rose and text":(o_.weather.display[WindRose]?L"Wind rose":(o_.weather.display[WindText]?L"Wind text":L"Nothing chosen"));
             row.toggle=Shown(id)?1:0; row.muted=!Shown(id);
             // Same column for every row's button: the expand arrow or an empty slot.
             const bool open=expanded_==id;
@@ -75,8 +75,8 @@ private:
         editors_.Clear();
         const int row=ExpandedRow(); if(row<0) return;
         syncing_=true; editors_.Begin(row);
-        if(Fuel()) for(int i=0;i<FuelMetricCount;++i) editors_.Check(FuelRowEditId+i,FuelFigures[i].title,app.fuelRows[i],(i%2)*260,4+(i/2)*28,250);
-        else for(int i=0;i<2;++i) editors_.Check(WindPartEditId+i,WeatherModules[WindRose+i].title,app.weatherDisplay[WindRose+i],i*200,10,190);
+        if(Fuel()) for(int i=0;i<FuelMetricCount;++i) editors_.Check(FuelRowEditId+i,FuelFigures[i].title,o_.fuel.figures[i],(i%2)*260,4+(i/2)*28,250);
+        else for(int i=0;i<2;++i) editors_.Check(WindPartEditId+i,WeatherModules[WindRose+i].title,o_.weather.display[WindRose+i],i*200,10,190);
         syncing_=false; editors_.Position();
     }
     void Expand(int id) {
@@ -88,12 +88,12 @@ private:
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); return true; }
         if(id==WindPartEditId || id==WindPartEditId+1) {
-            if(!syncing_ && code==BN_CLICKED) { app.weatherDisplay[WindRose+id-WindPartEditId]=editors_.Checked(id); Changed(); }
+            if(!syncing_ && code==BN_CLICKED) { o_.weather.display[WindRose+id-WindPartEditId]=editors_.Checked(id); Changed(); }
             return true;
         }
         if(id>=FuelRowEditId && id<FuelRowEditId+FuelMetricCount) {
             if(syncing_ || code!=BN_CLICKED) return true;
-            app.fuelRows[id-FuelRowEditId]=editors_.Checked(id); Changed(); return true;
+            o_.fuel.figures[id-FuelRowEditId]=editors_.Checked(id); Changed(); return true;
         }
         if(id!=ListId) return false;
         if(code==RowList::kLayoutChanged) { editors_.Position(); return true; }
@@ -116,9 +116,9 @@ private:
         return true;
     }
 
-    int kind_;
+    Overlay& o_;
     RowList list_; RowEditors editors_;
     std::vector<Key> keys_; std::vector<int> ids_;
     int expanded_=-1; bool syncing_=false;
 };
-HWND CreateElementsPage(HWND parent,int kind) { return PageWindow::Show(std::make_unique<ElementsPage>(kind),app.instance,parent,560,360); }
+HWND CreateElementsPage(HWND parent,Overlay& overlay) { return PageWindow::Show(std::make_unique<ElementsPage>(overlay),app.instance,parent,560,360); }

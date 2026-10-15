@@ -26,8 +26,8 @@ struct MetricText {
     MetricText(std::wstring label,std::wstring value,std::wstring label2={},std::wstring value2={}) : parts{std::move(label),std::move(value),std::move(label2),std::move(value2)} {}
     std::wstring Text() const { return parts[0]+parts[1]+parts[2]+parts[3]; }
 };
-MetricText Metric(int metric,int kind=-1) {
-    if(metric==OverlayNameMetric) return std::wstring(kind>=0 && IsTable(kind)?Titles[kind]:L"—");
+MetricText Metric(int metric,const Overlay* o=nullptr) {
+    if(metric==OverlayNameMetric) return o && IsTable(o->kind)?Name(*o):std::wstring(L"—");
     if(metric==NoMetric) return {};
     if(metric==LocalTimeMetric) { SYSTEMTIME time{}; GetLocalTime(&time); wchar_t text[20]; swprintf_s(text,L"%02d:%02d",time.wHour,time.wMinute); return std::wstring(text); }
     const auto& f=app.frame; const auto& s=app.session;
@@ -83,4 +83,4 @@ MetricText Metric(int metric,int kind=-1) {
     }
     return std::wstring(L"—");
 }
-std::wstring FooterValue(int metric,int kind=-1) { return Metric(metric,kind).Text(); }
+std::wstring FooterValue(int metric,const Overlay* o=nullptr) { return Metric(metric,o).Text(); }

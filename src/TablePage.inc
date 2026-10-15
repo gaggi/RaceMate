@@ -2,7 +2,7 @@
 // options in the expanded row) and the header and footer metrics.
 class TablePage : public PageWindow {
 public:
-    explicit TablePage(int kind) : PageWindow(ui.heading,ui.text), kind_(kind) {}
+    explicit TablePage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
     enum class Key { None, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, ClassView, OwnClass, LiveGaps, UntimedOrder, ClassColors, LapColors, Progress, Column, Header, Footer, ColumnHeadings };
     static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, NameFormatEditId=201, FlagEditId=202, ShortViewEditId=205, SlotEditId=206, BrandLogoEditId=213, BrandNameEditId=214;
@@ -31,22 +31,22 @@ private:
     void OnDestroy() override { if(typing_) ApplyRows(); }
 
     bool Optional(int id) const {
-        if(id==BestColumn || id==LastColumn) return kind_==RelativeKind;
+        if(id==BestColumn || id==LastColumn) return o_.kind==RelativeKind;
         return id==DriverColumn || id==StatusColumn || id==IntervalColumn || id==LapsColumn || id==GainedColumn || id>=LicenseColumn && id<=PitStopColumn || id>=BrandColumn;
     }
     static bool HasOptions(int id) { return id==DriverColumn || id==StatusColumn || id==LicenseColumn || id==IRatingColumn || id==BrandColumn; }
     std::wstring ColumnDetail(int id) const {
         switch(id) {
-        case DriverColumn: return NameFormats[app.nameFormat[kind_]];
-        case GapColumn: return kind_==RelativeKind?L"Time to each car, estimated":L"Gap to the class leader";
+        case DriverColumn: return NameFormats[o_.table.nameFormat];
+        case GapColumn: return o_.kind==RelativeKind?L"Time to each car, estimated":L"Gap to the class leader";
         case StatusColumn: {
             std::wstring text=L"After the name: PIT, TOW, OUT";
-            for(int i=0;i<3;++i) if(app.driverFlags[kind_][i]) text+=std::wstring(L", ")+FlagNames[i];
+            for(int i=0;i<3;++i) if(o_.table.driverFlags[i]) text+=std::wstring(L", ")+FlagNames[i];
             return text;
         }
-        case BrandColumn: return app.brandLogos[kind_] && app.brandNames[kind_]?L"Logo and name":(app.brandLogos[kind_]?L"Logo":(app.brandNames[kind_]?L"Name":L"Nothing chosen"));
+        case BrandColumn: return o_.table.brandLogo && o_.table.brandName?L"Logo and name":(o_.table.brandLogo?L"Logo":(o_.table.brandName?L"Name":L"Nothing chosen"));
         case LicenseColumn: case IRatingColumn: {
-            const bool shortView=app.driverShortView[kind_][id-LicenseColumn];
+            const bool shortView=o_.table.driverShortView[id-LicenseColumn];
             const std::wstring base=ColumnTexts[id].detail[0]?ColumnTexts[id].detail:L"Driver rating";
             return base+(shortView?(id==LicenseColumn?L"  \u00B7  short: 3,45":L"  \u00B7  short: 2,4K"):L"");
         }
@@ -67,19 +67,19 @@ private:
             const bool open=expandedKey_==key && expandedId_==id;
             row.iconButtons.insert(row.iconButtons.begin(),open?CollapseGlyph:ExpandGlyph); row.expandHeight=open?height:0;
         };
-        if(kind_==RelativeKind) {
+        if(o_.kind==RelativeKind) {
             header(L"Rows");
-            RowList::Row count; count.title=L"Rows"; count.detail=std::to_wstring(app.rows)+L" rows including your car, which stays in the middle";
+            RowList::Row count; count.title=L"Rows"; count.detail=std::to_wstring(o_.table.rows)+L" rows including your car, which stays in the middle";
             expandable(count,Key::Rows,-1,48); push(std::move(count),Key::Rows);
-            RowList::Row decimals; decimals.title=L"Gap decimals"; decimals.detail=std::to_wstring(app.gapDecimals)+L"  \u00B7  "+Format(0,app.gapDecimals)+L" s"; decimals.button=L"Choose...";
+            RowList::Row decimals; decimals.title=L"Gap decimals"; decimals.detail=std::to_wstring(o_.table.gapDecimals)+L"  \u00B7  "+Format(0,o_.table.gapDecimals)+L" s"; decimals.button=L"Choose...";
             push(std::move(decimals),Key::GapDecimals);
-            RowList::Row signs; signs.title=L"Show + and \u2212 before gaps"; signs.detail=L"Without them, cars above your row are ahead and cars below are behind."; signs.toggle=app.gapSigns[kind_]?1:0;
+            RowList::Row signs; signs.title=L"Show + and \u2212 before gaps"; signs.detail=L"Without them, cars above your row are ahead and cars below are behind."; signs.toggle=o_.table.gapSigns?1:0;
             push(std::move(signs),Key::GapSigns);
-            RowList::Row pit; pit.title=L"Hide drivers in the pit lane"; pit.detail=L"Your own car always stays."; pit.toggle=app.relativeHidePit?1:0;
+            RowList::Row pit; pit.title=L"Hide drivers in the pit lane"; pit.detail=L"Your own car always stays."; pit.toggle=o_.table.hidePit?1:0;
             push(std::move(pit),Key::HidePit);
         }
-        if(kind_==StandingsKind) {
-            const auto& standings=app.standings;
+        if(o_.kind==StandingsKind) {
+            const auto& standings=o_.table.standings;
             header(L"Rows");
             RowList::Row count; count.title=standings.separateClasses?L"Rows per class":L"Rows";
             count.detail=std::to_wstring(standings.leaders)+L" leaders, "+std::to_wstring(standings.ahead)+L" ahead and "+std::to_wstring(standings.behind)+L" behind your car";
@@ -91,7 +91,7 @@ private:
             push(std::move(own),Key::OwnClass);
             RowList::Row live; live.title=L"Live positions and gaps"; live.detail=L"Estimated from track position between start/finish crossings."; live.toggle=standings.liveGaps?1:0;
             push(std::move(live),Key::LiveGaps);
-            RowList::Row signs; signs.title=L"Show + before gaps and intervals"; signs.detail=L"Both always count behind the leader or the car ahead."; signs.toggle=app.gapSigns[kind_]?1:0;
+            RowList::Row signs; signs.title=L"Show + before gaps and intervals"; signs.detail=L"Both always count behind the leader or the car ahead."; signs.toggle=o_.table.gapSigns?1:0;
             push(std::move(signs),Key::GapSigns);
             RowList::Row untimed; untimed.title=L"Drivers without a lap time"; untimed.button=L"Choose...";
             untimed.detail=standings.fallbackByRating?L"Ordered by iRating, highest first":L"Ordered by car number";
@@ -99,24 +99,24 @@ private:
         }
         header(L"Markings");
         RowList::Row classColors; classColors.title=L"Class colors"; classColors.detail=L"Stripe on the left and the car number on the class color; off: a neutral number box.";
-        classColors.toggle=app.classColors[kind_]?1:0; push(std::move(classColors),Key::ClassColors);
-        if(kind_==RelativeKind) {
+        classColors.toggle=o_.table.classColors?1:0; push(std::move(classColors),Key::ClassColors);
+        if(o_.kind==RelativeKind) {
             RowList::Row lapColors; lapColors.title=L"Lap colors"; lapColors.detail=L"In races, red names are a lap or more ahead of you, blue names behind.";
-            lapColors.toggle=app.lapColors?1:0; push(std::move(lapColors),Key::LapColors);
+            lapColors.toggle=o_.table.lapColors?1:0; push(std::move(lapColors),Key::LapColors);
         }
-        if(kind_==StandingsKind) {
+        if(o_.kind==StandingsKind) {
             RowList::Row progress; progress.title=L"Session progress"; progress.detail=L"A thin bar under the header, by laps or by time.";
-            progress.toggle=app.standingsProgress?1:0; push(std::move(progress),Key::Progress);
+            progress.toggle=o_.table.progress?1:0; push(std::move(progress),Key::Progress);
         }
         header(L"Columns  \u00B7  left to right");
-        const auto& order=app.columnOrder[kind_];
+        const auto& order=o_.table.columnOrder;
         // Same button, same column: {expand, down, up} or {0, down, up} (see "Controls line up in columns").
         const bool anyOptions=std::any_of(order.begin(),order.end(),[&](int id){ return HasOptions(id); });
         for(size_t i=0;i<order.size();++i) {
             const int id=order[i];
             RowList::Row row; row.title=ColumnTexts[id].name; row.detail=ColumnDetail(id);
             // The status badge follows the name, so it has no place of its own to move.
-            const bool shown=id==StatusColumn?app.showStatus[kind_]:ColumnVisible(kind_,id);
+            const bool shown=id==StatusColumn?o_.table.showStatus:ColumnVisible(o_,id);
             if(Optional(id)) row.toggle=shown?1:0;
             else row.pill=L"Always";
             row.muted=!shown;
@@ -126,11 +126,11 @@ private:
             push(std::move(row),Key::Column,id);
         }
         header(L"Header and footer");
-        RowList::Row head; head.title=L"Header"; head.detail=SlotsText(app.headerMetrics[kind_]); head.toggle=app.tableHeaders[kind_]?1:0;
+        RowList::Row head; head.title=L"Header"; head.detail=SlotsText(o_.table.headerMetrics); head.toggle=o_.table.header?1:0;
         expandable(head,Key::Header,-1,48); push(std::move(head),Key::Header);
-        RowList::Row foot; foot.title=L"Footer"; foot.detail=SlotsText(app.footers[kind_].metrics); foot.toggle=app.footers[kind_].enabled?1:0;
+        RowList::Row foot; foot.title=L"Footer"; foot.detail=SlotsText(o_.table.footer.metrics); foot.toggle=o_.table.footer.enabled?1:0;
         expandable(foot,Key::Footer,-1,48); push(std::move(foot),Key::Footer);
-        RowList::Row headings; headings.title=L"Column headings"; headings.detail=L"Without them, columns shrink to their values."; headings.toggle=app.columnHeaders[kind_]?1:0;
+        RowList::Row headings; headings.title=L"Column headings"; headings.detail=L"Without them, columns shrink to their values."; headings.toggle=o_.table.columnHeaders?1:0;
         push(std::move(headings),Key::ColumnHeadings);
         list_.SetRows(std::move(rows));
     }
@@ -144,11 +144,11 @@ private:
         syncing_=true; editors_.Begin(row);
         if(expandedKey_==Key::Rows) {
             editors_.Label(L"Rows",0,10,44);
-            const HWND edit=editors_.Edit(RowsEditId,std::to_wstring(app.rows),48,10,70);
+            const HWND edit=editors_.Edit(RowsEditId,std::to_wstring(o_.table.rows),48,10,70);
             SetWindowLongPtrW(edit,GWL_STYLE,GetWindowLongPtrW(edit,GWL_STYLE)|ES_NUMBER); SendMessageW(edit,EM_SETLIMITTEXT,3,0);
             editors_.Label(L"Odd numbers from 1 to 127; even numbers round up.",132,10,0);
         } else if(expandedKey_==Key::StandingsRows) {
-            const wchar_t* labels[]={L"Leaders",L"Ahead",L"Behind"}; const int values[]={app.standings.leaders,app.standings.ahead,app.standings.behind};
+            const wchar_t* labels[]={L"Leaders",L"Ahead",L"Behind"}; const int values[]={o_.table.standings.leaders,o_.table.standings.ahead,o_.table.standings.behind};
             for(int i=0;i<3;++i) {
                 editors_.Label(labels[i],i*150,10,56);
                 const HWND edit=editors_.Edit(LeadersEditId+i,std::to_wstring(values[i]),i*150+60,10,64);
@@ -156,21 +156,21 @@ private:
             }
             editors_.Label(L"0 to 128 each",450,10,0);
         } else if(expandedKey_==Key::Header || expandedKey_==Key::Footer) {
-            const Slots& metrics=expandedKey_==Key::Header?app.headerMetrics[kind_]:app.footers[kind_].metrics;
+            const Slots& metrics=expandedKey_==Key::Header?o_.table.headerMetrics:o_.table.footer.metrics;
             const std::vector<std::wstring> titles(std::begin(MetricTitles),std::end(MetricTitles));
             const wchar_t* labels[]={L"Left",L"Right 1",L"Right 2",L"Right 3"};
             for(int slot=0;slot<SlotCount;++slot) { editors_.Label(labels[slot],slot*184,10,56); editors_.Combo(SlotEditId+slot,titles,metrics[slot],slot*184+58,10,118); }
         } else if(expandedId_==DriverColumn) {
             editors_.Label(L"Name format",0,10,90);
-            editors_.Combo(NameFormatEditId,std::vector<std::wstring>(std::begin(NameFormats),std::end(NameFormats)),app.nameFormat[kind_],94,10,200);
+            editors_.Combo(NameFormatEditId,std::vector<std::wstring>(std::begin(NameFormats),std::end(NameFormats)),o_.table.nameFormat,94,10,200);
         } else if(expandedId_==StatusColumn) {
-            for(int i=0;i<3;++i) editors_.Check(FlagEditId+i,FlagNames[i],app.driverFlags[kind_][i],i*170,10,160);
+            for(int i=0;i<3;++i) editors_.Check(FlagEditId+i,FlagNames[i],o_.table.driverFlags[i],i*170,10,160);
         } else if(expandedId_==BrandColumn) {
-            editors_.Check(BrandLogoEditId,L"Show logo",app.brandLogos[kind_],0,10,160);
-            editors_.Check(BrandNameEditId,L"Show name",app.brandNames[kind_],170,10,160);
+            editors_.Check(BrandLogoEditId,L"Show logo",o_.table.brandLogo,0,10,160);
+            editors_.Check(BrandNameEditId,L"Show name",o_.table.brandName,170,10,160);
         } else if(expandedId_==LicenseColumn || expandedId_==IRatingColumn) {
             const int index=expandedId_-LicenseColumn;
-            editors_.Check(ShortViewEditId,expandedId_==LicenseColumn?L"Short view: safety rating only (3,45)":L"Short view: thousands (2,4K)",app.driverShortView[kind_][index],0,10,360);
+            editors_.Check(ShortViewEditId,expandedId_==LicenseColumn?L"Short view: safety rating only (3,45)":L"Short view: thousands (2,4K)",o_.table.driverShortView[index],0,10,360);
         }
         syncing_=false; editors_.Position();
     }
@@ -182,7 +182,7 @@ private:
         if(const int row=ExpandedRow(); row>=0) list_.ScrollIntoView(row);
     }
     void Changed() { SettingChanged(); Refresh(); }
-    void Move(int id,int step) { if(MoveInOrder(app.columnOrder[kind_],id,step)) { Refresh(); BuildEditors(); } }
+    void Move(int id,int step) { if(MoveInOrder(o_.table.columnOrder,id,step)) { Refresh(); BuildEditors(); } }
     // Applies typed numbers; empty or invalid fields keep their saved value.
     void ApplyRows() {
         typing_=false; KillTimer(Handle(),TypingTimer);
@@ -194,34 +194,34 @@ private:
             target=clamped; return true;
         };
         bool changed=false;
-        if(expandedKey_==Key::Rows) { int rows=app.rows; if(read(RowsEditId,rows,1)) { rows=RelativeRowCount(rows); changed=rows!=app.rows; app.rows=rows; } }
+        if(expandedKey_==Key::Rows) { int rows=o_.table.rows; if(read(RowsEditId,rows,1)) { rows=RelativeRowCount(rows); changed=rows!=o_.table.rows; o_.table.rows=rows; } }
         if(expandedKey_==Key::StandingsRows) {
-            changed=read(LeadersEditId,app.standings.leaders,0) | changed;
-            changed=read(AheadEditId,app.standings.ahead,0) | changed;
-            changed=read(BehindEditId,app.standings.behind,0) | changed;
+            changed=read(LeadersEditId,o_.table.standings.leaders,0) | changed;
+            changed=read(AheadEditId,o_.table.standings.ahead,0) | changed;
+            changed=read(BehindEditId,o_.table.standings.behind,0) | changed;
         }
         if(changed) Changed();
     }
     void ChooseDecimals() {
-        const int choice=ChooseFromMenu({L"0  \u00B7  1 s",L"1  \u00B7  0.1 s",L"2  \u00B7  0.01 s",L"3  \u00B7  0.001 s"},app.gapDecimals);
+        const int choice=ChooseFromMenu({L"0  \u00B7  1 s",L"1  \u00B7  0.1 s",L"2  \u00B7  0.01 s",L"3  \u00B7  0.001 s"},o_.table.gapDecimals);
         if(choice<0) return;
-        app.gapDecimals=choice; Changed();
+        o_.table.gapDecimals=choice; Changed();
     }
     void OnTimer(UINT_PTR id) override { if(id==TypingTimer) ApplyRows(); }
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); return true; }
         if(id==RowsEditId || (id>=LeadersEditId && id<=BehindEditId)) { if(code==EN_CHANGE && !syncing_) { typing_=true; SetTimer(Handle(),TypingTimer,500,nullptr); } return true; }
         if(id==BrandLogoEditId || id==BrandNameEditId) {
-            if(!syncing_ && code==BN_CLICKED) { (id==BrandLogoEditId?app.brandLogos:app.brandNames)[kind_]=editors_.Checked(id); Changed(); }
+            if(!syncing_ && code==BN_CLICKED) { (id==BrandLogoEditId?o_.table.brandLogo:o_.table.brandName)=editors_.Checked(id); Changed(); }
             return true;
         }
         if(id>=NameFormatEditId && id<SlotEditId+SlotCount) {
             if(syncing_) return true;
-            if(id==NameFormatEditId && code==CBN_SELCHANGE) app.nameFormat[kind_]=std::max(0,editors_.Selection(id));
-            else if(id>=FlagEditId && id<FlagEditId+3 && code==BN_CLICKED) app.driverFlags[kind_][id-FlagEditId]=editors_.Checked(id);
-            else if(id==ShortViewEditId && code==BN_CLICKED) app.driverShortView[kind_][expandedId_-LicenseColumn]=editors_.Checked(id);
+            if(id==NameFormatEditId && code==CBN_SELCHANGE) o_.table.nameFormat=std::max(0,editors_.Selection(id));
+            else if(id>=FlagEditId && id<FlagEditId+3 && code==BN_CLICKED) o_.table.driverFlags[id-FlagEditId]=editors_.Checked(id);
+            else if(id==ShortViewEditId && code==BN_CLICKED) o_.table.driverShortView[expandedId_-LicenseColumn]=editors_.Checked(id);
             else if(id>=SlotEditId && code==CBN_SELCHANGE) {
-                auto& metrics=expandedKey_==Key::Header?app.headerMetrics[kind_]:app.footers[kind_].metrics;
+                auto& metrics=expandedKey_==Key::Header?o_.table.headerMetrics:o_.table.footer.metrics;
                 metrics[id-SlotEditId]=std::clamp(editors_.Selection(id),0,MetricCount-1);
             }
             else return true;
@@ -239,40 +239,40 @@ private:
         switch(key) {
         case Key::Rows: if(toggleExpand) Expand(key,-1); break;
         case Key::GapDecimals: if(pressed) ChooseDecimals(); break;
-        case Key::GapSigns: if(code==RowList::kToggled) { SetGapSigns(kind_,on); Refresh(); } break;
-        case Key::HidePit: if(code==RowList::kToggled) { app.relativeHidePit=on; Changed(); } break;
+        case Key::GapSigns: if(code==RowList::kToggled) { SetGapSigns(o_,on); Refresh(); } break;
+        case Key::HidePit: if(code==RowList::kToggled) { o_.table.hidePit=on; Changed(); } break;
         case Key::StandingsRows: if(toggleExpand) Expand(key,-1); break;
         case Key::ClassView:
-            if(pressed) { const int choice=ChooseFromMenu({L"Separate classes",L"Combined overall standings"},app.standings.separateClasses?0:1); if(choice>=0) { app.standings.separateClasses=choice==0; Changed(); } }
+            if(pressed) { const int choice=ChooseFromMenu({L"Separate classes",L"Combined overall standings"},o_.table.standings.separateClasses?0:1); if(choice>=0) { o_.table.standings.separateClasses=choice==0; Changed(); } }
             break;
-        case Key::OwnClass: if(code==RowList::kToggled) { app.standings.ownClass=on; Changed(); } break;
-        case Key::ClassColors: if(code==RowList::kToggled) { app.classColors[kind_]=on; Changed(); } break;
-        case Key::LapColors: if(code==RowList::kToggled) { app.lapColors=on; Changed(); } break;
-        case Key::Progress: if(code==RowList::kToggled) { app.standingsProgress=on; Changed(); } break;
-        case Key::LiveGaps: if(code==RowList::kToggled) { app.standings.liveGaps=on; Changed(); } break;
+        case Key::OwnClass: if(code==RowList::kToggled) { o_.table.standings.ownClass=on; Changed(); } break;
+        case Key::ClassColors: if(code==RowList::kToggled) { o_.table.classColors=on; Changed(); } break;
+        case Key::LapColors: if(code==RowList::kToggled) { o_.table.lapColors=on; Changed(); } break;
+        case Key::Progress: if(code==RowList::kToggled) { o_.table.progress=on; Changed(); } break;
+        case Key::LiveGaps: if(code==RowList::kToggled) { o_.table.standings.liveGaps=on; Changed(); } break;
         case Key::UntimedOrder:
-            if(pressed) { const int choice=ChooseFromMenu({L"By car number",L"By iRating, highest first"},app.standings.fallbackByRating?1:0); if(choice>=0) { app.standings.fallbackByRating=choice==1; Changed(); } }
+            if(pressed) { const int choice=ChooseFromMenu({L"By car number",L"By iRating, highest first"},o_.table.standings.fallbackByRating?1:0); if(choice>=0) { o_.table.standings.fallbackByRating=choice==1; Changed(); } }
             break;
         case Key::Column:
-            if(code==RowList::kToggled) { SetColumnVisible(kind_,column,on); Refresh(); }
+            if(code==RowList::kToggled) { SetColumnVisible(o_,column,on); Refresh(); }
             else if(glyph==UpGlyph) Move(column,-1);
             else if(glyph==DownGlyph) Move(column,1);
             else if(toggleExpand && HasOptions(column)) Expand(key,column);
             break;
         case Key::Header: case Key::Footer:
-            if(code==RowList::kToggled) { (key==Key::Header?app.tableHeaders[kind_]:app.footers[kind_].enabled)=on; Changed(); }
+            if(code==RowList::kToggled) { (key==Key::Header?o_.table.header:o_.table.footer.enabled)=on; Changed(); }
             else if(toggleExpand) Expand(key,-1);
             break;
-        case Key::ColumnHeadings: if(code==RowList::kToggled) { app.columnHeaders[kind_]=on; Changed(); } break;
+        case Key::ColumnHeadings: if(code==RowList::kToggled) { o_.table.columnHeaders=on; Changed(); } break;
         default: break;
         }
         return true;
     }
 
-    int kind_;
+    Overlay& o_;
     RowList list_; RowEditors editors_;
     std::vector<Key> keys_; std::vector<int> ids_;
     Key expandedKey_=Key::None; int expandedId_=-1;
     bool syncing_=false, typing_=false;
 };
-HWND CreateTablePage(HWND parent,int kind) { return PageWindow::Show(std::make_unique<TablePage>(kind),app.instance,parent,560,360); }
+HWND CreateTablePage(HWND parent,Overlay& overlay) { return PageWindow::Show(std::make_unique<TablePage>(overlay),app.instance,parent,560,360); }

@@ -8,12 +8,12 @@ struct MainUi {
     NavBar nav; StatusPanel status; ScrollHost host;
     HFONT text=nullptr, heading=nullptr;
     HWND title=nullptr, hint=nullptr, back=nullptr;
-    Page page=Page::Overlays; int overlayKind=RelativeKind;
+    Page page=Page::Overlays; Overlay* overlay=nullptr; // The overlay whose own page is open.
 } ui;
 HWND CreateOverlaysPage(HWND parent);
 HWND CreateGeneralPage(HWND parent);
-HWND CreateTablePage(HWND parent,int kind);
-HWND CreateElementsPage(HWND parent,int kind);
+HWND CreateTablePage(HWND parent,Overlay& overlay);
+HWND CreateElementsPage(HWND parent,Overlay& overlay);
 HWND CreateRaceControlPage(HWND parent);
 void RefreshPage() { if(ui.host.Content()) SendMessageW(ui.host.Content(),WM_COMMAND,MAKEWPARAM(PageRefreshId,0),0); }
 std::wstring HotkeyText(WORD hotkey) {
@@ -73,30 +73,30 @@ void LayoutMain() {
     place(ui.hint,left,116,content,20);
     place(ui.host.Handle(),left,148,content,height-148-20);
 }
-void ShowPage(Page page,int kind=-1) {
-    ui.page=page; if(kind>=0) ui.overlayKind=kind;
+void ShowPage(Page page,Overlay* overlay=nullptr) {
+    ui.page=page; if(overlay) ui.overlay=overlay;
     const wchar_t* hints[]={L"Choose how many cars it shows, its columns and its header and footer.",
         L"Class leaders and the cars around you: rows, columns, header and footer.",
         L"Choose and order what it shows, and which laps count toward consumption.",
         L"A reminder to switch the pit limiter on. Size, opacity and corner are on the Overlays page.",
         L"Choose and order its cards."};
     if(page==Page::Overlay) {
-        SetWindowTextW(ui.title,Titles[ui.overlayKind]); SetWindowTextW(ui.hint,hints[ui.overlayKind]);
+        SetWindowTextW(ui.title,Name(*ui.overlay).c_str()); SetWindowTextW(ui.hint,hints[ui.overlay->kind]);
     } else if(page==Page::RaceControl) {
         SetWindowTextW(ui.title,L"Race Control");
         SetWindowTextW(ui.hint,L"Full standings and an event feed in their own window. Events are recorded even while it is closed.");
     } else {
         SetWindowTextW(ui.title,page==Page::Overlays?L"Overlays":L"Settings");
-        SetWindowTextW(ui.hint,page==Page::Overlays?L"Turn overlays on or off and set their size and place. Open one to choose what it shows."
+        SetWindowTextW(ui.hint,page==Page::Overlays?L"Turn overlays on or off, add more of a kind, and set their size and place. Open one to choose what it shows."
             :L"Startup, refresh rate and keyboard shortcuts.");
     }
     ShowWindow(ui.back,page==Page::Overlay?SW_SHOW:SW_HIDE);
     ui.nav.SetSelected(page==Page::Settings?NavSettingsId:(page==Page::RaceControl?NavRaceControlId:NavOverlaysId));
     const HWND host=ui.host.Handle();
-    ui.host.SetContent(page==Page::Overlays?CreateOverlaysPage(host):page==Page::RaceControl?CreateRaceControlPage(host):(page==Page::Settings?CreateGeneralPage(host):(IsTable(ui.overlayKind)?CreateTablePage(host,ui.overlayKind):CreateElementsPage(host,ui.overlayKind))));
+    ui.host.SetContent(page==Page::Overlays?CreateOverlaysPage(host):page==Page::RaceControl?CreateRaceControlPage(host):(page==Page::Settings?CreateGeneralPage(host):(IsTable(ui.overlay->kind)?CreateTablePage(host,*ui.overlay):CreateElementsPage(host,*ui.overlay))));
     LayoutMain();
 }
-void OpenOverlay(int kind) { ShowPage(Page::Overlay,kind); }
+void OpenOverlay(Overlay& o) { ShowPage(Page::Overlay,&o); }
 void ShowRaceControlPage() { ShowSettings(); ShowPage(Page::RaceControl); }
 void CreateMainUi() {
     CreateUiFonts();
@@ -137,6 +137,13 @@ void RememberWindowPlacement() {
 }
 // Setting changes shared by the pages and the diagnostics.
 void SettingChanged() { Save(); UpdateOverlays(); }
+// A further instance of a kind with default settings, or a copy of another instance placed a little lower right.
+Overlay& NewInstance(int kind,const Overlay* copy=nullptr) {
+    auto& o=AddInstance(kind,InstanceCount(kind)+1);
+    ReadInstance(o); // A removed instance's section is gone, so this gives the defaults.
+    if(copy) { o.table=copy->table; o.fuel=copy->fuel; o.weather=copy->weather; o.place=copy->place; o.place.x+=30; o.place.y+=30; }
+    CreateOverlayWindow(o); SettingChanged(); return o;
+}
 // Moves an ID one place up (-1) or down (+1); false at either end.
 bool MoveInOrder(std::vector<int>& order,int id,int step) {
     const auto at=std::find(order.begin(),order.end(),id); if(at==order.end()) return false;
@@ -144,24 +151,25 @@ bool MoveInOrder(std::vector<int>& order,int id,int step) {
     if(target<0 || target>=static_cast<long long>(order.size())) return false;
     std::swap(order[index],order[target]); SettingChanged(); return true;
 }
-void SetColumnVisible(int kind,int id,bool on) {
+void SetColumnVisible(Overlay& o,int id,bool on) {
+    auto& t=o.table;
     switch(id) {
-    case DriverColumn: app.showDriver[kind]=on; break;
-    case StatusColumn: app.showStatus[kind]=on; break;
-    case IntervalColumn: app.showInterval=on; break;
-    case LapsColumn: app.standingsLaps=on; break;
-    case GainedColumn: app.standingsGained=on; break;
-    case BestColumn: if(kind==RelativeKind) app.relativeBest=on; break;
-    case LastColumn: if(kind==RelativeKind) app.relativeLast=on; break;
+    case DriverColumn: t.showDriver=on; break;
+    case StatusColumn: t.showStatus=on; break;
+    case IntervalColumn: t.interval=on; break;
+    case LapsColumn: t.laps=on; break;
+    case GainedColumn: t.gained=on; break;
+    case BestColumn: if(o.kind==RelativeKind) t.best=on; break;
+    case LastColumn: if(o.kind==RelativeKind) t.last=on; break;
     default:
-        if(id>=BrandColumn) app.extraColumns[kind][id-BrandColumn]=on;
-        else if(id>=LicenseColumn && id<=PitStopColumn) app.driverColumns[kind][id-LicenseColumn]=on;
+        if(id>=BrandColumn) t.extraColumns[id-BrandColumn]=on;
+        else if(id>=LicenseColumn && id<=PitStopColumn) t.driverColumns[id-LicenseColumn]=on;
     }
     SettingChanged();
 }
 // corner: bit 0 right, bit 1 bottom. The overlay keeps its place; later growth starts from that corner.
-void SetOverlayCorner(int kind,int corner) {
-    auto& o=app.overlays[kind]; o.place.growLeft=(corner&1)!=0; o.place.growUp=(corner&2)!=0;
+void SetOverlayCorner(Overlay& o,int corner) {
+    o.place.growLeft=(corner&1)!=0; o.place.growUp=(corner&2)!=0;
     CaptureOverlayCorner(o); Fit(o); SettingChanged();
 }
 bool SetStartWithWindows(bool on) {
@@ -170,13 +178,14 @@ bool SetStartWithWindows(bool on) {
 }
 void SetStartMinimized(bool on) { app.startMinimized=on; Save(); }
 void SetCheckUpdates(bool on) { app.checkUpdates=on; Save(); }
-void SetGapSigns(int kind,bool on) { app.gapSigns[kind]=on; SettingChanged(); }
+void SetGapSigns(Overlay& o,bool on) { o.table.gapSigns=on; SettingChanged(); }
 void SetShowTitleBar(bool on) {
-    app.showTitleBar=on; app.tableHeaders.fill(on);
+    app.showTitleBar=on;
+    for(auto& o:app.overlays) if(IsTable(o.kind)) o.table.header=on;
     for(auto& overlay:app.overlays) Fit(overlay);
     Save(); UpdateOverlays();
 }
 void ResetPositions() {
-    for(auto& o:app.overlays) { SetOverlayOrigin(o,DefaultPositions[o.kind].x,DefaultPositions[o.kind].y); Fit(o,true); }
+    for(auto& o:app.overlays) { const int offset=(o.number-1)*30; SetOverlayOrigin(o,DefaultPositions[o.kind].x+offset,DefaultPositions[o.kind].y+offset); Fit(o,true); }
     Save();
 }

@@ -1,12 +1,13 @@
-// Overlays page: one row per overlay with its switch, and size, opacity and corner
-// and refresh rate in the expanded row; below it the setup actions (preview, move, hide, reset).
+// Overlays page: one row per overlay instance with its switch, size, opacity, corner and
+// refresh rate in the expanded row, and buttons to duplicate or remove it; below them
+// "Add overlay" and the setup actions (preview, move, hide, reset).
 class OverlaysPage : public PageWindow {
 public:
     OverlaysPage() : PageWindow(ui.heading,ui.text) {}
 private:
-    enum class Key { None, Overlay, Preview, Move, Hide, Reset };
+    enum class Key { None, Instance, Add, Preview, Move, Hide, Reset };
     static constexpr int ListId=100, ScaleId=200, OpacityId=201, CornerId=202, RateId=203;
-    static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E';
+    static constexpr wchar_t ExpandGlyph=L'', CollapseGlyph=L'', CopyGlyph=L'', RemoveGlyph=L'';
     static constexpr const wchar_t* Corners[]={L"Top left",L"Top right",L"Bottom left",L"Bottom right"};
 
     void OnCreate() override {
@@ -18,40 +19,43 @@ private:
 
     static int Corner(const Placement& place) { return (place.growLeft?1:0)+(place.growUp?2:0); }
     static std::wstring Summary(const Overlay& o) {
-        std::wstring text=std::to_wstring(o.place.scale)+L" %  \u00B7  opacity "+std::to_wstring(o.place.opacity)+L" %  \u00B7  "+Corners[Corner(o.place)]+L"  ·  "+std::to_wstring(o.place.rate)+L" Hz";
+        std::wstring text=std::to_wstring(o.place.scale)+L" %  ·  opacity "+std::to_wstring(o.place.opacity)+L" %  ·  "+Corners[Corner(o.place)]+L"  ·  "+std::to_wstring(o.place.rate)+L" Hz";
         return text;
     }
     void Refresh() {
-        std::vector<RowList::Row> rows; keys_.clear(); kinds_.clear();
-        auto push=[&](RowList::Row row,Key key,int kind=-1) { rows.push_back(std::move(row)); keys_.push_back(key); kinds_.push_back(kind); };
+        std::vector<RowList::Row> rows; keys_.clear(); overlays_.clear();
+        auto push=[&](RowList::Row row,Key key,Overlay* o=nullptr) { rows.push_back(std::move(row)); keys_.push_back(key); overlays_.push_back(o); };
         auto header=[&](const wchar_t* title) { RowList::Row row; row.header=true; row.title=title; push(std::move(row),Key::None); };
         header(L"Overlays");
-        for(const auto& o:app.overlays) {
-            RowList::Row row; row.title=Titles[o.kind]; row.detail=Summary(o);
+        for(auto& o:app.overlays) {
+            RowList::Row row; row.title=Name(o); row.detail=Summary(o);
             row.toggle=o.place.enabled?1:0; row.button=L"Settings";
-            row.iconButtons={o.kind==expanded_?CollapseGlyph:ExpandGlyph};
-            row.expandHeight=o.kind==expanded_?48:0;
-            push(std::move(row),Key::Overlay,o.kind);
+            // Right to left: expand, duplicate (not the Pit Limiter), remove (added instances only); empty slots keep them in line.
+            row.iconButtons={&o==expanded_?CollapseGlyph:ExpandGlyph,o.kind==PitLimiterKind?wchar_t{0}:CopyGlyph,o.number>1?RemoveGlyph:wchar_t{0}};
+            row.expandHeight=&o==expanded_?48:0;
+            push(std::move(row),Key::Instance,&o);
         }
+        RowList::Row add; add.title=L"Add overlay"; add.detail=L"Another Relative, Standings, Fuel Calculator or Weather with its own settings and place."; add.button=L"Add...";
+        push(std::move(add),Key::Add);
         header(L"Setup");
         auto toggle=[&](Key key,const wchar_t* title,std::wstring detail,bool on) {
             RowList::Row row; row.title=title; row.detail=std::move(detail); row.toggle=on?1:0; push(std::move(row),key);
         };
         toggle(Key::Preview,L"Preview with sample data",L"Shows every overlay with made-up data, without iRacing.",app.preview);
-        toggle(Key::Move,L"Move overlays",L"Drag overlays with the mouse.  \u00B7  "+HotkeyText(app.hotkeys[0]),app.edit);
-        toggle(Key::Hide,L"Hide all overlays",L"Keeps their settings.  \u00B7  "+HotkeyText(app.hotkeys[1]),app.hidden);
+        toggle(Key::Move,L"Move overlays",L"Drag overlays with the mouse.  ·  "+HotkeyText(app.hotkeys[0]),app.edit);
+        toggle(Key::Hide,L"Hide all overlays",L"Keeps their settings.  ·  "+HotkeyText(app.hotkeys[1]),app.hidden);
         RowList::Row reset; reset.title=L"Reset positions"; reset.detail=L"Puts every overlay back in its default place on the main monitor."; reset.button=L"Reset";
         push(std::move(reset),Key::Reset);
         list_.SetRows(std::move(rows));
     }
     int ExpandedRow() const {
-        for(size_t i=0;i<keys_.size();++i) if(keys_[i]==Key::Overlay && kinds_[i]==expanded_) return static_cast<int>(i);
+        for(size_t i=0;i<keys_.size();++i) if(keys_[i]==Key::Instance && overlays_[i]==expanded_) return static_cast<int>(i);
         return -1;
     }
     void BuildEditors() {
         editors_.Clear();
         const int row=ExpandedRow(); if(row<0) return;
-        const auto& place=app.overlays[expanded_].place;
+        const auto& place=expanded_->place;
         std::vector<std::wstring> scales,opacities,corners(std::begin(Corners),std::end(Corners)),rates;
         for(int n=50;n<=150;n+=10) scales.push_back(std::to_wstring(n)+L" %");
         for(int n=40;n<=100;n+=10) opacities.push_back(std::to_wstring(n)+L" %");
@@ -64,19 +68,31 @@ private:
         editors_.Label(L"Updates",548,10,56); editors_.Combo(RateId,rates,rate,606,10,80);
         syncing_=false; editors_.Position();
     }
-    void Expand(int kind) {
-        expanded_=expanded_==kind?-1:kind;
+    void Expand(Overlay* o) {
+        expanded_=expanded_==o?nullptr:o;
         Refresh(); BuildEditors();
         if(const int row=ExpandedRow(); row>=0) list_.ScrollIntoView(row);
     }
     void ApplyEditor(int id) {
-        if(expanded_<0) return;
-        auto& o=app.overlays[expanded_]; const int choice=editors_.Selection(id);
+        if(!expanded_) return;
+        auto& o=*expanded_; const int choice=editors_.Selection(id);
         if(choice<0) return;
-        if(id==CornerId) SetOverlayCorner(expanded_,choice);
+        if(id==CornerId) SetOverlayCorner(o,choice);
         else if(id==RateId) { o.place.rate=OverlayRates[choice]; o.due=0; Timer(); SettingChanged(); UpdateStatus(); }
         else { (id==ScaleId?o.place.scale:o.place.opacity)=id==ScaleId?50+10*choice:40+10*choice; Fit(o); SettingChanged(); }
         Refresh();
+    }
+    void Add() {
+        static constexpr int kinds[]={RelativeKind,StandingsKind,FuelKind,WeatherKind};
+        std::vector<std::wstring> items; for(int kind:kinds) items.push_back(Titles[kind]);
+        const int choice=ChooseFromMenu(items,-1); if(choice<0) return;
+        NewInstance(kinds[choice]); Refresh();
+    }
+    void Remove(Overlay& o) {
+        const auto question=L"Remove "+Name(o)+L" and its settings?";
+        if(MessageBoxW(app.main,question.c_str(),L"RaceMate",MB_OKCANCEL|MB_ICONQUESTION)!=IDOK) return;
+        if(expanded_==&o) { expanded_=nullptr; editors_.Clear(); }
+        RemoveInstance(o); UpdateOverlays(); Refresh();
     }
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); return true; }
@@ -85,25 +101,30 @@ private:
         if(code==RowList::kLayoutChanged) { editors_.Position(); return true; }
         const int row=list_.NotifiedRow();
         if(row<0 || static_cast<size_t>(row)>=keys_.size()) return true;
-        const Key key=keys_[row]; const int kind=kinds_[row];
-        const bool on=list_.Rows()[row].toggle==1;
+        const Key key=keys_[row]; Overlay* o=overlays_[row];
+        const bool on=list_.Rows()[row].toggle==1, pressed=code==RowList::kButton || code==RowList::kActivated;
+        const int icon=code==RowList::kIconButton?list_.NotifiedIconButton():-1;
+        const wchar_t glyph=icon>=0 && icon<static_cast<int>(list_.Rows()[row].iconButtons.size())?list_.Rows()[row].iconButtons[icon]:0;
         switch(key) {
-        case Key::Overlay:
-            if(code==RowList::kToggled) { app.overlays[kind].place.enabled=on; SettingChanged(); Refresh(); }
-            else if(code==RowList::kButton) OpenOverlay(kind);
-            else if(code==RowList::kIconButton || code==RowList::kActivated) Expand(kind);
+        case Key::Instance:
+            if(code==RowList::kToggled) { o->place.enabled=on; SettingChanged(); Refresh(); }
+            else if(code==RowList::kButton) OpenOverlay(*o);
+            else if(glyph==CopyGlyph) { NewInstance(o->kind,o); Refresh(); }
+            else if(glyph==RemoveGlyph) Remove(*o);
+            else if(glyph==ExpandGlyph || glyph==CollapseGlyph || code==RowList::kActivated) Expand(o);
             break;
+        case Key::Add: if(pressed) Add(); break;
         case Key::Preview: if(code==RowList::kToggled && on!=app.preview) TogglePreview(); break;
         case Key::Move: if(code==RowList::kToggled && on!=app.edit) ToggleEdit(); break;
         case Key::Hide: if(code==RowList::kToggled && on!=app.hidden) ToggleHidden(); break;
-        case Key::Reset: if(code==RowList::kButton || code==RowList::kActivated) ResetPositions(); break;
+        case Key::Reset: if(pressed) ResetPositions(); break;
         default: break;
         }
         return true;
     }
 
     RowList list_; RowEditors editors_;
-    std::vector<Key> keys_; std::vector<int> kinds_;
-    int expanded_=-1; bool syncing_=false;
+    std::vector<Key> keys_; std::vector<Overlay*> overlays_;
+    Overlay* expanded_=nullptr; bool syncing_=false;
 };
 HWND CreateOverlaysPage(HWND parent) { return PageWindow::Show(std::make_unique<OverlaysPage>(),app.instance,parent,560,360); }
