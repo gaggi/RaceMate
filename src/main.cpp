@@ -127,6 +127,9 @@ constexpr ModuleInfo WeatherModules[]={
     {L"ShowWindRose",L"Wind rose",L"The ring with the speed inside",true},
     {L"ShowWindText",L"Wind text",L"Speed, compass direction and crosswind",true}};
 static_assert(std::size(WeatherModules)==WeatherModuleCount);
+// Modules in their default order; the page moves them, the rest are display options.
+const std::vector<int> FuelOrder{TankModule,FiguresModule,HistoryModule,RefuelCard,WindowCard,TimelineModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow};
+const std::vector<int> WeatherOrder{ConditionModule,RainModule,TemperatureModule,TemperatureHistoryModule,WindModule,DetailsModule,UsageModule};
 const wchar_t* WetnessNames[]={L"—",L"Dry",L"Mostly Dry",L"Very Lightly Wet",L"Lightly Wet",L"Moderately Wet",L"Very Wet",L"Extremely Wet"};
 struct Placement { int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=true, growLeft=false, growUp=false, rounded=false; };
 enum FontId : unsigned char { Regular, Bold, Large, Small, Hero, SmallBold, FontCount };
@@ -161,8 +164,8 @@ Bands DefaultBands(int kind) {
     if(kind==WeatherKind) return {true,{OverlayNameMetric,DeclaredWetMetric,NoMetric,NoMetric},{false,DefaultFooter}};
     return {};
 }
-struct FuelSettings { std::array<bool,FuelModuleCount> display{}; std::array<bool,FuelMetricCount> figures{}; bool strip=false; };
-struct WeatherSettings { std::array<bool,WeatherModuleCount> display{}; bool strip=false; };
+struct FuelSettings { std::array<bool,FuelModuleCount> display{}; std::array<bool,FuelMetricCount> figures{}; std::vector<int> order=FuelOrder; bool strip=false; };
+struct WeatherSettings { std::array<bool,WeatherModuleCount> display{}; std::vector<int> order=WeatherOrder; bool strip=false; };
 // One overlay window. A kind can have several instances; the first keeps the kind's plain name and settings section.
 struct Overlay {
     HWND window=nullptr; int kind=0, number=1; Placement place;
@@ -290,15 +293,25 @@ int WeatherHeight(const Overlay& o) {
 // Values in the strip layout: tank and range, the 10-lap average, refuel, latest stop and two targets.
 int FuelStripCount(const Overlay& o) { const auto& d=o.fuel.display; return 2*d[TankModule]+d[FiguresModule]+d[RefuelCard]+d[WindowCard]+d[TargetRow]+d[OneLongerRow]; }
 constexpr int FuelPanelWidth=440, FuelStripCell=86;
+// The panel's modules that show, in their order. Refuel and pit window share a row when
+// adjacent here; adjacent target rows share one band.
+std::vector<int> FuelShown(const Overlay& o) {
+    std::vector<int> shown;
+    for(int id:o.fuel.order) if(o.fuel.display[id] && (id!=FiguresModule || std::count(o.fuel.figures.begin(),o.fuel.figures.end(),true))) shown.push_back(id);
+    return shown;
+}
+bool IsCard(int id) { return id==RefuelCard || id==WindowCard; }
+bool IsTarget(int id) { return id>=OneShorterRow; }
 int FuelHeight(const Overlay& o) {
     if(o.fuel.strip) return 50;
-    const auto& d=o.fuel.display; int h=0;
-    if(d[TankModule]) h+=112;
-    if(d[FiguresModule] && std::count(o.fuel.figures.begin(),o.fuel.figures.end(),true)) h+=52;
-    if(d[HistoryModule]) h+=104;
-    if(d[RefuelCard] || d[WindowCard]) h+=92;
-    if(d[TimelineModule]) h+=46;
-    if(const int targets=d[TargetRow]+d[OneLongerRow]+d[TwoLongerRow]+d[OneShorterRow]) h+=16+24*targets;
+    constexpr int heights[]={112,52,104,0,92,92,46,24,24,24,24};
+    const auto shown=FuelShown(o); int h=0;
+    for(size_t k=0;k<shown.size();++k) {
+        const int id=shown[k], next=k+1<shown.size()?shown[k+1]:-1;
+        h+=heights[id];
+        if(IsTarget(id)) h+=8*(!k || !IsTarget(shown[k-1]))+8*!IsTarget(next);
+        if(IsCard(id) && IsCard(next)) ++k;
+    }
     return std::max(h,40);
 }
 int OverlayWidth(const Overlay& o) {
@@ -454,6 +467,8 @@ void ReadInstance(Overlay& o) {
     for(int i=0;i<FuelModuleCount;++i) o.fuel.display[i]=ReadBool(section.c_str(),FuelModules[i].key,FuelModules[i].on);
     for(int i=0;i<FuelMetricCount;++i) o.fuel.figures[i]=ReadBool(section.c_str(),FuelFigures[i].key,FuelFigures[i].on);
     o.fuel.strip=ReadInt(section.c_str(),L"Layout",0)==1;
+    if(kind==FuelKind) o.fuel.order=ReadOrder(section.c_str(),L"ModuleOrder",FuelOrder);
+    if(kind==WeatherKind) o.weather.order=ReadOrder(section.c_str(),L"ModuleOrder",WeatherOrder);
     for(int i=0;i<WeatherModuleCount;++i) o.weather.display[i]=ReadBool(section.c_str(),WeatherModules[i].key,WeatherModules[i].on);
     o.weather.strip=o.fuel.strip;
 }
@@ -528,11 +543,11 @@ void Save() {
         if(o.kind==FuelKind) {
             for(int i=0;i<FuelModuleCount;++i) number(section,FuelModules[i].key,o.fuel.display[i]);
             for(int i=0;i<FuelMetricCount;++i) number(section,FuelFigures[i].key,o.fuel.figures[i]);
-            number(section,L"Layout",o.fuel.strip);
+            number(section,L"Layout",o.fuel.strip); order(section,L"ModuleOrder",o.fuel.order);
         }
         if(o.kind==WeatherKind) {
             for(int i=0;i<WeatherModuleCount;++i) number(section,WeatherModules[i].key,o.weather.display[i]);
-            number(section,L"Layout",o.weather.strip);
+            number(section,L"Layout",o.weather.strip); order(section,L"ModuleOrder",o.weather.order);
         }
     }
     number(L"General",L"ShowTitleBar",app.showTitleBar); number(L"General",L"RefreshHz",app.rate);
@@ -967,126 +982,135 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                 const int x=n++*FuelStripCell; if(x) fill(rect(x,y+1,1,48),Ink::Line);
                 label(head,rect(x+12,y+6,FuelStripCell-16,16),Ink::Label,Small); label(std::move(value),rect(x+12,y+21,FuelStripCell-16,24),ink,Bold);
             };
-            if(on[TankModule]) { item(L"TANK",litres(tankKnown?f.fuel:-1),white); item(L"RANGE",range>=0?Format(range,1)+L" laps":L"—",Ink::Accent); }
-            if(on[FiguresModule]) item(L"AVG 10",burn>0?Format(burn,2):L"—",white);
-            if(on[RefuelCard]) item(L"REFUEL",litres(refuel,true),refuel<0?Ink::Muted:(refuelFits?Ink::Green:Ink::Red));
-            if(on[WindowCard]) item(L"BOX BY",open?lap(window.lastLap):L"—",white);
-            if(on[TargetRow]) item(L"TARGET",target(0)>=0?Format(target(0),2):L"—",targetInk(target(0)));
-            if(on[OneLongerRow]) item(L"+1 LAP",target(1)>=0?Format(target(1),2):L"—",targetInk(target(1)));
+            for(int id:o.fuel.order) if(on[id]) switch(id) {
+            case TankModule: item(L"TANK",litres(tankKnown?f.fuel:-1),white); item(L"RANGE",range>=0?Format(range,1)+L" laps":L"—",Ink::Accent); break;
+            case FiguresModule: item(L"AVG 10",burn>0?Format(burn,2):L"—",white); break;
+            case RefuelCard: item(L"REFUEL",litres(refuel,true),refuel<0?Ink::Muted:(refuelFits?Ink::Green:Ink::Red)); break;
+            case WindowCard: item(L"BOX BY",open?lap(window.lastLap):L"—",white); break;
+            case TargetRow: item(L"TARGET",target(0)>=0?Format(target(0),2):L"—",targetInk(target(0))); break;
+            case OneLongerRow: item(L"+1 LAP",target(1)>=0?Format(target(1),2):L"—",targetInk(target(1))); break;
+            default: break;
+            }
             y+=50;
         } else {
-            if(on[TankModule]) {
-                label(L"IN TANK",rect(16,y+10,150,16),Ink::Label,Small); label(L"RANGE",rect(W-166,y+10,150,16),Ink::Label,Small,DT_RIGHT);
-                const std::wstring fuel=tankKnown?Format(f.fuel,1):L"—", laps=range>=0?Format(range,1):L"—";
-                const int fuelWidth=measure(fuel,Large), unitWidth=measure(L"laps",Regular), lapsWidth=measure(laps,Large), end=px(W-16);
-                label(fuel,{px(16),px(y+24),px(16)+fuelWidth+1,px(y+68)},white,Large);
-                label(L"L",{px(21)+fuelWidth,px(y+38),px(60)+fuelWidth,px(y+64)},Ink::Label,Regular);
-                label(L"laps",{end-unitWidth,px(y+38),end,px(y+64)},Ink::Label,Regular);
-                label(laps,{end-unitWidth-px(5)-lapsWidth,px(y+24),end-unitWidth-px(5)+1,px(y+68)},Ink::Accent,Large);
-                // The bar spans the tank (or more fuel when the finish needs more): fuel in it, fuel missing to the finish, and the finish mark.
-                const int left=16,span=W-32,top=y+74; const double scale=std::max({capacityKnown?capacity:0.0,needed,tankKnown?f.fuel:0.0});
-                fill(rect(left,top,span,12),Ink::BarBack);
-                auto at=[&](double value){ return left+static_cast<int>(span*std::clamp(value/scale,0.0,1.0)); };
-                if(scale>0 && tankKnown) fill(rect(left,top,at(f.fuel)-left,12),Ink::Accent);
-                if(scale>0 && tankKnown && needed>f.fuel) out.push_back({DrawCommand::Hatch,Regular,0,{px(at(f.fuel)),px(top)-titleOffset,px(at(needed)),px(top+12)-titleOffset},Ink::HatchFore,{static_cast<float>(Ink::HatchBack)}});
-                if(scale>0 && needed>=0) fill(rect(at(needed)-1,top-4,2,20),RGB(255,255,255));
-                fill(rect(16,y+97,8,8),Ink::Accent); label(L"In tank",rect(29,y+92,70,18),Ink::Muted,Small);
-                if(tankKnown && needed>f.fuel) { fill(rect(100,y+97,8,8),Ink::Missing); label(L"Missing "+litres(needed-f.fuel),rect(113,y+92,130,18),Ink::Muted,Small); }
-                if(needed>=0) { fill(rect(246,y+96,2,10),RGB(255,255,255)); label(L"Needed "+litres(needed)+L" · "+Format(p.lapsToFinish,1)+L" laps",rect(253,y+92,W-269,18),Ink::Muted,Small); }
-                y+=112;
-            }
-            const int figures=static_cast<int>(std::count(o.fuel.figures.begin(),o.fuel.figures.end(),true));
-            if(on[FiguresModule] && figures) {
-                fill(rect(0,y,W,1),Ink::Line);
-                for(int i=0,index=0;i<FuelMetricCount;++i) if(o.fuel.figures[i]) {
-                    const auto& figure=FuelFigures[i]; const auto& estimate=p.estimates[figure.metric];
-                    const int left=W*index/figures,cell=W*(index+1)/figures-left; ++index;
-                    if(left) fill(rect(left,y+1,1,50),Ink::Line);
-                    const COLORREF ink=figure.metric==FuelBasis?Ink::Accent:(figure.metric==static_cast<int>(FuelMetric::Minimum)?Ink::Green:(figure.metric==static_cast<int>(FuelMetric::Maximum)?Ink::Red:white));
-                    label(figure.heading,rect(left,y+7,cell,16),Ink::Label,Small,DT_CENTER);
-                    label(estimate.samples?Format(estimate.consumption,2):L"—",rect(left,y+23,cell,22),ink,Bold,DT_CENTER);
+            const auto shown=FuelShown(o); const int figures=static_cast<int>(std::count(o.fuel.figures.begin(),o.fuel.figures.end(),true));
+            for(size_t k=0;k<shown.size();++k) {
+                const int id=shown[k], next=k+1<shown.size()?shown[k+1]:-1;
+                if(id==TankModule) {
+                    if(y>32) fill(rect(0,y,W,1),Ink::Line);
+                    label(L"IN TANK",rect(16,y+10,150,16),Ink::Label,Small); label(L"RANGE",rect(W-166,y+10,150,16),Ink::Label,Small,DT_RIGHT);
+                    const std::wstring fuel=tankKnown?Format(f.fuel,1):L"—", laps=range>=0?Format(range,1):L"—";
+                    const int fuelWidth=measure(fuel,Large), unitWidth=measure(L"laps",Regular), lapsWidth=measure(laps,Large), end=px(W-16);
+                    label(fuel,{px(16),px(y+24),px(16)+fuelWidth+1,px(y+68)},white,Large);
+                    label(L"L",{px(21)+fuelWidth,px(y+38),px(60)+fuelWidth,px(y+64)},Ink::Label,Regular);
+                    label(L"laps",{end-unitWidth,px(y+38),end,px(y+64)},Ink::Label,Regular);
+                    label(laps,{end-unitWidth-px(5)-lapsWidth,px(y+24),end-unitWidth-px(5)+1,px(y+68)},Ink::Accent,Large);
+                    // The bar spans the tank (or more fuel when the finish needs more): fuel in it, fuel missing to the finish, and the finish mark.
+                    const int left=16,span=W-32,top=y+74; const double scale=std::max({capacityKnown?capacity:0.0,needed,tankKnown?f.fuel:0.0});
+                    fill(rect(left,top,span,12),Ink::BarBack);
+                    auto at=[&](double value){ return left+static_cast<int>(span*std::clamp(value/scale,0.0,1.0)); };
+                    if(scale>0 && tankKnown) fill(rect(left,top,at(f.fuel)-left,12),Ink::Accent);
+                    if(scale>0 && tankKnown && needed>f.fuel) out.push_back({DrawCommand::Hatch,Regular,0,{px(at(f.fuel)),px(top)-titleOffset,px(at(needed)),px(top+12)-titleOffset},Ink::HatchFore,{static_cast<float>(Ink::HatchBack)}});
+                    if(scale>0 && needed>=0) fill(rect(at(needed)-1,top-4,2,20),RGB(255,255,255));
+                    fill(rect(16,y+97,8,8),Ink::Accent); label(L"In tank",rect(29,y+92,70,18),Ink::Muted,Small);
+                    if(tankKnown && needed>f.fuel) { fill(rect(100,y+97,8,8),Ink::Missing); label(L"Missing "+litres(needed-f.fuel),rect(113,y+92,130,18),Ink::Muted,Small); }
+                    if(needed>=0) { fill(rect(246,y+96,2,10),RGB(255,255,255)); label(L"Needed "+litres(needed)+L" · "+Format(p.lapsToFinish,1)+L" laps",rect(253,y+92,W-269,18),Ink::Muted,Small); }
+                    y+=112;
                 }
-                fill(rect(0,y+51,W,1),Ink::Line); y+=52;
-            }
-            if(on[HistoryModule]) {
-                label(L"CONSUMPTION  ·  LAST 10 LAPS",rect(16,y+8,W/2,16),Ink::Label,Small);
-                const int n=p.historyCount,top=y+30,chart=56,gap=6,bar=(W-32-9*gap)/10;
-                if(!n) label(L"Waiting for complete laps",rect(16,top,W-32,chart),Ink::Muted,Regular,DT_CENTER);
-                else {
-                    // The scale starts a little below the lowest lap, so differences of a few percent stay visible.
-                    double low=burn>0?burn:p.history[0].burn,high=low; int lastCounted=-1; const FuelLap* caution=nullptr;
-                    for(int i=0;i<n;++i) { low=std::min(low,p.history[i].burn); high=std::max(high,p.history[i].burn); if(p.history[i].counted) lastCounted=i; }
-                    low=std::max(0.0,low-std::max(.2*(high-low),.04*high)); high*=1.02;
-                    auto barTop=[&](double value){ return top+chart-std::max(2,static_cast<int>(chart*(value-low)/(high-low))); };
-                    for(int i=0;i<n;++i) {
-                        const auto& l=p.history[i]; const int x=16+(10-n+i)*(bar+gap), barY=barTop(l.burn);
-                        fill(rect(x,barY,bar,top+chart-barY),l.counted?(i==lastCounted?Ink::Accent:Ink::ChartBar):(l.caution && on[CautionMarks]?Ink::CautionBar:Ink::PitBar));
-                        if(l.caution && !caution) caution=&l;
+                if(id==FiguresModule) {
+                    fill(rect(0,y,W,1),Ink::Line);
+                    for(int i=0,index=0;i<FuelMetricCount;++i) if(o.fuel.figures[i]) {
+                        const auto& figure=FuelFigures[i]; const auto& estimate=p.estimates[figure.metric];
+                        const int left=W*index/figures,cell=W*(index+1)/figures-left; ++index;
+                        if(left) fill(rect(left,y+1,1,50),Ink::Line);
+                        const COLORREF ink=figure.metric==FuelBasis?Ink::Accent:(figure.metric==static_cast<int>(FuelMetric::Minimum)?Ink::Green:(figure.metric==static_cast<int>(FuelMetric::Maximum)?Ink::Red:white));
+                        label(figure.heading,rect(left,y+7,cell,16),Ink::Label,Small,DT_CENTER);
+                        label(estimate.samples?Format(estimate.consumption,2):L"—",rect(left,y+23,cell,22),ink,Bold,DT_CENTER);
                     }
-                    if(burn>0) {
-                        const int average=barTop(burn);
-                        out.push_back({DrawCommand::DottedLine,Regular,0,{px(16),px(average)-titleOffset,px(W-16),px(average)+1-titleOffset},Ink::Muted});
-                        label(L"Ø "+Format(burn,2),rect(W-80,average-16,64,14),Ink::Value,Small,DT_RIGHT);
+                    fill(rect(0,y+51,W,1),Ink::Line); y+=52;
+                }
+                if(id==HistoryModule) {
+                    label(L"CONSUMPTION  ·  LAST 10 LAPS",rect(16,y+8,W/2,16),Ink::Label,Small);
+                    const int n=p.historyCount,top=y+30,chart=56,gap=6,bar=(W-32-9*gap)/10;
+                    if(!n) label(L"Waiting for complete laps",rect(16,top,W-32,chart),Ink::Muted,Regular,DT_CENTER);
+                    else {
+                        // The scale starts a little below the lowest lap, so differences of a few percent stay visible.
+                        double low=burn>0?burn:p.history[0].burn,high=low; int lastCounted=-1; const FuelLap* caution=nullptr;
+                        for(int i=0;i<n;++i) { low=std::min(low,p.history[i].burn); high=std::max(high,p.history[i].burn); if(p.history[i].counted) lastCounted=i; }
+                        low=std::max(0.0,low-std::max(.2*(high-low),.04*high)); high*=1.02;
+                        auto barTop=[&](double value){ return top+chart-std::max(2,static_cast<int>(chart*(value-low)/(high-low))); };
+                        for(int i=0;i<n;++i) {
+                            const auto& l=p.history[i]; const int x=16+(10-n+i)*(bar+gap), barY=barTop(l.burn);
+                            fill(rect(x,barY,bar,top+chart-barY),l.counted?(i==lastCounted?Ink::Accent:Ink::ChartBar):(l.caution && on[CautionMarks]?Ink::CautionBar:Ink::PitBar));
+                            if(l.caution && !caution) caution=&l;
+                        }
+                        if(burn>0) {
+                            const int average=barTop(burn);
+                            out.push_back({DrawCommand::DottedLine,Regular,0,{px(16),px(average)-titleOffset,px(W-16),px(average)+1-titleOffset},Ink::Muted});
+                            label(L"Ø "+Format(burn,2),rect(W-80,average-16,64,14),Ink::Value,Small,DT_RIGHT);
+                        }
+                        label(lap(p.history[0].lap),rect(16+(10-n)*(bar+gap),top+chart+2,60,16),Ink::Label,Small);
+                        label(lap(p.history[n-1].lap),rect(W-76,top+chart+2,60,16),Ink::Label,Small,DT_RIGHT);
+                        if(caution && on[CautionMarks]) label(lap(caution->lap)+L" caution · not averaged",rect(W/2,y+8,W/2-16,16),Ink::Yellow,Small,DT_RIGHT);
                     }
-                    label(lap(p.history[0].lap),rect(16+(10-n)*(bar+gap),top+chart+2,60,16),Ink::Label,Small);
-                    label(lap(p.history[n-1].lap),rect(W-76,top+chart+2,60,16),Ink::Label,Small,DT_RIGHT);
-                    if(caution && on[CautionMarks]) label(lap(caution->lap)+L" caution · not averaged",rect(W/2,y+8,W/2-16,16),Ink::Yellow,Small,DT_RIGHT);
+                    y+=104;
                 }
-                y+=104;
-            }
-            if(on[RefuelCard] || on[WindowCard]) {
-                const int cardWidth=on[RefuelCard] && on[WindowCard]?(W-42)/2:W-32; int x=16;
-                auto card=[&](const wchar_t* title,std::wstring value,COLORREF ink,std::wstring note) {
-                    shape(DrawCommand::RoundFill,rect(x,y,cardWidth,80),Ink::Band,6);
-                    label(title,rect(x+12,y+8,cardWidth-24,16),Ink::Label,Small);
-                    label(std::move(value),rect(x+12,y+24,cardWidth-24,32),ink,Hero);
-                    label(std::move(note),rect(x+12,y+56,cardWidth-24,16),Ink::Muted,Small); x+=cardWidth+10;
-                };
-                if(on[RefuelCard]) card(L"REFUEL TO FINISH",litres(refuel,true),refuel<0?Ink::Muted:(refuelFits?Ink::Green:Ink::Red),
-                    refuel<0?L"waiting for laps":(refuel==0?L"enough fuel to finish":(refuelFits?L"fits in the tank":L"more than one tank")));
-                if(on[WindowCard]) card(L"PIT WINDOW",open?lap(window.firstLap)+L"–"+std::to_wstring(window.lastLap):L"—",white,
-                    open?(window.openNow?std::wstring(L"open now"):L"opens "+lap(window.firstLap))+L" · latest "+lap(window.lastLap)
-                        :(noStop?L"no stop needed":(extraStop?L"an extra stop is needed":L"waiting for laps")));
-                y+=92;
-            }
-            if(on[TimelineModule]) {
-                // One block per lap of a full tank from the stint's first lap, capped at the finish.
-                fill(rect(0,y,W,1),Ink::Line);
-                const int first=p.stintStartLap>0?p.stintStartLap:std::max(1,current);
-                const int count=finishLap>0?std::max(0,std::min(StintCellCount(),finishLap-first+1)):StintCellCount();
-                for(int i=0;i<count;++i) {
-                    const int number=first+i,left=16+i*(W-32)/count,blockWidth=std::max(1,16+(i+1)*(W-32)/count-2-left);
-                    const bool inWindow=open && number>=window.firstLap && number<=window.lastLap;
-                    if(number==current) fill(rect(left,y+9,blockWidth,18),Ink::Yellow);
-                    else fill(rect(left,y+12,blockWidth,12),inWindow?Ink::WindowOpen:(number<current?Ink::LapDone:Ink::LapAhead));
+                if(IsCard(id)) {
+                    const bool pair=IsCard(next); const int cardWidth=pair?(W-42)/2:W-32; int x=16;
+                    auto card=[&](const wchar_t* title,std::wstring value,COLORREF ink,std::wstring note) {
+                        shape(DrawCommand::RoundFill,rect(x,y,cardWidth,80),Ink::Band,6);
+                        label(title,rect(x+12,y+8,cardWidth-24,16),Ink::Label,Small);
+                        label(std::move(value),rect(x+12,y+24,cardWidth-24,32),ink,Hero);
+                        label(std::move(note),rect(x+12,y+56,cardWidth-24,16),Ink::Muted,Small); x+=cardWidth+10;
+                    };
+                    for(int which:{id,pair?next:-1}) if(which==RefuelCard) card(L"REFUEL TO FINISH",litres(refuel,true),refuel<0?Ink::Muted:(refuelFits?Ink::Green:Ink::Red),
+                        refuel<0?L"waiting for laps":(refuel==0?L"enough fuel to finish":(refuelFits?L"fits in the tank":L"more than one tank")));
+                    else if(which==WindowCard) card(L"PIT WINDOW",open?lap(window.firstLap)+L"–"+std::to_wstring(window.lastLap):L"—",white,
+                        open?(window.openNow?std::wstring(L"open now"):L"opens "+lap(window.firstLap))+L" · latest "+lap(window.lastLap)
+                            :(noStop?L"no stop needed":(extraStop?L"an extra stop is needed":L"waiting for laps")));
+                    if(pair) ++k;
+                    y+=92;
                 }
-                if(count) { label(lap(first),rect(16,y+27,60,16),Ink::Label,Small); label(lap(first+count-1),rect(W-76,y+27,60,16),Ink::Label,Small,DT_RIGHT); }
-                std::wstring box=L"—"; COLORREF boxInk=Ink::Muted;
-                if(open) {
-                    const double add=PlannedStopFuel(window,p);
-                    box=(window.openNow?L"BOX NOW · ":L"BOX ")+lap(window.firstLap)+L"–"+std::to_wstring(window.lastLap);
-                    if(add>=0) box+=L" · "+litres(add,true);
-                    if(window.stops>1) box+=L" · "+std::to_wstring(window.stops)+L" STOPS";
-                    boxInk=window.openNow?Ink::Green:white;
+                if(id==TimelineModule) {
+                    // One block per lap of a full tank from the stint's first lap, capped at the finish.
+                    fill(rect(0,y,W,1),Ink::Line);
+                    const int first=p.stintStartLap>0?p.stintStartLap:std::max(1,current);
+                    const int count=finishLap>0?std::max(0,std::min(StintCellCount(),finishLap-first+1)):StintCellCount();
+                    for(int i=0;i<count;++i) {
+                        const int number=first+i,left=16+i*(W-32)/count,blockWidth=std::max(1,16+(i+1)*(W-32)/count-2-left);
+                        const bool inWindow=open && number>=window.firstLap && number<=window.lastLap;
+                        if(number==current) fill(rect(left,y+9,blockWidth,18),Ink::Yellow);
+                        else fill(rect(left,y+12,blockWidth,12),inWindow?Ink::WindowOpen:(number<current?Ink::LapDone:Ink::LapAhead));
+                    }
+                    if(count) { label(lap(first),rect(16,y+27,60,16),Ink::Label,Small); label(lap(first+count-1),rect(W-76,y+27,60,16),Ink::Label,Small,DT_RIGHT); }
+                    std::wstring box=L"—"; COLORREF boxInk=Ink::Muted;
+                    if(open) {
+                        const double add=PlannedStopFuel(window,p);
+                        box=(window.openNow?L"BOX NOW · ":L"BOX ")+lap(window.firstLap)+L"–"+std::to_wstring(window.lastLap);
+                        if(add>=0) box+=L" · "+litres(add,true);
+                        if(window.stops>1) box+=L" · "+std::to_wstring(window.stops)+L" STOPS";
+                        boxInk=window.openNow?Ink::Green:white;
+                    }
+                    else if(noStop) { box=L"NO STOP NEEDED"; boxInk=Ink::Green; }
+                    else if(extraStop) box=L"NO PIT WINDOW";
+                    label(std::move(box),rect(76,y+27,W-152,16),boxInk,SmallBold,DT_CENTER);
+                    y+=46;
                 }
-                else if(noStop) { box=L"NO STOP NEEDED"; boxInk=Ink::Green; }
-                else if(extraStop) box=L"NO PIT WINDOW";
-                label(std::move(box),rect(76,y+27,W-152,16),boxInk,SmallBold,DT_CENTER);
-                y+=46;
-            }
-            if(const int rows=on[TargetRow]+on[OneLongerRow]+on[TwoLongerRow]+on[OneShorterRow]) {
-                fill(rect(0,y,W,16+24*rows),Ink::Band); fill(rect(0,y,W,1),Ink::Line); y+=8;
-                struct TargetInfo { int module, extra; const wchar_t* name; };
-                static constexpr TargetInfo targets[]={{OneShorterRow,-1,L"One lap shorter"},{TargetRow,0,L"Target"},{OneLongerRow,1,L"One lap longer"},{TwoLongerRow,2,L"Two laps longer"}};
-                for(const auto& t:targets) if(on[t.module]) {
-                    const double value=target(t.extra); const bool main=t.extra==0;
-                    label(t.name,rect(16,y,150,24),main?white:Ink::Muted,main?Bold:Regular);
-                    label(targetLap>0?lap(targetLap+t.extra):L"",rect(166,y,50,24),Ink::Label,Small);
+                if(IsTarget(id)) {
+                    // The first of adjacent target rows draws their shared band.
+                    if(!k || !IsTarget(shown[k-1])) {
+                        int rows=0; for(size_t j=k;j<shown.size() && IsTarget(shown[j]);++j) ++rows;
+                        fill(rect(0,y,W,16+24*rows),Ink::Band); fill(rect(0,y,W,1),Ink::Line); y+=8;
+                    }
+                    static constexpr const wchar_t* names[]={L"One lap shorter",L"Target",L"One lap longer",L"Two laps longer"};
+                    const int extra=id-TargetRow; const double value=target(extra); const bool main=extra==0;
+                    label(names[id-OneShorterRow],rect(16,y,150,24),main?white:Ink::Muted,main?Bold:Regular);
+                    label(targetLap>0?lap(targetLap+extra):L"",rect(166,y,50,24),Ink::Label,Small);
                     label(value>=0?L"max "+Format(value,2)+L" L/lap":L"—",rect(216,y,150,24),targetInk(value),main?Bold:Regular,DT_RIGHT);
                     label(value>=0 && burn>0?(value>=burn?L"+":L"−")+Format(std::abs(value/burn-1)*100,0)+L" %":L"",rect(366,y,W-382,24),Ink::Label,Small,DT_RIGHT);
                     y+=24;
+                    if(!IsTarget(next)) y+=8;
                 }
-                y+=8;
             }
         }
         footer(y);
@@ -1123,13 +1147,16 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                 const int w=measure(value,Bold); label(std::move(value),{px(x+12),px(y+21),std::min(px(x+12)+w+1,px(x+cell-4)),px(y+45)},ink,Bold);
                 if(!extra.first.empty()) label(std::move(extra.first),{px(x+12)+w+px(4),px(y+21),px(x+cell-4),px(y+45)},extra.second,Small);
             };
-            if(on[ConditionModule]) item(L"TRACK",WetnessNames[wet],wet>=3?wetInk:white,wetTrend.first.empty()?Trend{}:Trend{wetTrend.first.substr(0,1),wetTrend.second});
-            if(on[RainModule]) item(L"RAIN",percent(f.precipitation),white,rainTrend.first.empty()?Trend{}:Trend{rainTrend.first.substr(0,1),rainTrend.second});
-            if(on[TemperatureModule]) {
+            for(int id:o.weather.order) if(on[id]) switch(id) {
+            case ConditionModule: item(L"TRACK",WetnessNames[wet],wet>=3?wetInk:white,wetTrend.first.empty()?Trend{}:Trend{wetTrend.first.substr(0,1),wetTrend.second}); break;
+            case RainModule: item(L"RAIN",percent(f.precipitation),white,rainTrend.first.empty()?Trend{}:Trend{rainTrend.first.substr(0,1),rainTrend.second}); break;
+            case TemperatureModule:
                 item(L"TRACK °C",degrees(f.trackTemperature),white,trackTrend.first.empty()?Trend{}:Trend{trackTrend.first.substr(0,1),trackTrend.second});
                 item(L"AIR °C",degrees(f.airTemperature),white,airTrend.first.empty()?Trend{}:Trend{airTrend.first.substr(0,1),airTrend.second});
+                break;
+            case WindModule: item(L"WIND",speed+L" km/h"+(side.empty()?(from.empty()?L"":L" from "+from):L" · "+side),Ink::Yellow,{},2); break;
+            default: break;
             }
-            if(on[WindModule]) item(L"WIND",speed+L" km/h"+(side.empty()?(from.empty()?L"":L" from "+from):L" · "+side),Ink::Yellow,{},2);
             y+=50;
         } else {
             // A value with its trend right after it.
@@ -1137,78 +1164,81 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                 const int w=measure(value,font); label(std::move(value),{px(x),px(top),std::min(px(x)+w+1,px(right)),px(top+h)},ink,font);
                 if(!extra.first.empty()) label(std::move(extra.first),{px(x)+w+px(6),px(top),px(right),px(top+h)},extra.second,Small);
             };
-            if(on[ConditionModule]) {
-                label(L"TRACK CONDITION",rect(16,y+10,W/2,16),Ink::Label,Small);
-                if(!wetTrend.first.empty()) label(wetTrend.first,rect(W/2,y+10,W/2-16,16),wetTrend.second,Small,DT_RIGHT);
-                label(WetnessNames[wet],rect(16,y+26,W-32,30),wet>=3?wetInk:white,Hero);
-                // iRacing's seven levels; the track is wet from "very lightly wet" on.
-                const int segment=(W-32-6*3)/7;
-                for(int i=0;i<7;++i) fill(rect(16+i*(segment+3),y+58,segment,7),i<wet?(wet>=3?RGB(79,155,232):Ink::Value):Ink::LapAhead);
-                label(L"Dry",rect(16,y+66,100,16),Ink::Label,Small); label(L"Extremely wet",rect(W-116,y+66,100,16),Ink::Label,Small,DT_RIGHT);
-                y+=84;
-            }
-            if(on[RainModule]) {
-                fill(rect(0,y,W,1),Ink::Line);
-                label(L"PRECIPITATION",rect(16,y,W/2,36),Ink::Label,Small);
-                // Right-aligned: the value, then its trend.
-                const std::wstring value=percent(f.precipitation); const int valueWidth=measure(value,Bold), trendWidth=rainTrend.first.empty()?0:measure(rainTrend.first,Small)+px(6);
-                const int left=px(W-16)-trendWidth-valueWidth;
-                label(value,{left,px(y),left+valueWidth+1,px(y+36)},white,Bold);
-                if(trendWidth) label(rainTrend.first,{left+valueWidth+px(6),px(y),px(W-16),px(y+36)},rainTrend.second,Small);
-                y+=36;
-            }
-            if(on[TemperatureModule]) {
-                fill(rect(0,y,W,1),Ink::Line); fill(rect(W/2,y,1,62),Ink::Line);
-                label(L"TRACK",rect(16,y+9,W/2-32,16),Ink::Label,Small); valueWithTrend(16,y+26,28,degrees(f.trackTemperature),Hero,white,trackTrend,W/2-8);
-                label(L"AIR",rect(W/2+16,y+9,W/2-32,16),Ink::Label,Small); valueWithTrend(W/2+16,y+26,28,degrees(f.airTemperature),Hero,white,airTrend,W-8);
-                y+=62;
-            }
-            if(on[TemperatureHistoryModule]) {
-                fill(rect(0,y,W,1),Ink::Line);
-                label(L"TRACK TEMP  ·  LAST 20 MIN",rect(16,y+8,W-32,16),Ink::Label,Small);
-                double low=1e9,high=-1e9; int count=0;
-                for(int i=0;i<history.Count();++i) if(const double t=history.At(i).track; std::isfinite(t)) { low=std::min(low,t); high=std::max(high,t); ++count; }
-                if(count<2) label(L"Collecting the first minutes …",rect(16,y+28,W-32,36),Ink::Muted,Regular,DT_CENTER);
-                else {
-                    // At least 1 °C of height, so sensor noise stays flat.
-                    const double span=std::max(1.0,high-low), base=(low+high)/2-span/2; std::wstring points;
-                    for(int i=0;i<history.Count();++i) if(const double t=history.At(i).track; std::isfinite(t)) points+=static_cast<wchar_t>(1+std::lround(1000*(t-base)/span));
-                    out.push_back({DrawCommand::Sparkline,Regular,0,{px(18),px(y+30)-titleOffset,px(W-64),px(y+64)-titleOffset},Ink::Wet,{std::max(1.f,2.f*px(100)/100.f)},std::move(points)});
-                    label(degrees(high),rect(W-60,y+24,44,16),Ink::Label,Small,DT_RIGHT); label(degrees(low),rect(W-60,y+54,44,16),Ink::Label,Small,DT_RIGHT);
+            for(int id:o.weather.order) if(on[id]) {
+                if(id==ConditionModule) {
+                    if(y>32) fill(rect(0,y,W,1),Ink::Line);
+                    label(L"TRACK CONDITION",rect(16,y+10,W/2,16),Ink::Label,Small);
+                    if(!wetTrend.first.empty()) label(wetTrend.first,rect(W/2,y+10,W/2-16,16),wetTrend.second,Small,DT_RIGHT);
+                    label(WetnessNames[wet],rect(16,y+26,W-32,30),wet>=3?wetInk:white,Hero);
+                    // iRacing's seven levels; the track is wet from "very lightly wet" on.
+                    const int segment=(W-32-6*3)/7;
+                    for(int i=0;i<7;++i) fill(rect(16+i*(segment+3),y+58,segment,7),i<wet?(wet>=3?RGB(79,155,232):Ink::Value):Ink::LapAhead);
+                    label(L"Dry",rect(16,y+66,100,16),Ink::Label,Small); label(L"Extremely wet",rect(W-116,y+66,100,16),Ink::Label,Small,DT_RIGHT);
+                    y+=84;
                 }
-                y+=76;
-            }
-            if(on[WindModule] && (on[WindRose] || on[WindText])) {
-                if(y>32) fill(rect(0,y,W,1),Ink::Line);
-                int text=16, top=y+10;
-                if(on[WindRose]) {
-                    // Today's wind ring at 40 px radius: the arrow shows where the wind comes from relative to the car.
-                    const float scale=static_cast<float>(dpi*o.place.scale)/9600, ring=scale*40/65, centerX=62*scale, centerY=(y+54)*scale-titleOffset, radius=40*scale;
-                    const RECT bounds{static_cast<LONG>(centerX-radius-8*ring)-1,static_cast<LONG>(centerY-radius-8*ring)-1,static_cast<LONG>(centerX+radius+8*ring)+2,static_cast<LONG>(centerY+radius+8*ring)+2};
-                    out.push_back({DrawCommand::WindRing,Regular,0,bounds,0,{centerX,centerY,radius,ring,std::isfinite(angle)?static_cast<float>(angle):-1.f}});
-                    label(speed,rect(22,y+32,80,30),white,Hero,DT_CENTER); label(L"km/h",rect(22,y+60,80,14),Ink::Label,Small,DT_CENTER);
-                    text=124; top=y+20;
+                if(id==RainModule) {
+                    fill(rect(0,y,W,1),Ink::Line);
+                    label(L"PRECIPITATION",rect(16,y,W/2,36),Ink::Label,Small);
+                    // Right-aligned: the value, then its trend.
+                    const std::wstring value=percent(f.precipitation); const int valueWidth=measure(value,Bold), trendWidth=rainTrend.first.empty()?0:measure(rainTrend.first,Small)+px(6);
+                    const int left=px(W-16)-trendWidth-valueWidth;
+                    label(value,{left,px(y),left+valueWidth+1,px(y+36)},white,Bold);
+                    if(trendWidth) label(rainTrend.first,{left+valueWidth+px(6),px(y),px(W-16),px(y+36)},rainTrend.second,Small);
+                    y+=36;
                 }
-                if(on[WindText]) {
-                    label(L"WIND",rect(text,top,W-text-16,16),Ink::Label,Small);
-                    valueWithTrend(text,top+18,26,speed+L" km/h",Bold,white,from.empty()?Trend{}:Trend{L"from "+from,Ink::Muted},W-16);
-                    if(!side.empty()) label(side,rect(text,top+44,W-text-16,22),Ink::Yellow,Regular);
+                if(id==TemperatureModule) {
+                    fill(rect(0,y,W,1),Ink::Line); fill(rect(W/2,y,1,62),Ink::Line);
+                    label(L"TRACK",rect(16,y+9,W/2-32,16),Ink::Label,Small); valueWithTrend(16,y+26,28,degrees(f.trackTemperature),Hero,white,trackTrend,W/2-8);
+                    label(L"AIR",rect(W/2+16,y+9,W/2-32,16),Ink::Label,Small); valueWithTrend(W/2+16,y+26,28,degrees(f.airTemperature),Hero,white,airTrend,W-8);
+                    y+=62;
                 }
-                y+=on[WindRose]?108:76;
-            }
-            if(on[DetailsModule]) {
-                fill(rect(0,y,W,32),Ink::Band); fill(rect(0,y,W,1),Ink::Line);
-                static constexpr const wchar_t* Skies[]={L"clear",L"partly cloudy",L"mostly cloudy",L"overcast"};
-                const std::wstring parts[]={L"Humidity ",percent(f.humidity),L"Sky ",f.skies>=0 && f.skies<4?Skies[f.skies]:L"—",L"Fog ",percent(f.fog)};
-                int x=px(16);
-                for(int i=0;i<6;++i) { const FontId font=i%2?Bold:Regular; const int w=measure(parts[i],font); label(parts[i],{x,px(y),std::min(x+w+1,px(W-8)),px(y+32)},i%2?white:Ink::Label,font); x+=w+(i%2?px(18):0); }
-                y+=32;
-            }
-            if(on[UsageModule]) {
-                fill(rect(0,y,W,1),Ink::Line);
-                std::wstring usage=Wide(app.session.trackUsage); if(usage.empty()) usage=L"—"; else usage[0]=static_cast<wchar_t>(towupper(usage[0]));
-                label(L"TRACK USAGE",rect(16,y,W/2,32),Ink::Label,Small); label(std::move(usage),rect(W/2,y,W/2-16,32),white,Regular,DT_RIGHT);
-                y+=32;
+                if(id==TemperatureHistoryModule) {
+                    fill(rect(0,y,W,1),Ink::Line);
+                    label(L"TRACK TEMP  ·  LAST 20 MIN",rect(16,y+8,W-32,16),Ink::Label,Small);
+                    double low=1e9,high=-1e9; int count=0;
+                    for(int i=0;i<history.Count();++i) if(const double t=history.At(i).track; std::isfinite(t)) { low=std::min(low,t); high=std::max(high,t); ++count; }
+                    if(count<2) label(L"Collecting the first minutes …",rect(16,y+28,W-32,36),Ink::Muted,Regular,DT_CENTER);
+                    else {
+                        // At least 1 °C of height, so sensor noise stays flat.
+                        const double span=std::max(1.0,high-low), base=(low+high)/2-span/2; std::wstring points;
+                        for(int i=0;i<history.Count();++i) if(const double t=history.At(i).track; std::isfinite(t)) points+=static_cast<wchar_t>(1+std::lround(1000*(t-base)/span));
+                        out.push_back({DrawCommand::Sparkline,Regular,0,{px(18),px(y+30)-titleOffset,px(W-64),px(y+64)-titleOffset},Ink::Wet,{std::max(1.f,2.f*px(100)/100.f)},std::move(points)});
+                        label(degrees(high),rect(W-60,y+24,44,16),Ink::Label,Small,DT_RIGHT); label(degrees(low),rect(W-60,y+54,44,16),Ink::Label,Small,DT_RIGHT);
+                    }
+                    y+=76;
+                }
+                if(id==WindModule && (on[WindRose] || on[WindText])) {
+                    if(y>32) fill(rect(0,y,W,1),Ink::Line);
+                    int text=16, top=y+10;
+                    if(on[WindRose]) {
+                        // Today's wind ring at 40 px radius: the arrow shows where the wind comes from relative to the car.
+                        const float scale=static_cast<float>(dpi*o.place.scale)/9600, ring=scale*40/65, centerX=62*scale, centerY=(y+54)*scale-titleOffset, radius=40*scale;
+                        const RECT bounds{static_cast<LONG>(centerX-radius-8*ring)-1,static_cast<LONG>(centerY-radius-8*ring)-1,static_cast<LONG>(centerX+radius+8*ring)+2,static_cast<LONG>(centerY+radius+8*ring)+2};
+                        out.push_back({DrawCommand::WindRing,Regular,0,bounds,0,{centerX,centerY,radius,ring,std::isfinite(angle)?static_cast<float>(angle):-1.f}});
+                        label(speed,rect(22,y+32,80,30),white,Hero,DT_CENTER); label(L"km/h",rect(22,y+60,80,14),Ink::Label,Small,DT_CENTER);
+                        text=124; top=y+20;
+                    }
+                    if(on[WindText]) {
+                        label(L"WIND",rect(text,top,W-text-16,16),Ink::Label,Small);
+                        valueWithTrend(text,top+18,26,speed+L" km/h",Bold,white,from.empty()?Trend{}:Trend{L"from "+from,Ink::Muted},W-16);
+                        if(!side.empty()) label(side,rect(text,top+44,W-text-16,22),Ink::Yellow,Regular);
+                    }
+                    y+=on[WindRose]?108:76;
+                }
+                if(id==DetailsModule) {
+                    fill(rect(0,y,W,32),Ink::Band); fill(rect(0,y,W,1),Ink::Line);
+                    static constexpr const wchar_t* Skies[]={L"clear",L"partly cloudy",L"mostly cloudy",L"overcast"};
+                    const std::wstring parts[]={L"Humidity ",percent(f.humidity),L"Sky ",f.skies>=0 && f.skies<4?Skies[f.skies]:L"—",L"Fog ",percent(f.fog)};
+                    int x=px(16);
+                    for(int i=0;i<6;++i) { const FontId font=i%2?Bold:Regular; const int w=measure(parts[i],font); label(parts[i],{x,px(y),std::min(x+w+1,px(W-8)),px(y+32)},i%2?white:Ink::Label,font); x+=w+(i%2?px(18):0); }
+                    y+=32;
+                }
+                if(id==UsageModule) {
+                    fill(rect(0,y,W,1),Ink::Line);
+                    std::wstring usage=Wide(app.session.trackUsage); if(usage.empty()) usage=L"—"; else usage[0]=static_cast<wchar_t>(towupper(usage[0]));
+                    label(L"TRACK USAGE",rect(16,y,W/2,32),Ink::Label,Small); label(std::move(usage),rect(W/2,y,W/2-16,32),white,Regular,DT_RIGHT);
+                    y+=32;
+                }
             }
         }
         footer(y);

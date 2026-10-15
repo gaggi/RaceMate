@@ -69,11 +69,12 @@ RaceMate learns consumption between line crossings. Only whole laps at racing sp
 - **Tank**: fuel, range in laps and a bar of the tank with the fuel missing to the finish (hatched) and the finish mark.
 - **Consumption**: last lap, averages of 3, 10 and 5 laps, race average, minimum and maximum, each with its own switch.
 - **Last 10 laps**: every whole lap's fuel against the 10-lap average; caution laps can be marked.
-- **Refuel to finish** (without a safety margin; green when it fits in the tank) and **pit window** (earliest and latest lap).
+- **Refuel to finish** (without a safety margin; green when it fits in the tank) and **pit window** (earliest and latest lap); side by side while they follow each other in the module order.
 - **Pit window timeline**: one block per lap of a full-tank stint, current lap yellow, window green, with the fuel to add at the next stop.
 - **Targets**: the most fuel per lap that still reaches the latest stop (or the finish without a stop), and the same for one lap longer, two laps longer or one lap shorter.
 - The finish forecast projects the overall leader to the flag and then your own first crossing after it, using observed pace and track position. Lapping by faster classes is included; future pit stops are not.
-- Layout **Panel** shows the modules one under the other; **Strip** shows tank, range, average, refuel, latest stop and targets in one line.
+- The arrows on the overlay's page order the modules; adjacent target rows share one band.
+- Layout **Panel** shows the modules one under the other; **Strip** shows tank, range, average, refuel, latest stop and targets in one line, in the same order.
 
 ### Pit Limiter
 
@@ -81,7 +82,7 @@ Green when the limiter is on, red when it is off, gray when unknown. Shown while
 
 ### Weather
 
-Modules, each with its own switch: the track condition in iRacing's seven levels; precipitation; track and air temperature; the track temperature of the last 20 minutes; wind speed, compass direction and the direction ring relative to your car (with "Crosswind from the left" and similar); humidity, sky and fog; track usage.
+Modules, each with its own switch and ordered with the arrows on the overlay's page (the strip follows the same order): the track condition in iRacing's seven levels; precipitation; track and air temperature; the track temperature of the last 20 minutes; wind speed, compass direction and the direction ring relative to your car (with "Crosswind from the left" and similar); humidity, sky and fog; track usage.
 
 - **Trend arrows** compare with ten minutes ago (from five minutes of history on): rising, falling or steady. iRacing publishes no forecast, so RaceMate samples the weather every 30 seconds itself.
 - The wind module shows the **wind rose** (the ring with the speed inside), the **wind text** or both. With only the wind rose switched on, the overlay shrinks to the ring.

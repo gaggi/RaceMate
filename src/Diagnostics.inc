@@ -401,6 +401,16 @@ int RunDiagnostics() {
         First(FuelKind).bands.footer.enabled=true; SettingChanged();
         ok=BaseHeight(First(FuelKind))==before+FooterHeight(First(FuelKind)) && Export(First(2).window,L"build\\qa\\fuel-footer.bmp") && ok;
         First(FuelKind).bands.footer.enabled=false; SettingChanged();
+        // Pit window below the timeline: refuel and pit window split into two rows; the order survives a reload.
+        auto& fuel=First(FuelKind); const int paired=BaseHeight(fuel);
+        ok=MoveInOrder(fuel.fuel.order,WindowCard,1) && BaseHeight(fuel)==paired+92 && ok;
+        MoveInOrder(fuel.fuel.order,TankModule,2); Load();
+        ok=First(FuelKind).fuel.order==std::vector<int>{HistoryModule,FiguresModule,TankModule,RefuelCard,TimelineModule,WindowCard,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow} && BaseHeight(First(FuelKind))==paired+92 && ok;
+        ok=Export(First(FuelKind).window,L"build\\qa\\fuel-reordered.bmp") && ok;
+        auto& weather=First(WeatherKind); const int weatherHeight=BaseHeight(weather);
+        ok=MoveInOrder(weather.weather.order,ConditionModule,3) && BaseHeight(weather)==weatherHeight && ok;
+        Load(); ok=First(WeatherKind).weather.order[3]==ConditionModule && Export(First(WeatherKind).window,L"build\\qa\\weather-reordered.bmp") && ok;
+        First(FuelKind).fuel.order=FuelOrder; First(WeatherKind).weather.order=WeatherOrder; SettingChanged();
     }
     app.frame.fuel=50; UpdateOverlays();
     fuelSummary=CalculatePitWindow(app.session,app.frame,Plan().lapsToFinish,Plan().estimates[5].consumption);

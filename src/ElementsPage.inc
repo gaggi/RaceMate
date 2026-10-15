@@ -1,13 +1,13 @@
 // Pages that list what an overlay shows: Fuel Calculator and Weather choose a layout,
-// switch modules (the fuel consumption module expands to its values) and set header and
-// footer. Pit Limiter has only its corners to choose; its page explains when and how it shows.
+// switch and order modules (the fuel consumption module expands to its values) and set
+// header and footer. Pit Limiter has only its corners to choose; its page explains when and how it shows.
 class ElementsPage : public PageWindow {
 public:
     explicit ElementsPage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
     enum class Key { None, Layout, Rounded, Module, Band, Info };
     static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210, SlotEditId=230, HeaderRow=1000, FooterRow=1001;
-    static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E';
+    static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E', UpGlyph=L'\uE74A', DownGlyph=L'\uE74B';
 
     void OnCreate() override {
         list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont());
@@ -18,8 +18,9 @@ private:
 
     bool Fuel() const { return o_.kind==FuelKind; }
     const ModuleInfo* Modules() const { return Fuel()?FuelModules:WeatherModules; }
-    // Wind rose and wind text are switched in the wind module's expanded row, not as modules of their own.
-    int ModuleCount() const { return Fuel()?FuelModuleCount:WindRose; }
+    std::vector<int>& Order() { return Fuel()?o_.fuel.order:o_.weather.order; }
+    // Display options stay in place; wind rose and wind text are switched in the wind module's expanded row.
+    std::vector<int> Options() const { return Fuel()?std::vector<int>{CautionMarks}:std::vector<int>{TrendArrows,WindRelative}; }
     int Expandable() const { return Fuel()?FiguresModule:WindModule; }
     bool& Shown(int id) { return Fuel()?o_.fuel.display[id]:o_.weather.display[id]; }
     bool& Strip() { return Fuel()?o_.fuel.strip:o_.weather.strip; }
@@ -53,17 +54,21 @@ private:
             :(Fuel()?L"Tank, range, average, refuel, latest stop and targets in one line":L"Track condition, rain, temperatures and wind in one line");
         push(std::move(layout),Key::Layout);
         push(RoundedRow(o_),Key::Rounded);
-        header(L"Modules  \u00B7  top to bottom");
-        for(int id=0;id<ModuleCount();++id) {
-            if(!Fuel() && id==TrendArrows) header(L"Display");
+        auto module=[&](int id,bool movable) {
             RowList::Row row; row.title=Modules()[id].title; row.detail=Fuel() && id==FiguresModule?FiguresDetail():Modules()[id].detail;
             if(!Fuel() && id==WindModule) row.detail=o_.weather.display[WindRose] && o_.weather.display[WindText]?L"Wind rose and text":(o_.weather.display[WindRose]?L"Wind rose":(o_.weather.display[WindText]?L"Wind text":L"Nothing chosen"));
             row.toggle=Shown(id)?1:0; row.muted=!Shown(id);
             // Same column for every row's button: the expand arrow or an empty slot.
             const bool open=expanded_==id;
             row.iconButtons={id==Expandable()?(open?CollapseGlyph:ExpandGlyph):wchar_t{0}}; row.expandHeight=id==Expandable() && open?(Fuel()?120:48):0;
+            if(movable) row.iconButtons.insert(row.iconButtons.end(),{DownGlyph,UpGlyph});
             push(std::move(row),Key::Module,id);
-        }
+        };
+        // Refuel and pit window share a row while they stand next to each other here.
+        header(L"Modules  \u00B7  top to bottom");
+        for(int id:Order()) module(id,true);
+        header(L"Display");
+        for(int id:Options()) module(id,false);
         header(L"Header and footer");
         for(int id:{HeaderRow,FooterRow}) {
             RowList::Row row=BandRow(o_,id==FooterRow); const bool open=expanded_==id;
@@ -120,6 +125,7 @@ private:
         switch(keys_[row]) {
         case Key::Module:
             if(code==RowList::kToggled) { Shown(element)=on; Changed(); }
+            else if(glyph==UpGlyph || glyph==DownGlyph) { if(MoveInOrder(Order(),element,glyph==UpGlyph?-1:1)) { Refresh(); BuildEditors(); } }
             else if(element==Expandable() && (glyph==ExpandGlyph || glyph==CollapseGlyph || code==RowList::kActivated)) Expand(element);
             break;
         case Key::Band:
