@@ -5,6 +5,7 @@
 #include <limits>
 #include <memory>
 #include <numbers>
+#include <queue>
 #include <stdexcept>
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -95,6 +96,132 @@ bool Inside(const std::vector<Point>& ring,Point p) {
     }
     return inside;
 }
+// A bridge can be drawn as a gap in a filled ribbon. Its one closed polygon
+// walks down one road edge, around an end cap and back along the other edge;
+// using that contour as the lap sends cars backwards halfway through the lap.
+// Recover the ribbon's medial path in a bounded, temporary raster instead.
+// This runs only during preparation; drawing still uses the original SVG.
+std::vector<Point> RibbonRoute(const Path& outline) {
+    Point low{1e20,1e20},high{-1e20,-1e20};
+    for(Point p:outline.points) { low.x=std::min(low.x,p.x); low.y=std::min(low.y,p.y); high.x=std::max(high.x,p.x); high.y=std::max(high.y,p.y); }
+    const double span=std::max(high.x-low.x,high.y-low.y);
+    if(span<=0) throw std::runtime_error("Degenerate ribbon");
+    double twiceArea=0;
+    for(size_t i=1;i<outline.points.size();++i) twiceArea+=Cross(outline.points[i-1],outline.points[i]);
+    const double averageWidth=std::abs(twiceArea)/Distances(outline.points).back();
+    if(averageWidth<=0 || averageWidth>span*.08) throw std::runtime_error("Filled shape is not a thin racing ribbon");
+    constexpr int Resolution=2048, Margin=3;
+    const double scale=std::min((Resolution-2*Margin-1)/span,24/averageWidth);
+    const int width=static_cast<int>(std::ceil((high.x-low.x)*scale))+2*Margin+1;
+    const int height=static_cast<int>(std::ceil((high.y-low.y)*scale))+2*Margin+1;
+    std::vector<Point> polygon; polygon.reserve(outline.points.size());
+    for(Point p:outline.points) polygon.push_back({(p.x-low.x)*scale+Margin,(p.y-low.y)*scale+Margin});
+    std::vector<unsigned char> mask(static_cast<size_t>(width)*height);
+    std::vector<int> pixels; std::vector<double> crossings;
+    for(int y=Margin;y<height-Margin;++y) {
+        crossings.clear(); const double scan=y+.5;
+        for(size_t i=1;i<polygon.size();++i) {
+            const Point a=polygon[i-1],b=polygon[i];
+            if((a.y>scan)!=(b.y>scan)) crossings.push_back(a.x+(scan-a.y)*(b.x-a.x)/(b.y-a.y));
+        }
+        std::sort(crossings.begin(),crossings.end());
+        for(size_t i=1;i<crossings.size();i+=2) {
+            const int from=std::max(Margin,static_cast<int>(std::ceil(crossings[i-1]-.5)));
+            const int to=std::min(width-Margin-1,static_cast<int>(std::floor(crossings[i]-.5)));
+            for(int x=from;x<=to;++x) { const int index=y*width+x; mask[index]=1; pixels.push_back(index); }
+        }
+    }
+    if(pixels.empty()) throw std::runtime_error("Ribbon has no interior");
+    // Zhang-Suen thinning preserves 8-connected topology and endpoints. Visit
+    // only foreground pixels, rather than scanning the whole image every pass.
+    const int neighbors[]={-width,-width+1,1,width+1,width,width-1,-1,-width-1};
+    std::vector<int> remove;
+    bool changed=true; int passes=0;
+    while(changed && passes++<Resolution) {
+        changed=false;
+        for(int phase=0;phase<2;++phase) {
+            remove.clear();
+            for(int index:pixels) {
+                std::array<int,8> n{}; int count=0,transitions=0;
+                for(int k=0;k<8;++k) { n[k]=mask[index+neighbors[k]]; count+=n[k]; }
+                if(count<2 || count>6) continue;
+                for(int k=0;k<8;++k) transitions+=!n[k] && n[(k+1)%8];
+                if(transitions!=1) continue;
+                if(!phase?(n[0]*n[2]*n[4] || n[2]*n[4]*n[6]):(n[0]*n[2]*n[6] || n[0]*n[4]*n[6])) continue;
+                remove.push_back(index);
+            }
+            if(!remove.empty()) {
+                changed=true;
+                for(int index:remove) mask[index]=0;
+                pixels.erase(std::remove_if(pixels.begin(),pixels.end(),[&](int index){return !mask[index];}),pixels.end());
+            }
+        }
+    }
+    if(changed || pixels.size()<16) throw std::runtime_error("Ribbon centerline could not be resolved");
+    std::vector<int> node(mask.size(),-1);
+    for(size_t i=0;i<pixels.size();++i) node[pixels[i]]=static_cast<int>(i);
+    struct Walk { int farthest=-1; size_t reached=0; std::vector<int> parent; std::vector<double> distances; };
+    auto walk=[&](const std::vector<int>& starts) {
+        Walk result; result.farthest=starts.front(); result.parent.assign(pixels.size(),-1);
+        auto& distances=result.distances; distances.assign(pixels.size(),std::numeric_limits<double>::infinity());
+        using Entry=std::pair<double,int>;
+        std::priority_queue<Entry,std::vector<Entry>,std::greater<Entry>> queue;
+        for(int start:starts) { distances[start]=0; queue.emplace(0,start); }
+        while(!queue.empty()) {
+            const auto [distance,current]=queue.top(); queue.pop();
+            if(distance>distances[current]) continue;
+            ++result.reached;
+            if(distance>distances[result.farthest]) result.farthest=current;
+            for(int k=0;k<8;++k) {
+                const int next=node[pixels[current]+neighbors[k]];
+                if(next<0) continue;
+                const double candidate=distance+(k%2?std::numbers::sqrt2:1.);
+                if(candidate<distances[next]) { distances[next]=candidate; result.parent[next]=current; queue.emplace(candidate,next); }
+            }
+        }
+        return result;
+    };
+    const auto first=walk({0});
+    if(first.reached!=pixels.size()) throw std::runtime_error("Ribbon contains disconnected centerlines");
+    const auto diameter=walk({first.farthest});
+    std::vector<Point> path; std::vector<int> pathNodes;
+    for(int current=diameter.farthest;current>=0;current=diameter.parent[current]) {
+        const int index=pixels[current];
+        path.push_back({low.x+(index%width+.5-Margin)/scale,low.y+(index/width+.5-Margin)/scale});
+        pathNodes.push_back(current);
+    }
+    // A ribbon is essentially one path. Reject junctions/large loops rather than
+    // silently keeping only one lobe of a crossing or an unrelated piece.
+    const auto coverage=walk(pathNodes);
+    if(coverage.distances[coverage.farthest]>averageWidth*scale*2) throw std::runtime_error("Ribbon centerline has ambiguous branches");
+    // Simplify raster stair steps before measuring length; otherwise diagonal
+    // sections would artificially inflate the lap distance.
+    std::vector<unsigned char> keep(path.size()); keep.front()=keep.back()=1;
+    std::vector<std::pair<size_t,size_t>> work{{0,path.size()-1}};
+    const double tolerance=1.1/scale;
+    while(!work.empty()) {
+        const auto [from,to]=work.back(); work.pop_back();
+        const Point a=path[from],delta=path[to]-a; const double length2=Dot(delta,delta);
+        double maximum=tolerance*tolerance; size_t best=from;
+        for(size_t i=from+1;i<to;++i) {
+            const double t=length2>0?std::clamp(Dot(path[i]-a,delta)/length2,0.,1.):0;
+            const Point difference=path[i]-(a+delta*t); const double error=Dot(difference,difference);
+            if(error>maximum) { maximum=error; best=i; }
+        }
+        if(best!=from) { keep[best]=1; work.emplace_back(from,best); work.emplace_back(best,to); }
+    }
+    std::vector<Point> simplified;
+    for(size_t i=0;i<path.size();++i) if(keep[i]) simplified.push_back(path[i]);
+    const auto distance=Distances(simplified); const double length=distance.back();
+    const Point gap=simplified.front()-simplified.back(); const double gapLength=Length(gap);
+    const double window=std::min(length*.03,std::max(averageWidth*2,12/scale));
+    const Point enter=simplified.back()-Sample(simplified,distance,length-window);
+    const Point leave=Sample(simplified,distance,window)-simplified.front();
+    if(gapLength<=0 || gapLength>length*.08 || gapLength>span*.2 || Dot(Unit(gap),Unit(enter))<.65 || Dot(Unit(gap),Unit(leave))<.65)
+        throw std::runtime_error("Ribbon ends do not form an unambiguous bridge gap");
+    simplified.push_back(simplified.front());
+    return simplified;
+}
 struct Axis { Point center, axis; double major=0, minor=0; };
 Axis Principal(const Path& path) {
     const auto d=Distances(path.points); if(d.back()<=0) return {};
@@ -152,14 +279,16 @@ Result Prepare(std::string active,std::string finish,std::string pit) {
         auto& g=result.geometry; g.active=Parse(std::move(active)); g.finish=Parse(std::move(finish));
         if(!SameViewport(g.active,g.finish)) throw std::runtime_error("SVG layer viewports do not match");
         if(!pit.empty()) { try { g.pit=Parse(std::move(pit)); if(!SameViewport(g.active,g.pit)) g.pit={}; } catch(const std::exception&) { g.pit={}; } }
-        struct Ring { const Path* path; double length; };
+        struct Ring { const Path* path; double length; bool filled; };
         std::vector<Ring> rings;
         for(const auto& shape:g.active.shapes) for(const auto& path:shape.paths)
-            if(path.closed && path.points.size()>=4) { const auto d=Distances(path.points); if(d.back()>0) rings.push_back({&path,d.back()}); }
+            if(path.closed && path.points.size()>=4) { const auto d=Distances(path.points); if(d.back()>0) rings.push_back({&path,d.back(),shape.filled}); }
         std::sort(rings.begin(),rings.end(),[](const Ring& a,const Ring& b){return a.length>b.length;});
         if(rings.empty()) throw std::runtime_error("Active SVG has no closed circuit");
         if(rings.size()>2 && rings[2].length>rings[0].length*.2) throw std::runtime_error("Active SVG has multiple ambiguous circuits");
-        const auto& boundary=rings[0].path->points; const auto d=Distances(boundary);
+        const bool ribbon=rings.size()==1 && rings[0].filled;
+        const auto ribbonPath=ribbon?RibbonRoute(*rings[0].path):std::vector<Point>{};
+        const auto& boundary=ribbon?ribbonPath:rings[0].path->points; const auto d=Distances(boundary);
         const bool pair=rings.size()>=2 && rings[1].length/rings[0].length>.75 && Inside(boundary,rings[1].path->points.front());
         g.low={1e20,1e20}; g.high={-1e20,-1e20};
         for(int i=0;i<RouteSamples;++i) {
@@ -167,7 +296,7 @@ Result Prepare(std::string active,std::string finish,std::string pit) {
             if(pair) { double gap=0; const Point inner=Nearest(rings[1].path->points,p,&gap); if(gap>d.back()*.03) throw std::runtime_error("Circuit boundaries cannot be paired reliably"); p=(p+inner)*.5; }
             g.route.push_back(p);
         }
-        g.route.push_back(g.route.front()); g.distances=Distances(g.route); g.length=g.distances.back(); g.centered=pair;
+        g.route.push_back(g.route.front()); g.distances=Distances(g.route); g.length=g.distances.back(); g.centered=pair || ribbon; g.bridged=ribbon;
         for(const auto& shape:g.active.shapes) for(const auto& path:shape.paths) for(Point p:path.points) {
             g.low.x=std::min(g.low.x,p.x); g.low.y=std::min(g.low.y,p.y); g.high.x=std::max(g.high.x,p.x); g.high.y=std::max(g.high.y,p.y);
         }

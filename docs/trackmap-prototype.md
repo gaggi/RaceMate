@@ -19,6 +19,7 @@ Für Rückmeldungen helfen TrackID/Layout und konkrete Stellen: zum Beispiel „
 - Einmalige SVG-Aufbereitung auf einem Worker. Fahrbahnflächen werden als solche gezeichnet. Für Positionen wird aus den Randlinien ein Verlauf mit vorberechneter Länge erzeugt.
 - Die statische Karte und die geglätteten Fahrzeugsymbole werden als Bitmaps wiederverwendet. Die laufenden Updates ändern Positionen und Beschriftungen.
 - Startpunkt aus der Start/Ziel-Markierung und Richtung aus dem Richtungspfeil derselben Datei. Keine streckenspezifischen Richtungslisten oder Korrekturen.
+- Brücken mit einer gezeichneten Unterbrechung, etwa in Suzuka: Bei einer einzelnen geschlossenen Fahrbahnfläche wird einmalig die Mittellinie bestimmt. Eine kleine Lücke mit zusammenpassenden Endrichtungen wird nur für die Positionsberechnung geschlossen. Das SVG bleibt unverändert; Fahrzeuge laufen über die Unterführung weiter, statt an der Straßenkante zurückzufahren.
 - `CarIdxLapDistPct` wird entlang dieses Verlaufs abgebildet. Ungültige Positionen, Zuschauer und Pace Car werden ausgeblendet. Der weiße Ring folgt beim Zuschauen dem beobachteten Fahrzeug.
 - Unbekannte oder nicht eindeutig aufbereitbare Layouts zeigen einen Hinweis. Es gibt kein Selbstlernen und keinen Ersatz durch eine andere Karte.
 
@@ -30,6 +31,6 @@ Fahrzeuge in der Box werden hohl an ihrer Rundenposition auf der Hauptstrecke da
 
 ## Technische Prüfung
 
-`RaceMateTrackMapTests` prüft Layout-Identität, SVG-Kurven und Transformationen, Start/Ziel, beide Richtungen, Rundenumbruch sowie fehlende, übergroße und unpassende Dateien. Mit `--assets <Ordner>` lassen sich lokal vorhandene `active.svg`, `start-finish.svg` und optional `pitroad.svg` aufbereiten. Der Diagnosemodus prüft außerdem Filter, Einstellungsspeicherung, Bitmap-Wiederverwendung und das Leeren der alten Karte bei unbekanntem Layout. Echte SVG-Dateien für diese Sichtprüfung liegen ausschließlich im ignorierten Build-/Cache-Verzeichnis.
+`RaceMateTrackMapTests` prüft Layout-Identität, SVG-Kurven und Transformationen, Start/Ziel, beide Richtungen, Rundenumbruch sowie fehlende, übergroße und unpassende Dateien. Eine eigene Achterstrecke prüft die Brückenlücke, beide Kreuzungsdurchfahrten, die Rundenlänge und das Ausbleiben einer Umkehr. Mit `--assets <Ordner>` lassen sich lokal vorhandene `active.svg`, `start-finish.svg` und optional `pitroad.svg` aufbereiten. Der Diagnosemodus prüft außerdem Filter, Einstellungsspeicherung, Bitmap-Wiederverwendung und das Leeren der alten Karte bei unbekanntem Layout. Echte SVG-Dateien für diese Sichtprüfung liegen ausschließlich im ignorierten Build-/Cache-Verzeichnis.
 
 Den Quellenindex aktualisiert `tools/UpdateTrackMapIndex.ps1`; alternativ kann eine lokale Metadatendatei mit `-MetadataPath` übergeben werden. Die App selbst lädt weder den Index aus dem Drittanbieter-Repository noch benötigt sie einen iRacing-Login.

@@ -109,6 +109,8 @@ Start/finish and driving direction are extracted from the SVG. Car lap percentag
 
 Switch **Background and frame** off for just the map and car markers on a transparent background; captions, border and header/footer are hidden while their settings are kept. **Pit lane** and **Start/finish marking** independently switch those SVG layers without changing position mapping. **Cars in the pits** remains a separate marker filter. All three new switches default to on, preserving existing layouts.
 
+For bridge layouts such as Suzuka, a single filled road outline is converted to a centerline during preparation. Small, directionally consistent SVG gaps are bridged only in the position path; the drawing retains the bridge gap. Cars traverse both branches of the crossing rather than following the road outline back the way they came. Ambiguous branches or incompatible open ends are rejected.
+
 See [the prototype test guide](docs/trackmap-prototype.md) and [third-party notices](docs/third-party.md).
 
 ## Race Control

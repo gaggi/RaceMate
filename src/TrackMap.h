@@ -15,7 +15,7 @@ struct Geometry {
     Point low, high;
     double length=0, start=0;
     int direction=0;
-    bool centered=false;
+    bool centered=false, bridged=false;
     Point At(double fraction, int directionOverride=0, double offset=0) const;
 };
 struct Result {

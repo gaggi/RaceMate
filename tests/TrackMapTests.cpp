@@ -6,6 +6,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <chrono>
+#include <numbers>
+#include <sstream>
 
 using namespace rm::trackmap;
 namespace {
@@ -17,7 +19,47 @@ std::string Svg(std::string content,const std::string& transform={}) {
 const std::string Band="<path fill-rule=\"evenodd\" d=\"M10 10H210V110H10Z M20 20V100H200V20Z\"/>";
 const std::string Stripe="<rect x=\"98\" y=\"2\" width=\"4\" height=\"26\"/>";
 const std::string Arrow="<path d=\"M80 45H110V35L135 50L110 65V55H80Z\"/>";
+std::string BridgeRibbon() {
+    // An original figure-eight ribbon with a gap around one of its two
+    // traversals of the crossing. One polygon, two end caps, no inner ring.
+    constexpr int N=512; constexpr double Gap=.09, HalfWidth=3;
+    std::vector<Point> left,right;
+    for(int i=0;i<=N;++i) {
+        const double t=Gap+(2*std::numbers::pi-2*Gap)*i/N;
+        const Point p{110+90*std::sin(t),80+55*std::sin(2*t)};
+        const Point tangent{90*std::cos(t),110*std::cos(2*t)}; const double length=std::hypot(tangent.x,tangent.y);
+        const Point normal{-tangent.y/length*HalfWidth,tangent.x/length*HalfWidth};
+        left.push_back({p.x+normal.x,p.y+normal.y}); right.push_back({p.x-normal.x,p.y-normal.y});
+    }
+    std::ostringstream svg; svg<<"<path d=\"";
+    for(size_t i=0;i<left.size();++i) svg<<(i?"L":"M")<<left[i].x<<","<<left[i].y;
+    for(auto it=right.rbegin();it!=right.rend();++it) svg<<"L"<<it->x<<","<<it->y;
+    svg<<"Z\"/>"; return svg.str();
+}
+void BridgeTests() {
+    const auto active=Svg(BridgeRibbon());
+    const auto finish=Svg("<line x1=\"190\" y1=\"80\" x2=\"210\" y2=\"80\" stroke=\"red\"/><g transform=\"translate(175 180) rotate(-90)\">"+Arrow+"</g>");
+    const auto map=Prepare(active,finish);
+    if(!map) throw std::runtime_error("bridge ribbon: "+map.error);
+    const auto& g=map.geometry;
+    Require(g.centered && g.bridged && g.direction!=0,"bridge ribbon has a centerline rather than a perimeter lap");
+    double expected=0; Point previous{110,80};
+    for(int i=1;i<=4096;++i) { const double t=2*std::numbers::pi*i/4096; const Point p{110+90*std::sin(t),80+55*std::sin(2*t)}; expected+=std::hypot(p.x-previous.x,p.y-previous.y); previous=p; }
+    Require(std::abs(g.length/expected-1)<.025,"one lap uses the ribbon centerline length, not both road edges");
+    Require(std::hypot(g.At(0).x-200,g.At(0).y-80)<2,"start/finish remains aligned on the recovered ribbon");
+    Require(g.At(.5).x<24,"half a lap reaches the opposite lobe instead of returning along the same road edge");
+    Require(std::hypot(g.At(.25).x-110,g.At(.25).y-80)<3 && std::hypot(g.At(.75).x-110,g.At(.75).y-80)<3,"both crossing traversals are present in one lap");
+    Require(g.At(.26).x<g.At(.24).x && g.At(.76).x>g.At(.74).x,"crossing traversals follow their respective branches without turning back");
+    Require(std::hypot(g.At(.749).x-g.At(.751).x,g.At(.749).y-g.At(.751).y)<g.length*.003,"car motion stays continuous across the visual bridge gap");
+    Require(map.geometry.active.shapes.size()==1 && map.geometry.active.shapes[0].paths.size()==1,"original gapped SVG remains unchanged for drawing");
+    const auto rotated=Prepare(Svg(BridgeRibbon(),"translate(230 0) rotate(90)"),Svg("<line x1=\"190\" y1=\"80\" x2=\"210\" y2=\"80\" stroke=\"red\"/><g transform=\"translate(175 180) rotate(-90)\">"+Arrow+"</g>","translate(230 0) rotate(90)"));
+    Require(rotated && rotated.geometry.bridged && std::abs(rotated.geometry.length/g.length-1)<.01,"bridge recovery is independent of SVG orientation");
+    const auto openFinish=Svg("<line x1=\"100\" y1=\"35\" x2=\"100\" y2=\"55\" stroke=\"red\"/>"+Arrow);
+    Require(!Prepare(Svg("<rect x=\"20\" y=\"40\" width=\"180\" height=\"6\"/>"),openFinish),"ordinary open straight ribbon is not joined into an invented circuit");
+    Require(!Prepare(Svg("<path d=\"M20 77H107V20H113V77H200V83H20Z\"/>"),Svg("<line x1=\"100\" y1=\"70\" x2=\"100\" y2=\"90\" stroke=\"red\"/>"+Arrow)),"ambiguous junction cannot silently lose a branch");
+}
 void UnitTests() {
+    BridgeTests();
     const auto session=rm::ParseSession("WeekendInfo:\n TrackID: 353\n TrackName: limerock 2019 gp\n TrackConfigName: Grand Prix\n",0);
     Require(session.trackId==353 && session.trackName=="limerock 2019 gp" && session.trackConfig=="Grand Prix","layout identity parsed from WeekendInfo");
     Require(FindSource(353,session.trackName) && FindSource(166,"okayama full") && FindSource(167,"okayama short"),"known exact layout sources");
@@ -68,7 +110,7 @@ int AssetCheck(const std::filesystem::path& directory) {
     const auto result=Prepare(Read(directory/L"active.svg"),Read(directory/L"start-finish.svg"),Read(directory/L"pitroad.svg"));
     if(!result) throw std::runtime_error(result.error);
     const auto& g=result.geometry;
-    std::cout<<"centered="<<g.centered<<" direction="<<g.direction<<" length="<<g.length<<" start="<<g.start/g.length<<"\n";
+    std::cout<<"centered="<<g.centered<<" bridged="<<g.bridged<<" direction="<<g.direction<<" length="<<g.length<<" start="<<g.start/g.length<<"\n";
     for(double pct:{0.,.01,.1,.25,.5,.75,.99}) { const auto p=g.At(pct); std::cout<<pct<<": "<<p.x<<", "<<p.y<<"\n"; }
     Require(g.direction!=0,"official start/finish arrow resolves direction");
     return 0;

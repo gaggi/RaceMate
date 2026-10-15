@@ -57,15 +57,16 @@ int RunDiagnostics() {
     {
         auto& o=First(TrackMapKind); const auto settings=o.map; const auto savedSession=app.session; const auto savedFrame=app.frame;
         bool mapOk=true, exercised=false;
-        for(int id:{353,166}) {
+        for(int id:{353,166,168}) {
             const auto cache=TrackMapCache(); std::error_code error;
             if(!std::filesystem::exists(cache/std::to_wstring(id)/L"source.txt",error)) continue;
             exercised=true;
             const std::atomic_bool cancelled=false; auto loaded=trackmap::Load(*trackmap::FindSource(id),cache,cancelled);
             mapOk=loaded.fromCache && loaded.map && loaded.map.geometry.direction!=0 && mapOk;
             if(!loaded.map) continue;
-            app.preview=false; app.session.trackId=id; app.session.trackName=id==353?"limerock 2019 gp":"okayama full";
-            app.session.track=id==353?"Lime Rock Park":"Okayama International Circuit"; app.session.trackConfig=id==353?"Grand Prix":"Full Course";
+            app.preview=false; app.session.trackId=id; app.session.trackName=id==353?"limerock 2019 gp":(id==168?"suzuka grandprix":"okayama full");
+            app.session.track=id==353?"Lime Rock Park":(id==168?"Suzuka International Racing Course":"Okayama International Circuit"); app.session.trackConfig=id==166?"Full Course":"Grand Prix";
+            if(id==168) mapOk=loaded.map.geometry.bridged && loaded.map.geometry.length>4500 && loaded.map.geometry.length<5000 && mapOk;
             for(const auto& d:app.session.drivers) app.frame.cars[d.index].pct=std::fmod(d.index*.091+.05,1.);
             trackMap.task.Cancel(); trackMap.identity=std::to_string(id)+":"+trackmap::NormalizeName(app.session.trackName); trackMap.id=id;
             trackMap.geometry=std::move(loaded.map.geometry); trackMap.ready=trackMap.cached=true; ++trackMap.revision;
