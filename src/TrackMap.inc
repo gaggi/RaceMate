@@ -208,9 +208,23 @@ void PaintMap(Overlay& o,const DrawCommand& c,HRGN dirty) {
 // Premultiplied source over the buffer pixels: a few hundred pixels per car instead of an AlphaBlend call each.
 void Blend(Overlay& o,const RECT& r,const std::uint32_t* source,int width,int height) {
     const int left=r.left,top=r.top;
+    const int first=std::max(0,-left),last=std::min(width,o.width-left);
+    const __m128i zero=_mm_setzero_si128(),opaque=_mm_set1_epi32(255),full=_mm_set1_epi16(255),half=_mm_set1_epi16(128);
+    // Each 16-bit channel times the pixel's 255 - alpha, divided by 255 the same way as below.
+    auto scale=[&](__m128i channels,__m128i alpha){ __m128i v=_mm_add_epi16(_mm_mullo_epi16(channels,_mm_sub_epi16(full,alpha)),half); return _mm_srli_epi16(_mm_add_epi16(v,_mm_srli_epi16(v,8)),8); };
     for(int y=std::max(0,-top);y<height && top+y<o.height;++y) {
         const std::uint32_t* from=source+y*width; std::uint32_t* to=o.pixels+(top+y)*o.width+left;
-        for(int x=std::max(0,-left);x<width && left+x<o.width;++x) {
+        int x=first;
+        // Four pixels at a time (SSE2, on every x64 processor): the same results as one at a time.
+        for(;x+4<=last;x+=4) {
+            const __m128i s=_mm_loadu_si128(reinterpret_cast<const __m128i*>(from+x)),alpha=_mm_srli_epi32(s,24);
+            if(_mm_movemask_epi8(_mm_cmpeq_epi32(alpha,zero))==0xFFFF) continue;
+            if(_mm_movemask_epi8(_mm_cmpeq_epi32(alpha,opaque))==0xFFFF) { _mm_storeu_si128(reinterpret_cast<__m128i*>(to+x),s); continue; }
+            const __m128i d=_mm_loadu_si128(reinterpret_cast<const __m128i*>(to+x)),pair=_mm_or_si128(alpha,_mm_slli_epi32(alpha,16));
+            const __m128i low=scale(_mm_unpacklo_epi8(d,zero),_mm_unpacklo_epi32(pair,pair)),high=scale(_mm_unpackhi_epi8(d,zero),_mm_unpackhi_epi32(pair,pair));
+            _mm_storeu_si128(reinterpret_cast<__m128i*>(to+x),_mm_add_epi8(s,_mm_packus_epi16(low,high)));
+        }
+        for(;x<last;++x) {
             const std::uint32_t s=from[x],alpha=s>>24;
             if(!alpha) continue;
             if(alpha==255) { to[x]=s; continue; }
@@ -230,7 +244,17 @@ void PutMapBitmap(Overlay& o,const RECT& r,HBITMAP bitmap,const std::uint32_t* p
     AlphaBlend(o.dc,r.left,r.top,width,height,source,0,0,width,height,{AC_SRC_OVER,0,255,AC_SRC_ALPHA});
     SelectObject(source,old); DeleteDC(source);
 }
-// A car number or PIT in the overlay's font, centred in its marker; drawn once, then blended.
+// A car number or PIT in the overlay's font, centred in its box.
+void DrawMapText(Gdiplus::Graphics& graphics,const Overlay& o,const DrawCommand& c,int width,int height) {
+    graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
+    Gdiplus::Font font(o.dc,o.fonts[c.font]);
+    // Typographic: no padding around the text, so three digits fit where two did.
+    Gdiplus::StringFormat format(Gdiplus::StringFormat::GenericTypographic()); format.SetAlignment(Gdiplus::StringAlignmentCenter); format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+    format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap|Gdiplus::StringFormatFlagsNoClip);
+    Gdiplus::SolidBrush brush(Gdiplus::Color(255,GetRValue(c.color),GetGValue(c.color),GetBValue(c.color)));
+    graphics.DrawString(c.text.c_str(),static_cast<int>(c.text.size()),&font,Gdiplus::RectF(0,0,static_cast<float>(width),static_cast<float>(height)),&format,&brush);
+}
+// Text without a marker under it, such as PIT; drawn once, then blended.
 void PaintMapLabel(Overlay& o,const DrawCommand& c) {
     const int width=c.r.right-c.r.left,height=c.r.bottom-c.r.top;
     if(width<=0 || height<=0) return;
@@ -243,13 +267,7 @@ void PaintMapLabel(Overlay& o,const DrawCommand& c) {
         {
             Gdiplus::Bitmap target(width,height,width*4,PixelFormat32bppPARGB,static_cast<BYTE*>(bits));
             Gdiplus::Graphics graphics(&target); graphics.Clear(Gdiplus::Color(0,0,0,0));
-            graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
-            Gdiplus::Font font(o.dc,o.fonts[c.font]);
-            // Typographic: no padding around the text, so three digits fit where two did.
-            Gdiplus::StringFormat format(Gdiplus::StringFormat::GenericTypographic()); format.SetAlignment(Gdiplus::StringAlignmentCenter); format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
-            format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap|Gdiplus::StringFormatFlagsNoClip);
-            Gdiplus::SolidBrush brush(Gdiplus::Color(255,GetRValue(c.color),GetGValue(c.color),GetBValue(c.color)));
-            graphics.DrawString(c.text.c_str(),static_cast<int>(c.text.size()),&font,Gdiplus::RectF(0,0,static_cast<float>(width),static_cast<float>(height)),&format,&brush);
+            DrawMapText(graphics,o,c,width,height);
         }
         GdiFlush();
         // Numbers are few; a new size or colour set starts over.
@@ -259,10 +277,13 @@ void PaintMapLabel(Overlay& o,const DrawCommand& c) {
     }
     PutMapBitmap(o,c.r,text->bitmap,text->bits,width,height);
 }
-void PaintMapCar(Overlay& o,const DrawCommand& c) {
+// A marker, and the number on it when given: drawn together once, then blended as one.
+void PaintMapCar(Overlay& o,const DrawCommand& c,const DrawCommand* label) {
     const int width=c.r.right-c.r.left,height=c.r.bottom-c.r.top,stroke=std::max(1,static_cast<int>(c.shape[0]));
     const bool hollow=c.shape[1]!=0; HBITMAP bitmap=nullptr; const std::uint32_t* pixels=nullptr;
-    for(const auto& marker:o.mapMarkers) if(marker.width==width && marker.height==height && marker.stroke==stroke && marker.color==c.color && marker.hollow==hollow) { bitmap=marker.bitmap; pixels=marker.bits; break; }
+    const COLORREF textColor=label?label->color:0;
+    for(auto& marker:o.mapMarkers) if(marker.width==width && marker.height==height && marker.stroke==stroke && marker.color==c.color && marker.hollow==hollow
+        && marker.textColor==textColor && (label?marker.text==label->text:marker.text.empty())) { bitmap=marker.bitmap; pixels=marker.bits; marker.used=o.mapPass; break; }
     if(!bitmap) {
         // Draw each antialiased symbol once into premultiplied pixels. GDI+ / GDI
         // transitions for every moving car are much more expensive than AlphaBlend.
@@ -278,12 +299,16 @@ void PaintMapCar(Overlay& o,const DrawCommand& c) {
             graphics.FillEllipse(&brush,s,s,w-2*s,h-2*s);
             Gdiplus::Pen pen(hollow?ink:Gdiplus::Color(255,18,22,28),s);
             graphics.DrawEllipse(&pen,s/2,s/2,w-s,h-s);
+            if(label) DrawMapText(graphics,o,*label,width,height);
         }
-        // Even the most unusual multiclass session is bounded by MaxCars colors;
-        // scale/DPI changes clear the entire cache in Overlay::Free().
-        if(o.mapMarkers.size()>=MaxCars*4+4) { for(const auto& marker:o.mapMarkers) DeleteObject(marker.bitmap); o.mapMarkers.clear(); }
+        // With numbers each car has its own; positions change hands, so the cache keeps what the last pass drew
+        // and lets the rest go. Scale/DPI changes clear the entire cache in Overlay::Free().
+        if(o.mapMarkers.size()>=MaxCars*4+4) {
+            std::erase_if(o.mapMarkers,[&](const Overlay::MapMarker& marker){ const bool old=marker.used+1<o.mapPass; if(old) DeleteObject(marker.bitmap); return old; });
+            if(o.mapMarkers.size()>=MaxCars*4+4) { for(const auto& marker:o.mapMarkers) DeleteObject(marker.bitmap); o.mapMarkers.clear(); }
+        }
         GdiFlush(); pixels=static_cast<const std::uint32_t*>(bits);
-        o.mapMarkers.push_back({width,height,stroke,c.color,hollow,bitmap,pixels});
+        o.mapMarkers.push_back({width,height,stroke,c.color,hollow,label?label->text:std::wstring(),textColor,bitmap,pixels,o.mapPass});
     }
     PutMapBitmap(o,c.r,bitmap,pixels,width,height);
 }

@@ -24,6 +24,7 @@
 #include <fstream>
 #include <list>
 #include <map>
+#include <emmintrin.h>
 #ifdef RACEMATE_DIAGNOSTICS
 #include <fstream>
 #include <psapi.h>
@@ -211,9 +212,10 @@ struct Overlay {
     struct Logo { int index, size; HBITMAP bitmap; };
     std::vector<Logo> logos; // Car brand logos at this overlay's size, premultiplied for AlphaBlend.
     HBITMAP mapBitmap=nullptr; int mapWidth=0,mapHeight=0,mapStyle=-1; unsigned mapRevision=~0u;
-    struct MapMarker { int width,height,stroke; COLORREF color; bool hollow; HBITMAP bitmap; const std::uint32_t* bits; };
-    std::vector<MapMarker> mapMarkers;
-    // Car numbers, drawn once like the markers. Both are blended in software.
+    // A marker with the number on it, if any: one blend per car. used: the last pass that drew it.
+    struct MapMarker { int width,height,stroke; COLORREF color; bool hollow; std::wstring text; COLORREF textColor; HBITMAP bitmap; const std::uint32_t* bits; unsigned used; };
+    std::vector<MapMarker> mapMarkers; unsigned mapPass=0;
+    // Other text on the map, such as PIT, drawn once like the markers. Both are blended in software.
     struct MapText { std::wstring text; COLORREF color; int width,height; HBITMAP bitmap; const std::uint32_t* bits; };
     std::vector<MapText> mapTexts;
     // The track map's buffer and static map are DIBs: when a pass repaints the whole map, map, cars and numbers
@@ -1571,16 +1573,24 @@ HBITMAP LogoBitmap(Overlay& o,int index,int size,COLORREF tint) {
 }
 void PaintScene(Overlay& o,HRGN dirty) {
     HDC dc=o.dc;
-    SelectClipRgn(dc,dirty); o.direct=false;
-    int font=-1;
+    SelectClipRgn(dc,dirty); o.direct=false; ++o.mapPass;
+    int font=-1; bool numbered=false;
     for(const auto& c:o.scene) {
         if(dirty && !RectInRegion(dirty,&c.r)) continue;
         switch(c.type) {
         case DrawCommand::Fill:
             if(o.pixels && (c.color==TrackMapTransparentKey || c.color==TrackMapMoveKey)) {
                 // Premultiplied: nothing, or the panel colour at a quarter so the map can be grabbed.
+                // Where the map's own pixels follow in this full pass, they replace it: the fill skips them.
                 GdiFlush(); const std::uint32_t value=c.color==TrackMapMoveKey?0x40030405u:0;
-                for(LONG y=std::max(0L,c.r.top);y<std::min(static_cast<LONG>(o.height),c.r.bottom);++y) std::fill(o.pixels+y*o.width+std::max(0L,c.r.left),o.pixels+y*o.width+std::min(static_cast<LONG>(o.width),c.r.right),value);
+                RECT skip{};
+                if(!dirty && o.mapBitmap) for(const auto& m:o.scene) if(m.type==DrawCommand::Map && m.r.right-m.r.left==o.mapWidth && m.r.bottom-m.r.top==o.mapHeight) skip=m.r;
+                const LONG left=std::max(0L,c.r.left),right=std::min(static_cast<LONG>(o.width),c.r.right);
+                for(LONG y=std::max(0L,c.r.top);y<std::min(static_cast<LONG>(o.height),c.r.bottom);++y) {
+                    std::uint32_t* row=o.pixels+y*o.width;
+                    if(y<skip.top || y>=skip.bottom) { std::fill(row+left,row+right,value); continue; }
+                    std::fill(row+left,row+std::clamp(skip.left,left,right),value); std::fill(row+std::clamp(skip.right,left,right),row+right,value);
+                }
                 break;
             }
             SetDCBrushColor(dc,c.color); FillRect(dc,&c.r,static_cast<HBRUSH>(GetStockObject(DC_BRUSH))); break;
@@ -1591,8 +1601,13 @@ void PaintScene(Overlay& o,HRGN dirty) {
         }
         case DrawCommand::WindRing: DrawWind(dc,c); break;
         case DrawCommand::Map: PaintMap(o,c,dirty); break;
-        case DrawCommand::MapCar: PaintMapCar(o,c); break;
-        case DrawCommand::MapLabel: PaintMapLabel(o,c); break;
+        case DrawCommand::MapCar: {
+            // The number that follows on the same spot goes into the marker's bitmap.
+            const DrawCommand* next=&c+1<o.scene.data()+o.scene.size()?&c+1:nullptr;
+            numbered=next && next->type==DrawCommand::MapLabel && EqualRect(&next->r,&c.r);
+            PaintMapCar(o,c,numbered?next:nullptr); break;
+        }
+        case DrawCommand::MapLabel: if(numbered) numbered=false; else PaintMapLabel(o,c); break;
         case DrawCommand::Ring: {
             // An antialiased ring around a letter centered on its ink: cap height and glyph box, not the text cell.
             const float stroke=c.shape[0], w=static_cast<float>(c.r.right-c.r.left), h=static_cast<float>(c.r.bottom-c.r.top);
@@ -1704,7 +1719,7 @@ void RefreshOverlay(Overlay& o) {
     const int dpi=GetDpiForWindow(o.window);
     // The buffer comes first: building the scene measures text with its fonts.
     const bool resized=EnsureBuffer(o,client.right,client.bottom,dpi);
-    BuildScene(o,client.right,client.bottom,dpi,app.sceneBuffer);
+    { ProfileScope p(true,[&]{ return ProfileName(o,"  scene"); }); BuildScene(o,client.right,client.bottom,dpi,app.sceneBuffer); }
     const bool full=resized || app.sceneBuffer.size()!=o.scene.size() || o.layeredAlpha;
     HRGN dirty=nullptr;
     if(!full) {
@@ -1728,7 +1743,7 @@ void RefreshOverlay(Overlay& o) {
         }
     }
     std::swap(o.scene,app.sceneBuffer);
-    PaintScene(o,dirty);
+    { ProfileScope p(true,[&]{ return ProfileName(o,"  drawing"); }); PaintScene(o,dirty); }
     if(o.layeredAlpha) { PresentLayered(o); if(dirty) DeleteObject(dirty); return; }
     if(dirty) { InvalidateRgn(o.window,dirty,FALSE); DeleteObject(dirty); }
     else InvalidateRect(o.window,nullptr,FALSE);

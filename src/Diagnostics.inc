@@ -1395,6 +1395,18 @@ int RunTickBenchmark() {
     for(int t=100;t<100+iterations;++t) step(t);
     GetThreadTimes(GetCurrentThread(),&created,&exited,&kernelAfter,&userAfter);
     report<<"Track map without background: "<<(ticks(kernelBefore,kernelAfter)+ticks(userBefore,userAfter))/1000/seconds<<" ms CPU per second, its update "<<static_cast<double>(refreshTicks[TrackMapKind])*1e6/frequency.QuadPart/iterations<<" us per refresh, presentation included"<<std::endl;
+    {
+        // The same at 140 %, a common size on a 4K screen: the update with its scene and drawing apart.
+        auto& m=First(TrackMapKind); m.place.scale=140; Fit(m); UpdateOverlays(); for(auto& o:app.overlays) o.due=0;
+        for(int t=0;t<100;++t) step(t);
+        profiler.on=true; profiler.entries.clear();
+        for(int t=100;t<100+iterations;++t) step(t);
+        profiler.on=false;
+        auto perCall=[&](const char* part){ const auto& e=profiler.At(ProfileName(m,part)); return e.calls?e.ticks*1e6/frequency.QuadPart/e.calls:0.; };
+        report<<"Track map without background at 140 % ("<<m.width<<"x"<<m.height<<"): update "<<perCall("update (scene, changes, drawing, present)")<<" us per refresh: scene "<<perCall("  scene")
+            <<" us, drawing "<<perCall("  drawing")<<" us, present "<<perCall("present (UpdateLayeredWindow)")<<" us"<<std::endl;
+        m.place.scale=100; Fit(m);
+    }
     First(TrackMapKind).map.background=true; Fit(First(TrackMapKind));
     // The same with the track map switched off, as it ships: nothing of it may remain.
     First(TrackMapKind).place.enabled=false; UpdateOverlays(); for(auto& o:app.overlays) o.due=0;
