@@ -776,6 +776,13 @@ void UpdatePitStop() {
     if(app.refuel.Rate()>0 && std::abs(app.refuel.Rate()-t.rate)>.01 && !t.car.empty()) { t.rate=app.refuel.Rate(); WriteNumber(L"PitStop",L"FuelRate "+t.car,t.rate); }
 }
 double PitLaneSeconds() { return app.pitTimes.fixedLane>0?app.pitTimes.fixedLane:app.pitLane.Loss(); }
+// The measured or typed refuel rate; until then 3 l/s, half under the NEC rules, which fuel at 50 % of the usual rate.
+constexpr double AssumedRefuelRate=3;
+double RefuelRateLitres() {
+    if(app.pitTimes.rate>0) return app.pitTimes.rate;
+    std::string rules=app.session.ruleSet; for(char& c:rules) c=static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return rules.find("NEC")!=std::string::npos?AssumedRefuelRate/2:AssumedRefuelRate;
+}
 // The user's four-tire time, else iRacing's value for the class.
 double TireChangeSeconds() {
     if(app.pitTimes.tires>0) return app.pitTimes.tires;
@@ -789,10 +796,9 @@ const PitRejoin& PitExit() {
     if(app.session.type!="Race" || f.pit || View(f)!=ViewMode::InCar) return app.pitExit;
     const double lane=app.preview?22:PitLaneSeconds();
     if(lane<=0) return app.pitExit;
-    auto service=PlannedService(app.session,f); const auto& t=app.pitTimes; const double tires=TireChangeSeconds();
-    if(service.fuel>0 && t.rate<=0) { service.fuel=0; app.pitExitPartial=true; }
+    auto service=PlannedService(app.session,f); const double tires=TireChangeSeconds();
     if(service.tires>0 && tires<=0) { service.tires=0; app.pitExitPartial=true; }
-    const double stop=app.preview?20:std::max(0.0,ServiceTime(service,t.rate,tires,SimultaneousService(app.session)));
+    const double stop=app.preview?20:std::max(0.0,ServiceTime(service,RefuelRateLitres(),tires,SimultaneousService(app.session)));
     double pace=Plan().prediction.ownPace; if(!(pace>0)) pace=f.lastLap>0?f.lastLap:f.bestLap;
     app.pitExit=PredictRejoin(app.session,f,lane+stop,pace);
     return app.pitExit;

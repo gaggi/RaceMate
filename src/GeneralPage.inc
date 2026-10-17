@@ -56,7 +56,7 @@ private:
             const std::wstring rules=app.session.ruleSet.empty() || app.session.ruleSet=="None"?L"default rules":Wide(app.session.ruleSet)+L" rules";
             if(t.car.empty()) service.detail=L"Per car and rule set: four tires and the refuel rate. The server's rules decide whether tires follow the fuel.";
             else service.detail=L"Four tires "+(tires>0?Format(tires,1)+L" s"+(t.tires>0?L"":L" (iRacing's value for the class)"):std::wstring(L"not set"))
-                +L"  \u00B7  refuel "+(t.rate>0?Format(t.rate,2)+L" l/s":std::wstring(L"measured at your next stop"))
+                +L"  \u00B7  refuel "+Format(RefuelRateLitres(),2)+L" l/s"+(t.rate>0?L"":L" (assumed until measured at your stop)")
                 +L"  \u00B7  "+rules+(together?L": fuel and tires together":L": tires after fuel");
             service.iconButtons={expanded_==ServiceRow?CollapseGlyph:ExpandGlyph}; service.expandHeight=expanded_==ServiceRow?48:0;
             push(std::move(service),Key::PitService);
