@@ -161,7 +161,7 @@ int RunDiagnostics() {
         for(int layout:{CircleLayout,LineLayout}) {
             map.map.layout=layout; Fit(map); SettingChanged();
             const auto markers=std::count_if(map.scene.begin(),map.scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::MapCar; });
-            pitOk=OverlayWidth(map)==TrackMapWidthOf(map.map) && markers>=static_cast<long long>(app.session.drivers.size()) && std::any_of(map.scene.begin(),map.scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::Text && c.text==L"PIT"; }) && pitOk;
+            pitOk=OverlayWidth(map)==TrackMapWidthOf(map.map) && markers>=static_cast<long long>(app.session.drivers.size()) && std::any_of(map.scene.begin(),map.scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::MapLabel && c.text==L"PIT"; }) && pitOk;
             pitOk=Export(map.window,layout==CircleLayout?L"build\\qa\\trackmap-circle.bmp":L"build\\qa\\trackmap-line.bmp") && pitOk;
         }
         map.place=placement; map.map.layout=MapLayout; Fit(map); SettingChanged();
@@ -1299,6 +1299,7 @@ int RunTickBenchmark() {
     for(int& change:changes) change=0;
     PROCESS_MEMORY_COUNTERS memoryBefore{sizeof(memoryBefore)},memoryAfter{sizeof(memoryAfter)};
     GetProcessMemoryInfo(GetCurrentProcess(),&memoryBefore,sizeof(memoryBefore));
+    refreshTicks.fill(0);
     GetThreadTimes(GetCurrentThread(),&created,&exited,&kernelBefore,&userBefore); QueryPerformanceCounter(&start);
     for(int t=100;t<100+iterations;++t) step(t);
     QueryPerformanceCounter(&end); GetThreadTimes(GetCurrentThread(),&created,&exited,&kernelAfter,&userAfter);
@@ -1310,7 +1311,8 @@ int RunTickBenchmark() {
     report<<"Official track-map geometry and 60 car markers included: "<<mapPrepared<<"\n";
     report<<"60-car race, all overlays visible, "<<iterations<<" refreshes: "<<wall<<" us wall, "<<cpu<<" us CPU per refresh\n";
     report<<"  model "<<phases[0]*1e6/frequency.QuadPart/iterations<<" us, overlay update "<<phases[1]*1e6/frequency.QuadPart/iterations<<" us, paint "<<phases[2]*1e6/frequency.QuadPart/iterations<<" us\n";
-    for(const auto& o:app.overlays) report<<"  overlay "<<o.kind<<": "<<changes[o.kind]<<" repaints, "<<paints[o.kind]*1e6/frequency.QuadPart/iterations<<" us per refresh"<<std::endl;
+    // Update: scene, changed areas and drawing into the buffer. Screen: copying the buffer to the window.
+    for(const auto& o:app.overlays) report<<"  overlay "<<o.kind<<": "<<changes[o.kind]<<" repaints, update "<<static_cast<double>(refreshTicks[o.kind])*1e6/frequency.QuadPart/iterations<<" us, screen "<<paints[o.kind]*1e6/frequency.QuadPart/iterations<<" us per refresh"<<std::endl;
     // Page faults (almost all soft: memory already in RAM) and the working set it ran in.
     report<<"  page faults "<<static_cast<double>(memoryAfter.PageFaultCount-memoryBefore.PageFaultCount)/iterations<<" per refresh, working set "
         <<memoryAfter.WorkingSetSize/1024<<" KB, peak "<<memoryAfter.PeakWorkingSetSize/1024<<" KB"<<std::endl;
@@ -1324,5 +1326,12 @@ int RunTickBenchmark() {
     report<<"Default rates (";
     for(const auto& o:app.overlays) report<<(o.kind?", ":"")<<o.kind<<": "<<o.place.rate<<" Hz";
     report<<"), telemetry 10 Hz: "<<(ticks(kernelBefore,kernelAfter)+ticks(userBefore,userAfter))/1000/seconds<<" ms CPU per second"<<std::endl;
+    // The same with the track map switched off, as it ships: nothing of it may remain.
+    First(TrackMapKind).place.enabled=false; UpdateOverlays(); for(auto& o:app.overlays) o.due=0;
+    for(int t=0;t<100;++t) step(t);
+    GetThreadTimes(GetCurrentThread(),&created,&exited,&kernelBefore,&userBefore);
+    for(int t=100;t<100+iterations;++t) step(t);
+    GetThreadTimes(GetCurrentThread(),&created,&exited,&kernelAfter,&userAfter);
+    report<<"Track map off, other rates as above: "<<(ticks(kernelBefore,kernelAfter)+ticks(userBefore,userAfter))/1000/seconds<<" ms CPU per second, SVG task "<<(trackMap.task.Running()?"running":"idle")<<std::endl;
     return 0;
 }

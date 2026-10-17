@@ -140,7 +140,7 @@ const wchar_t* WetnessNames[]={L"—",L"Dry",L"Mostly Dry",L"Very Lightly Wet",L
 struct Placement { int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=true, growLeft=false, growUp=false, rounded=false; };
 enum FontId : unsigned char { Regular, Bold, Large, Small, Hero, SmallBold, FontCount };
 struct DrawCommand {
-    enum Type : unsigned char { Fill, Text, DottedLine, WindRing, Outline, RoundFill, Ring, Hatch, Sparkline, Logo, Map, MapCar };
+    enum Type : unsigned char { Fill, Text, DottedLine, WindRing, Outline, RoundFill, Ring, Hatch, Sparkline, Logo, Map, MapCar, MapLabel };
     Type type=Fill; FontId font=Regular; UINT align=DT_LEFT; RECT r{}; COLORREF color=0;
     std::array<float,5> shape{}; // Wind ring: center x/y, radius, scale, bearing (negative without direction). Outline: corner radius, line width (1 when 0), dashed when 1. RoundFill: corner radius. Ring: stroke width. Hatch: background color. Sparkline: stroke width; its text holds the points, 1 + 0..1000 from bottom to top. Logo: atlas cell.
     std::wstring text;
@@ -207,9 +207,12 @@ struct Overlay {
     HBITMAP mapBitmap=nullptr; int mapWidth=0,mapHeight=0,mapStyle=-1; unsigned mapRevision=~0u;
     struct MapMarker { int width,height,stroke; COLORREF color; bool hollow; HBITMAP bitmap; const std::uint32_t* bits; };
     std::vector<MapMarker> mapMarkers;
-    // The map area plus a margin, where car markers are blended in software before one copy back.
-    HDC canvasDc=nullptr; HBITMAP canvas=nullptr; HGDIOBJ canvasOriginal=nullptr; std::uint32_t* canvasBits=nullptr;
-    RECT canvasRect{}; bool canvasPending=false;
+    // Car numbers, drawn once like the markers. Both are blended in software.
+    struct MapText { std::wstring text; COLORREF color; int width,height; HBITMAP bitmap; const std::uint32_t* bits; };
+    std::vector<MapText> mapTexts;
+    // The track map's buffer and static map are DIBs: when a pass repaints the whole map, map, cars and numbers
+    // go straight into the pixels, without a device conversion or an extra copy.
+    std::uint32_t* pixels=nullptr; const std::uint32_t* mapPixels=nullptr; bool direct=false;
     // Rows for the current model version.
     mutable unsigned rowsVersion=~0u; mutable std::vector<Row> relativeRows; mutable std::vector<StandingsGroup> standingsGroups;
     void Free() {
@@ -220,8 +223,8 @@ struct Overlay {
         mapBitmap=nullptr; mapWidth=mapHeight=0; mapStyle=-1; mapRevision=~0u;
         for(const auto& marker:mapMarkers) DeleteObject(marker.bitmap);
         mapMarkers.clear();
-        if(canvasDc) { SelectObject(canvasDc,canvasOriginal); DeleteDC(canvasDc); DeleteObject(canvas); }
-        canvasDc=nullptr; canvas=nullptr; canvasBits=nullptr; canvasRect={}; canvasPending=false;
+        for(const auto& text:mapTexts) DeleteObject(text.bitmap);
+        mapTexts.clear(); pixels=nullptr; mapPixels=nullptr; direct=false;
         for(HFONT& font:fonts) if(font) { DeleteObject(font); font=nullptr; }
         dc=nullptr; bitmap=nullptr; width=height=dpi=0; scene.clear(); widths.clear();
     }
@@ -1539,11 +1542,10 @@ HBITMAP LogoBitmap(Overlay& o,int index,int size,COLORREF tint) {
 }
 void PaintScene(Overlay& o,HRGN dirty) {
     HDC dc=o.dc;
-    SelectClipRgn(dc,dirty);
+    SelectClipRgn(dc,dirty); o.direct=false;
     int font=-1;
     for(const auto& c:o.scene) {
         if(dirty && !RectInRegion(dirty,&c.r)) continue;
-        if(o.canvasPending && c.type!=DrawCommand::MapCar) FlushMapCanvas(o);
         switch(c.type) {
         case DrawCommand::Fill: SetDCBrushColor(dc,c.color); FillRect(dc,&c.r,static_cast<HBRUSH>(GetStockObject(DC_BRUSH))); break;
         case DrawCommand::Text: if(font!=c.font) { SelectObject(dc,o.fonts[c.font]); font=c.font; } DrawLabel(dc,c); break;
@@ -1552,8 +1554,9 @@ void PaintScene(Overlay& o,HRGN dirty) {
             MoveToEx(dc,c.r.left,c.r.top,nullptr); LineTo(dc,c.r.right,c.r.top); SelectObject(dc,old); DeleteObject(pen); break;
         }
         case DrawCommand::WindRing: DrawWind(dc,c); break;
-        case DrawCommand::Map: PaintMap(o,c); break;
+        case DrawCommand::Map: PaintMap(o,c,dirty); break;
         case DrawCommand::MapCar: PaintMapCar(o,c); break;
+        case DrawCommand::MapLabel: PaintMapLabel(o,c); break;
         case DrawCommand::Ring: {
             // An antialiased ring around a letter centered on its ink: cap height and glyph box, not the text cell.
             const float stroke=c.shape[0], w=static_cast<float>(c.r.right-c.r.left), h=static_cast<float>(c.r.bottom-c.r.top);
@@ -1615,7 +1618,6 @@ void PaintScene(Overlay& o,HRGN dirty) {
         }
         }
     }
-    if(o.canvasPending) FlushMapCanvas(o);
     SelectClipRgn(dc,nullptr);
     if(logoAtlas.bitmap) ReleaseLogoAtlas();
 }
@@ -1623,7 +1625,14 @@ bool EnsureBuffer(Overlay& o,int width,int height,int dpi) {
     if(o.dc && o.width==width && o.height==height && o.dpi==dpi) return false;
     o.Free();
     HDC screen=GetDC(o.window);
-    o.dc=CreateCompatibleDC(screen); o.bitmap=CreateCompatibleBitmap(screen,width,height); o.original=SelectObject(o.dc,o.bitmap);
+    o.dc=CreateCompatibleDC(screen);
+    if(o.kind==TrackMapKind) {
+        // A DIB the cars can be written into; other overlays keep the faster device bitmap for ClearType text.
+        BITMAPINFO info{}; info.bmiHeader={sizeof(BITMAPINFOHEADER),width,-height,1,32,BI_RGB}; void* bits=nullptr;
+        o.bitmap=CreateDIBSection(screen,&info,DIB_RGB_COLORS,&bits,nullptr,0); o.pixels=static_cast<std::uint32_t*>(bits);
+    }
+    if(!o.bitmap) { o.bitmap=CreateCompatibleBitmap(screen,width,height); o.pixels=nullptr; }
+    o.original=SelectObject(o.dc,o.bitmap);
     ReleaseDC(o.window,screen);
     const int size=std::max(8,MulDiv(14,dpi*o.place.scale,9600));
     auto font=[&](int pixels,int weight){ return CreateFontW(-pixels,0,0,0,weight,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI"); };
@@ -1635,7 +1644,14 @@ bool EnsureBuffer(Overlay& o,int width,int height,int dpi) {
     return true;
 }
 // Rebuilds the scene and redraws only the commands that changed since the last refresh.
+#ifdef RACEMATE_DIAGNOSTICS
+std::array<LONGLONG,OverlayCount> refreshTicks{}; // Scene, changed areas and drawing into the buffer, per kind.
+#endif
 void RefreshOverlay(Overlay& o) {
+#ifdef RACEMATE_DIAGNOSTICS
+    LARGE_INTEGER started{}; QueryPerformanceCounter(&started);
+    struct Timer { LONGLONG& total; LARGE_INTEGER start; ~Timer() { LARGE_INTEGER now{}; QueryPerformanceCounter(&now); total+=now.QuadPart-start.QuadPart; } } timer{refreshTicks[o.kind],started};
+#endif
     RECT client{}; GetClientRect(o.window,&client);
     if(client.right<=0 || client.bottom<=0) return;
     const int dpi=GetDpiForWindow(o.window);
@@ -1647,10 +1663,19 @@ void RefreshOverlay(Overlay& o) {
     if(!full) {
         // The old and new areas of what changed. Many small areas, such as cars moving on the track map,
         // cost more to combine and to clip against than repainting the whole scene once.
-        constexpr size_t MaxChanges=24; size_t changed[MaxChanges]; size_t count=0; bool many=false;
-        for(size_t i=0;i<app.sceneBuffer.size() && !many;++i) if(!(app.sceneBuffer[i]==o.scene[i])) { if(count==MaxChanges) many=true; else changed[count++]=i; }
+        // Past the limit, one rectangle around everything that changed: unchanged header and footer stay.
+        constexpr size_t MaxChanges=24; size_t changed[MaxChanges]; size_t count=0; bool many=false; RECT bounds{};
+        for(size_t i=0;i<app.sceneBuffer.size();++i) if(!(app.sceneBuffer[i]==o.scene[i])) {
+            UnionRect(&bounds,&bounds,&app.sceneBuffer[i].r); UnionRect(&bounds,&bounds,&o.scene[i].r);
+            if(count==MaxChanges) many=true; else changed[count++]=i;
+        }
         if(!count) return;
-        if(!many) for(size_t n=0;n<count;++n) for(const RECT* r:{&app.sceneBuffer[changed[n]].r,&o.scene[changed[n]].r}) {
+        if(many) {
+            // A map it touches is repainted whole, which lets the track map write its cars straight into the pixels.
+            for(const auto& c:app.sceneBuffer) { RECT overlap{}; if(c.type==DrawCommand::Map && IntersectRect(&overlap,&bounds,&c.r)) UnionRect(&bounds,&bounds,&c.r); }
+            dirty=CreateRectRgnIndirect(&bounds);
+        }
+        else for(size_t n=0;n<count;++n) for(const RECT* r:{&app.sceneBuffer[changed[n]].r,&o.scene[changed[n]].r}) {
             HRGN part=CreateRectRgnIndirect(r);
             if(!dirty) dirty=part; else { CombineRgn(dirty,dirty,part,RGN_OR); DeleteObject(part); }
         }

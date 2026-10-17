@@ -32,7 +32,7 @@
                     const int radius=px(o.map.numbers?11:6), stroke=std::max(1,px(highlight?2:1));
                     const COLORREF color=highlight?Ink::Yellow:ColorOf(d.classColor);
                     const RECT bounds{x-radius,y-radius-titleOffset,x+radius+1,y+radius+1-titleOffset};
-                    if(number) { if(o.map.numbers) label(Wide(d.number),{x-radius,y-radius,x+radius+1,y+radius+1},car.pit?color:Ink::Panel,SmallBold,DT_CENTER); return; }
+                    if(number) { if(o.map.numbers) out.push_back({DrawCommand::MapLabel,SmallBold,DT_CENTER,bounds,car.pit?color:Ink::Panel,{},Wide(d.number)}); return; }
                     if(highlight) {
                         RECT halo=bounds; InflateRect(&halo,px(3),px(3));
                         out.push_back({DrawCommand::MapCar,Regular,0,halo,Ink::White,{static_cast<float>(std::max(1,px(1))),1}});
@@ -45,10 +45,11 @@
                     if(!o.map.pitExit || !rejoin.valid) return;
                     const auto p=place(app.preview?std::fmod(app.now/90000.+reference*.091+.7,1.):rejoin.pct);
                     const int x=p.x, y=p.y, radius=px(11);
-                    if(number) { label(L"PIT",{x-radius-px(4),y-radius,x+radius+px(5),y+radius+1},Ink::Accent,SmallBold,DT_CENTER); return; }
+                    if(number) { out.push_back({DrawCommand::MapLabel,SmallBold,DT_CENTER,{x-radius-px(4),y-radius-titleOffset,x+radius+px(5),y+radius+1-titleOffset},Ink::Accent,{},L"PIT"}); return; }
                     out.push_back({DrawCommand::MapCar,Regular,0,{x-radius,y-radius-titleOffset,x+radius+1,y+radius+1-titleOffset},Ink::Accent,{static_cast<float>(std::max(1,px(2))),1}});
                 };
                 for(bool number:{false,true}) {
+                    if(number && !o.map.numbers && !(o.map.pitExit && rejoin.valid)) break;
                     for(const auto& d:app.session.drivers) if(d.index!=reference) drawCar(d,false,number);
                     drawGhost(number);
                     if(own!=app.session.drivers.end()) drawCar(*own,true,number);

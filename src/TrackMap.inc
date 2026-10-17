@@ -115,13 +115,16 @@ void DrawMapLayer(Gdiplus::Graphics& graphics,const trackmap::Layer& layer,const
         }
     }
 }
-void PaintMap(Overlay& o,const DrawCommand& c) {
+void PaintMap(Overlay& o,const DrawCommand& c,HRGN dirty) {
     if(o.map.layout==MapLayout && !trackMap.ready) return;
     const int width=c.r.right-c.r.left,height=c.r.bottom-c.r.top;
     const int style=MapStyle(o.map);
     if(!o.mapBitmap || o.mapRevision!=trackMap.revision || o.mapWidth!=width || o.mapHeight!=height || o.mapStyle!=style) {
         if(o.mapBitmap) DeleteObject(o.mapBitmap);
-        o.mapBitmap=CreateCompatibleBitmap(o.dc,width,height); o.mapWidth=width; o.mapHeight=height; o.mapRevision=trackMap.revision; o.mapStyle=style;
+        // A DIB, so a whole-map pass copies its rows straight into the buffer.
+        BITMAPINFO info{}; info.bmiHeader={sizeof(BITMAPINFOHEADER),width,-height,1,32,BI_RGB}; void* bits=nullptr;
+        o.mapBitmap=CreateDIBSection(o.dc,&info,DIB_RGB_COLORS,&bits,nullptr,0); o.mapPixels=static_cast<const std::uint32_t*>(bits);
+        o.mapWidth=width; o.mapHeight=height; o.mapRevision=trackMap.revision; o.mapStyle=style;
         if(!o.mapBitmap) return;
         HDC dc=CreateCompatibleDC(o.dc); const auto old=SelectObject(dc,o.mapBitmap);
         RECT bounds{0,0,width,height}; SetDCBrushColor(dc,MapOnly(o)?TrackMapTransparentKey:Ink::Panel); FillRect(dc,&bounds,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
@@ -169,47 +172,71 @@ void PaintMap(Overlay& o,const DrawCommand& c) {
         }
         SelectObject(dc,old); DeleteDC(dc);
     }
+    // The whole map in this pass: its rows straight into the buffer, and the cars and numbers after it too.
+    RECT box{}; const bool whole=!dirty || (GetRgnBox(dirty,&box)==SIMPLEREGION && box.left<=c.r.left && box.top<=c.r.top && box.right>=c.r.right && box.bottom>=c.r.bottom);
+    o.direct=o.pixels && o.mapPixels && whole;
+    if(o.direct) {
+        GdiFlush(); // GDI may still be drawing the background.
+        const int left=std::max(0,static_cast<int>(-c.r.left)), right=std::min(width,o.width-static_cast<int>(c.r.left));
+        for(int y=std::max(0,static_cast<int>(-c.r.top));y<height && c.r.top+y<o.height && right>left;++y)
+            std::memcpy(o.pixels+(c.r.top+y)*o.width+c.r.left+left,o.mapPixels+y*width+left,(right-left)*sizeof(std::uint32_t));
+        return;
+    }
     HDC source=CreateCompatibleDC(o.dc); const auto old=SelectObject(source,o.mapBitmap);
     BitBlt(o.dc,c.r.left,c.r.top,width,height,source,0,0,SRCCOPY);
     SelectObject(source,old); DeleteDC(source);
-    // The cars follow: copy the map area with room for markers at its edge into the canvas.
-    const int margin=MulDiv(18,o.dpi*o.place.scale,9600);
-    RECT area=c.r; InflateRect(&area,margin,margin);
-    const RECT buffer{0,0,o.width,o.height}; IntersectRect(&area,&area,&buffer);
-    const int w=area.right-area.left,h=area.bottom-area.top;
-    if(w<=0 || h<=0) return;
-    if(!o.canvasDc || o.canvasRect.right-o.canvasRect.left!=w || o.canvasRect.bottom-o.canvasRect.top!=h) {
-        if(o.canvasDc) { SelectObject(o.canvasDc,o.canvasOriginal); DeleteDC(o.canvasDc); DeleteObject(o.canvas); o.canvasDc=nullptr; }
-        BITMAPINFO info{}; info.bmiHeader={sizeof(BITMAPINFOHEADER),w,-h,1,32,BI_RGB}; void* bits=nullptr;
-        o.canvas=CreateDIBSection(nullptr,&info,DIB_RGB_COLORS,&bits,nullptr,0);
-        if(!o.canvas) return;
-        o.canvasDc=CreateCompatibleDC(o.dc); o.canvasOriginal=SelectObject(o.canvasDc,o.canvas); o.canvasBits=static_cast<std::uint32_t*>(bits);
-    }
-    o.canvasRect=area;
-    BitBlt(o.canvasDc,0,0,w,h,o.dc,area.left,area.top,SRCCOPY); GdiFlush();
-    o.canvasPending=true;
 }
-// Back into the buffer, clipped like every other command.
-void FlushMapCanvas(Overlay& o) {
-    o.canvasPending=false;
-    const auto& r=o.canvasRect;
-    BitBlt(o.dc,r.left,r.top,r.right-r.left,r.bottom-r.top,o.canvasDc,0,0,SRCCOPY);
-}
-// Premultiplied source over the canvas: a few hundred pixels per car instead of one AlphaBlend call each.
-void BlendMarker(Overlay& o,const RECT& r,const std::uint32_t* source,int width,int height) {
-    const int W=o.canvasRect.right-o.canvasRect.left,H=o.canvasRect.bottom-o.canvasRect.top;
-    const int left=r.left-o.canvasRect.left,top=r.top-o.canvasRect.top;
-    for(int y=std::max(0,-top);y<height && top+y<H;++y) {
-        const std::uint32_t* from=source+y*width; std::uint32_t* to=o.canvasBits+(top+y)*W+left;
-        for(int x=std::max(0,-left);x<width && left+x<W;++x) {
+// Premultiplied source over the buffer pixels: a few hundred pixels per car instead of an AlphaBlend call each.
+void Blend(Overlay& o,const RECT& r,const std::uint32_t* source,int width,int height) {
+    const int left=r.left,top=r.top;
+    for(int y=std::max(0,-top);y<height && top+y<o.height;++y) {
+        const std::uint32_t* from=source+y*width; std::uint32_t* to=o.pixels+(top+y)*o.width+left;
+        for(int x=std::max(0,-left);x<width && left+x<o.width;++x) {
             const std::uint32_t s=from[x],alpha=s>>24;
             if(!alpha) continue;
             if(alpha==255) { to[x]=s; continue; }
+            // Red and blue together, green apart; (x+128+((x+128)>>8))>>8 is x/255 rounded, without a division.
             const std::uint32_t d=to[x],keep=255-alpha;
-            auto channel=[&](int shift){ return ((s>>shift)&255)+(((d>>shift)&255)*keep+127)/255; };
-            to[x]=channel(0)|channel(8)<<8|channel(16)<<16|0xFF000000u;
+            std::uint32_t rb=(d&0x00FF00FFu)*keep+0x00800080u; rb=((rb+((rb>>8)&0x00FF00FFu))>>8)&0x00FF00FFu;
+            std::uint32_t g=((d>>8)&0xFFu)*keep+0x80u; g=((g+(g>>8))>>8)&0xFFu;
+            to[x]=((s&0x00FFFFFFu)+(rb|g<<8))|0xFF000000u;
         }
     }
+}
+// Into the pixels in a whole-map pass, else through GDI with the pass's clipping.
+void PutMapBitmap(Overlay& o,const RECT& r,HBITMAP bitmap,const std::uint32_t* pixels,int width,int height) {
+    if(o.direct) { Blend(o,r,pixels,width,height); return; }
+    HDC source=CreateCompatibleDC(o.dc); const auto old=SelectObject(source,bitmap);
+    AlphaBlend(o.dc,r.left,r.top,width,height,source,0,0,width,height,{AC_SRC_OVER,0,255,AC_SRC_ALPHA});
+    SelectObject(source,old); DeleteDC(source);
+}
+// A car number or PIT in the overlay's font, centred in its marker; drawn once, then blended.
+void PaintMapLabel(Overlay& o,const DrawCommand& c) {
+    const int width=c.r.right-c.r.left,height=c.r.bottom-c.r.top;
+    if(width<=0 || height<=0) return;
+    const Overlay::MapText* text=nullptr;
+    for(const auto& item:o.mapTexts) if(item.width==width && item.height==height && item.color==c.color && item.text==c.text) { text=&item; break; }
+    if(!text) {
+        BITMAPINFO info{}; info.bmiHeader={sizeof(BITMAPINFOHEADER),width,-height,1,32,BI_RGB};
+        void* bits=nullptr; HBITMAP bitmap=CreateDIBSection(nullptr,&info,DIB_RGB_COLORS,&bits,nullptr,0);
+        if(!bitmap) return;
+        {
+            Gdiplus::Bitmap target(width,height,width*4,PixelFormat32bppPARGB,static_cast<BYTE*>(bits));
+            Gdiplus::Graphics graphics(&target); graphics.Clear(Gdiplus::Color(0,0,0,0));
+            graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
+            Gdiplus::Font font(o.dc,o.fonts[c.font]);
+            Gdiplus::StringFormat format; format.SetAlignment(Gdiplus::StringAlignmentCenter); format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+            format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap|Gdiplus::StringFormatFlagsNoClip);
+            Gdiplus::SolidBrush brush(Gdiplus::Color(255,GetRValue(c.color),GetGValue(c.color),GetBValue(c.color)));
+            graphics.DrawString(c.text.c_str(),static_cast<int>(c.text.size()),&font,Gdiplus::RectF(0,0,static_cast<float>(width),static_cast<float>(height)),&format,&brush);
+        }
+        GdiFlush();
+        // Numbers are few; a new size or colour set starts over.
+        if(o.mapTexts.size()>=MaxCars*4) { for(const auto& item:o.mapTexts) DeleteObject(item.bitmap); o.mapTexts.clear(); }
+        o.mapTexts.push_back({c.text,c.color,width,height,bitmap,static_cast<const std::uint32_t*>(bits)});
+        text=&o.mapTexts.back();
+    }
+    PutMapBitmap(o,c.r,text->bitmap,text->bits,width,height);
 }
 void PaintMapCar(Overlay& o,const DrawCommand& c) {
     const int width=c.r.right-c.r.left,height=c.r.bottom-c.r.top,stroke=std::max(1,static_cast<int>(c.shape[0]));
@@ -237,9 +264,5 @@ void PaintMapCar(Overlay& o,const DrawCommand& c) {
         GdiFlush(); pixels=static_cast<const std::uint32_t*>(bits);
         o.mapMarkers.push_back({width,height,stroke,c.color,hollow,bitmap,pixels});
     }
-    if(o.canvasPending) { BlendMarker(o,c.r,pixels,width,height); return; }
-    // Only the cars changed and the map was not repainted: blend directly.
-    HDC source=CreateCompatibleDC(o.dc); const auto old=SelectObject(source,bitmap);
-    AlphaBlend(o.dc,c.r.left,c.r.top,width,height,source,0,0,width,height,{AC_SRC_OVER,0,255,AC_SRC_ALPHA});
-    SelectObject(source,old); DeleteDC(source);
+    PutMapBitmap(o,c.r,bitmap,pixels,width,height);
 }
