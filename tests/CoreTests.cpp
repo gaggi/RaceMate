@@ -407,6 +407,13 @@ void LivePositionAndPitVisibilityTests() {
   Require(dials.Update(setup,g).size()==1 && dials.Changes()[0].dial==TractionDial,"a dial changed after getting in is reported");
   g.onTrack=false; Require(dials.Update(setup,g).empty(),"nothing outside the car");
  }
+ // Where the user is, for when overlays show.
+ {
+  Frame g; g.connected=g.onTrack=true; Require(CurrentSituation(g)==InCarSituation,"driving is in car");
+  g.onTrack=false; Require(CurrentSituation(g)==SpottingSituation,"live outside the car is spotting");
+  g.replay=true; g.replayFramesBehind=600; Require(CurrentSituation(g)==ReplaySituation,"old footage is a replay");
+  g.garage=true; Require(CurrentSituation(g)==GarageSituation,"the garage screen wins");
+ }
  frame.pit=true; reminder.Update(session,frame); frame.pit=false; session.key="new-session"; Require(!reminder.Update(session,frame),"new session clears old pit grace period");
  frame.pit=true; reminder.Update(session,frame); frame.pit=false; frame.time=1; Require(!reminder.Update(session,frame),"rewind clears future pit grace period");
  frame.inStall=true; Require(reminder.Update(session,frame),"pit stall remains visible without lane flag"); frame.connected=false; Require(!reminder.Update(session,frame),"disconnect clears limiter reminder");

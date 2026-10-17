@@ -18,7 +18,8 @@ private:
         {L"Positions gained",L"Compared with the starting grid"},{L"Status badge",L""},
         {L"Car brand",L"Manufacturer, with its initial until logos arrive"},{L"iRating change",L"Estimated, as if the race ended in the current order"},
         {L"Laps since stop",L"L12; L- until a stop or the start was seen"},{L"Pit stops",L"Observed in this race; ? after joining late"},
-        {L"Fuel to finish",L"Own-class estimate: green END at normal range, yellow SAVE with fuel saving. Full tank assumed; extra laps in Settings."}};
+        {L"Fuel to finish",L"Own-class estimate: green END at normal range, yellow SAVE with fuel saving. Full tank assumed; extra laps in Settings."},
+        {L"Safety and iRating",L"iRating on the license color, in one badge; short with the iRating column's short view"}};
     static constexpr const wchar_t* NameFormats[]={L"First name Last name",L"F. Last name",L"F Last name"};
     static constexpr const wchar_t* FlagNames[]={L"Black flag",L"Slowdown",L"Required repairs"};
     static_assert(std::size(ColumnTexts)==ColumnCount);

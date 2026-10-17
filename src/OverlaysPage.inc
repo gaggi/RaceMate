@@ -6,7 +6,7 @@ public:
     OverlaysPage() : PageWindow(ui.heading,ui.text) {}
 private:
     enum class Key { None, Instance, Add, Preview, Move, Hide, Reset };
-    static constexpr int ListId=100, ScaleId=200, OpacityId=201, CornerId=202, RateId=203;
+    static constexpr int ListId=100, ScaleId=200, OpacityId=201, CornerId=202, RateId=203, ShowInId=210;
     static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E', CopyGlyph=L'\uE8C8', RemoveGlyph=L'\uE74D';
     static constexpr const wchar_t* Corners[]={L"Top left",L"Top right",L"Bottom left",L"Bottom right"};
 
@@ -21,6 +21,12 @@ private:
     static std::wstring Summary(const Overlay& o) {
         std::wstring text=std::to_wstring(o.place.scale)+L" %  \u00B7  opacity "+std::to_wstring(o.place.opacity)+L" %  \u00B7  "+Corners[Corner(o.place)]+L"  \u00B7  "+std::to_wstring(o.place.rate)+L" Hz";
         if(o.place.rounded) text+=L"  \u00B7  rounded corners";
+        // Only where it differs from showing everywhere.
+        if(o.kind!=PitLimiterKind && std::find(o.place.showIn.begin(),o.place.showIn.end(),false)!=o.place.showIn.end()) {
+            constexpr const wchar_t* situations[]={L"in car",L"spotting",L"replay",L"garage"};
+            std::wstring where; for(int i=0;i<SituationCount;++i) if(o.place.showIn[i]) where+=(where.empty()?L"":L", ")+std::wstring(situations[i]);
+            text+=L"  \u00B7  "+(where.empty()?std::wstring(L"never shown"):L"shows "+where);
+        }
         return text;
     }
     void Refresh() {
@@ -41,7 +47,7 @@ private:
             row.toggle=o.place.enabled?1:0; row.button=L"Settings";
             // Right to left: expand, duplicate (not the Pit Limiter), remove (added instances only); empty slots keep them in line.
             row.iconButtons={&o==expanded_?CollapseGlyph:ExpandGlyph,o.kind==PitLimiterKind?wchar_t{0}:CopyGlyph,o.number>1?RemoveGlyph:wchar_t{0}};
-            row.expandHeight=&o==expanded_?84:0;
+            row.expandHeight=&o==expanded_?(o.kind==PitLimiterKind?84:118):0;
             push(std::move(row),Key::Instance,&o);
         }
         RowList::Row add; add.title=L"Add overlay"; add.detail=L"Another Relative, Standings, Fuel Calculator, Weather or Track Map with its own settings and place."; add.button=L"Add...";
@@ -69,6 +75,12 @@ private:
         editors_.Label(L"Opacity",280,10,84); editors_.Combo(OpacityId,opacities,(place.opacity-40)/10,368,10,130);
         editors_.Label(L"Fixed corner",0,46,84); editors_.Combo(CornerId,corners,Corner(place),88,46,130);
         editors_.Label(L"Updates",280,46,84); editors_.Combo(RateId,rates,rate,368,46,130);
+        // When it shows; the Pit Limiter shows only while you drive near or in the pits.
+        if(expanded_->kind!=PitLimiterKind) {
+            constexpr const wchar_t* situations[]={L"In car",L"Spotting",L"Replay",L"Garage"};
+            editors_.Label(L"Shows",0,84,84);
+            for(int i=0;i<SituationCount;++i) editors_.Check(ShowInId+i,situations[i],place.showIn[i],88+i*104,84,100);
+        }
         syncing_=false; editors_.Position();
     }
     void Expand(Overlay* o) {
@@ -101,6 +113,10 @@ private:
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); return true; }
         if(id==ScaleId || id==OpacityId || id==CornerId || id==RateId) { if(!syncing_ && code==CBN_SELCHANGE) ApplyEditor(id); return true; }
+        if(id>=ShowInId && id<ShowInId+SituationCount) {
+            if(!syncing_ && code==BN_CLICKED && expanded_) { expanded_->place.showIn[id-ShowInId]=editors_.Checked(id); SettingChanged(); Refresh(); }
+            return true;
+        }
         if(id!=ListId) return false;
         if(code==RowList::kLayoutChanged) { editors_.Position(); return true; }
         const int row=list_.NotifiedRow();

@@ -253,6 +253,14 @@ ViewMode View(const Frame& f) {
     if(f.replayTime>=0) return f.replaySession!=f.session || std::abs(f.time-f.replayTime)>2?ViewMode::Replay:ViewMode::Live;
     return f.replay?ViewMode::Replay:ViewMode::Live;
 }
+int CurrentSituation(const Frame& f) {
+    if(f.garage) return GarageSituation;
+    switch(View(f)) {
+    case ViewMode::InCar: return InCarSituation;
+    case ViewMode::Live: return SpottingSituation;
+    default: return ReplaySituation;
+    }
+}
 int ReferenceCar(const Frame& f) {
     if((!f.onTrack || f.replay) && f.camera>=0 && f.camera<MaxCars) return f.camera;
     return f.player;

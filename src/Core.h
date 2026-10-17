@@ -73,6 +73,7 @@ struct Car {
 struct Frame {
     bool connected = false, onTrack = false, pit = false, inStall = false, replay = false;
     bool incidentsKnown = false;
+    bool garage = false; // IsGarageVisible: the garage screen is open.
     double airTemperature = std::numeric_limits<double>::quiet_NaN(), trackTemperature = std::numeric_limits<double>::quiet_NaN();
     double windDirection = std::numeric_limits<double>::quiet_NaN(), yawNorth = std::numeric_limits<double>::quiet_NaN();
     double timeOfDay = -1, windSpeed = -1; int trackWetness = -1;
@@ -166,6 +167,9 @@ int ReferenceCar(const Frame&);
 // and the race forecast all decide with this.
 enum class ViewMode { InCar, Live, Replay };
 ViewMode View(const Frame&);
+// Where the user is, for when each overlay shows: driving, spotting live, watching a replay, or on the garage screen.
+enum Situation { InCarSituation, SpottingSituation, ReplaySituation, GarageSituation, SituationCount };
+int CurrentSituation(const Frame&);
 struct Row {
     Driver driver;
     Car car;

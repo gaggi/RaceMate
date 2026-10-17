@@ -335,6 +335,13 @@ int RunDiagnostics() {
             SetColumnVisible(o,FuelColumn,false); const int before=OverlayWidth(o);
             SetColumnVisible(o,FuelColumn,true); Save(); Load();
             fuelOk=ColumnVisible(o,FuelColumn) && OverlayWidth(o)==before+ColumnWidth(o,FuelColumn) && fuelOk;
+            {
+                Row rated; rated.driver.rating=2456; rated.driver.license="A 3.45"; Cell badge{{},Ink::White}; CellRenderers[CombinedRatingColumn](rated,o,badge);
+                rated.driver.rating=0; Cell none{{},Ink::White}; CellRenderers[CombinedRatingColumn](rated,o,none);
+                fuelOk=badge.text==L"2456" && badge.box==Cell::Filled && badge.boxColor==LicenseFill(rated.driver) && none.text==L"—" && none.box!=Cell::Filled && fuelOk;
+                SetColumnVisible(o,CombinedRatingColumn,true); const int wide=OverlayWidth(o); SetColumnVisible(o,CombinedRatingColumn,false);
+                fuelOk=wide==OverlayWidth(o)+ColumnWidth(o,CombinedRatingColumn) && fuelOk;
+            }
             Row row; row.driver.index=0; Cell end{{},Ink::White}; CellRenderers[FuelColumn](row,o,end);
             row.driver.index=4; Cell save{{},Ink::White}; CellRenderers[FuelColumn](row,o,save);
             row.driver.index=6; Cell unknown{{},Ink::White}; CellRenderers[FuelColumn](row,o,unknown);
@@ -637,7 +644,7 @@ int RunDiagnostics() {
         bool fitOk=true; WINDOWPLACEMENT saved{sizeof(saved)}; GetWindowPlacement(app.main,&saved);
         ShowWindow(app.main,SW_RESTORE); SetWindowPos(app.main,nullptr,0,0,1,1,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE); // Clamped to the minimum size.
         auto Ascii=[](const std::wstring& text){ std::string ascii; for(wchar_t c:text) ascii+=static_cast<char>(c<128?c:'?'); return ascii; };
-        auto check=[&](const std::wstring& title) {
+        auto check=[&](const std::wstring& title,int expected=8) {
             const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr);
             auto* rows=list?reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA)):nullptr; int index=-1;
             if(rows) for(size_t i=0;i<rows->Rows().size() && index<0;++i) if(rows->Rows()[i].title==title) index=static_cast<int>(i);
@@ -650,10 +657,11 @@ int RunDiagnostics() {
                 RECT r{}; GetWindowRect(child,&r); ++editors;
                 if(r.left<visible.left || r.right>visible.right) { fitOk=false; report<<"  "<<Ascii(title)<<": editor ends at "<<r.right-visible.left<<" px of "<<visible.right-visible.left<<"\n"; }
             }
-            fitOk=editors==8 && fitOk;
+            if(editors!=expected) { fitOk=false; report<<"  "<<Ascii(title)<<": "<<editors<<" editors\n"; }
             rows->PressIconButton(index,0); // And collapsed again.
         };
-        ShowPage(Page::Overlays); for(auto& o:app.overlays) if(o.number==1) check(Name(o));
+        // Overlays other than the Pit Limiter add where they show: a label and four switches.
+        ShowPage(Page::Overlays); for(auto& o:app.overlays) if(o.number==1) check(Name(o),o.kind==PitLimiterKind?8:13);
         for(int kind:{RelativeKind,FuelKind,WeatherKind}) { OpenOverlay(First(kind)); check(L"Header"); check(L"Footer"); }
         SetWindowPlacement(app.main,&saved); ShowPage(Page::Overlays);
         report<<"Expanded editors fit the narrowest window: "<<(fitOk?"PASS":"FAIL")<<"\n"; ok=fitOk && ok;
@@ -1241,6 +1249,15 @@ int RunDiagnostics() {
         report<<"Pit Limiter lists in-car adjustments that differ from the setup, in the pit lane: "<<(setupOk?"PASS":"FAIL")<<"\n"; ok=setupOk && ok;
     }
     app.frame.pit=false; app.frame.limiter=true; app.frame.time+=1; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
+    {
+        // Each overlay shows only where it is set to: Relative off in the car hides it there, not while spotting.
+        auto& relative=First(RelativeKind); bool whereOk=IsWindowVisible(relative.window)!=0;
+        relative.place.showIn[InCarSituation]=false; UpdateOverlays(); whereOk=!IsWindowVisible(relative.window) && IsWindowVisible(First(3).window) && whereOk;
+        app.frame.onTrack=false; UpdateOverlays(); whereOk=IsWindowVisible(relative.window) && whereOk;
+        app.frame.garage=true; relative.place.showIn[GarageSituation]=false; UpdateOverlays(); whereOk=!IsWindowVisible(relative.window) && whereOk;
+        app.frame.garage=false; app.frame.onTrack=true; relative.place.showIn.fill(true); UpdateOverlays(); whereOk=IsWindowVisible(relative.window) && whereOk;
+        report<<"Overlays show in car, spotting, replay and garage as set: "<<(whereOk?"PASS":"FAIL")<<"\n"; ok=whereOk && ok;
+    }
     {
         // Past pit exit with the limiter on: the flashing warning instead of the green bar.
         const bool warning=app.pitVisibility.Warning() && std::any_of(First(3).scene.begin(),First(3).scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::Text && c.text==L"TURN OFF PIT LIMITER"; });

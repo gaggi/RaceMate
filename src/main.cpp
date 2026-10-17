@@ -47,26 +47,26 @@ constexpr int DefaultRates[]={10,1,1,10,1,20};
 enum Column {
     PositionColumn, NumberColumn, DriverColumn, GapColumn, IntervalColumn, BestColumn, LastColumn,
     LicenseColumn, IRatingColumn, TiresColumn, PitLapColumn, PitTimeColumn, PitStopColumn,
-    LapsColumn, GainedColumn, StatusColumn, BrandColumn, RatingChangeColumn, StintColumn, StopsColumn, FuelColumn
+    LapsColumn, GainedColumn, StatusColumn, BrandColumn, RatingChangeColumn, StintColumn, StopsColumn, FuelColumn, CombinedRatingColumn
 };
-constexpr int ColumnCount=FuelColumn+1;
+constexpr int ColumnCount=CombinedRatingColumn+1;
 // License..PitStop are the optional driver columns, also used by Race Control; Brand..Stint came later with their own keys.
-constexpr int DriverColumnCount=PitStopColumn-LicenseColumn+1, ExtraColumnCount=FuelColumn-BrandColumn+1;
+constexpr int DriverColumnCount=PitStopColumn-LicenseColumn+1, ExtraColumnCount=CombinedRatingColumn-BrandColumn+1;
 // Widths include the 8 px gap to the next column; Status is the badge after the driver's name, not a column.
 struct ColumnInfo { const wchar_t* title; int width, compactWidth; UINT align=DT_RIGHT; };
 constexpr ColumnInfo Columns[]={
     {L"P",36,32},{L"#",50,50,DT_CENTER},{L"DRIVER",180,170,DT_LEFT},{L"GAP",70,60},{L"INT",64,56},{L"BEST",80,72},{L"LAST",80,72},
     {L"LICENSE",70,58,DT_CENTER},{L"iRATING",66,48},{L"TIRES",54,30,DT_CENTER},{L"PIT LAP",64,48},{L"PIT TIME",74,66},{L"PIT STOP",80,72},
-    {L"LAPS",50,42},{L"GAIN",50,42},{L"STATUS",0,0,DT_LEFT},{L"CAR",124,116,DT_LEFT},{L"iR ±",54,46},{L"STINT",58,46,DT_CENTER},{L"STOPS",56,32,DT_CENTER},{L"FUEL",62,58,DT_CENTER}};
+    {L"LAPS",50,42},{L"GAIN",50,42},{L"STATUS",0,0,DT_LEFT},{L"CAR",124,116,DT_LEFT},{L"iR ±",54,46},{L"STINT",58,46,DT_CENTER},{L"STOPS",56,32,DT_CENTER},{L"FUEL",62,58,DT_CENTER},{L"RATING",70,58,DT_CENTER}};
 static_assert(std::size(Columns)==ColumnCount);
 const wchar_t* DriverColumnKeys[]={L"ShowLicense",L"ShowIRating",L"ShowTires",L"ShowLastPitLap",L"ShowPitTime",L"ShowPitStopTime"};
-const wchar_t* ExtraColumnKeys[]={L"ShowCar",L"ShowIRatingChange",L"ShowStint",L"ShowStops",L"ShowFuelFinish"};
+const wchar_t* ExtraColumnKeys[]={L"ShowCar",L"ShowIRatingChange",L"ShowStint",L"ShowStops",L"ShowFuelFinish",L"ShowCombinedRating"};
 // Saved orders keep their place; columns a file does not list yet go before their default successor.
 const std::vector<int> DefaultColumns[]={
-    {PositionColumn,NumberColumn,DriverColumn,StatusColumn,BrandColumn,LicenseColumn,IRatingColumn,RatingChangeColumn,StintColumn,StopsColumn,BestColumn,LastColumn,GapColumn,
+    {PositionColumn,NumberColumn,DriverColumn,StatusColumn,BrandColumn,LicenseColumn,IRatingColumn,CombinedRatingColumn,RatingChangeColumn,StintColumn,StopsColumn,BestColumn,LastColumn,GapColumn,
      TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn,FuelColumn},
     {PositionColumn,GainedColumn,NumberColumn,DriverColumn,StatusColumn,BrandColumn,GapColumn,IntervalColumn,BestColumn,LastColumn,StintColumn,StopsColumn,LapsColumn,
-     LicenseColumn,IRatingColumn,RatingChangeColumn,TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn,FuelColumn}};
+     LicenseColumn,IRatingColumn,CombinedRatingColumn,RatingChangeColumn,TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn,FuelColumn}};
 // Header and footer metrics. The values are stored in the Header*/Footer* keys.
 enum Metric {
     NoMetric, TrackMetric, IncidentsMetric, TrackTempMetric, AirTempMetric, TemperaturesMetric, TimeRemainingMetric, TimeElapsedMetric,
@@ -140,7 +140,11 @@ static_assert(std::size(WeatherModules)==WeatherModuleCount);
 const std::vector<int> FuelOrder{TankModule,FiguresModule,LeaderDistanceModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,WindowCard,TimelineModule,PitExitModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow};
 const std::vector<int> WeatherOrder{ConditionModule,RainModule,TemperatureModule,TemperatureHistoryModule,WindModule,DetailsModule,UsageModule};
 const wchar_t* WetnessNames[]={L"—",L"Dry",L"Mostly Dry",L"Very Lightly Wet",L"Lightly Wet",L"Moderately Wet",L"Very Wet",L"Extremely Wet"};
-struct Placement { int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=true, growLeft=false, growUp=false, rounded=false; };
+struct Placement {
+    int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=true, growLeft=false, growUp=false, rounded=false;
+    std::array<bool,SituationCount> showIn{true,true,true,true}; // In car, spotting, replay, garage.
+};
+const wchar_t* SituationKeys[]={L"ShowInCar",L"ShowSpotting",L"ShowReplay",L"ShowInGarage"};
 enum FontId : unsigned char { Regular, Bold, Large, Small, Hero, SmallBold, FontCount };
 struct DrawCommand {
     enum Type : unsigned char { Fill, Text, DottedLine, WindRing, Outline, RoundFill, Ring, Hatch, Sparkline, Logo, Map, MapCar, MapLabel };
@@ -347,6 +351,7 @@ int ColumnWidth(const Overlay& o,int id) {
     if(id==BrandColumn && !t.brandLogo) return compact?92:100;
     if(compact && id==DriverColumn && t.nameFormat!=0) return 150;
     if(compact && (id==LicenseColumn || id==IRatingColumn) && t.driverShortView[id-LicenseColumn]) return 50;
+    if(compact && id==CombinedRatingColumn && t.driverShortView[IRatingColumn-LicenseColumn]) return 50;
     return compact?Columns[id].compactWidth:Columns[id].width;
 }
 std::vector<int> VisibleColumns(const Overlay& o) { std::vector<int> result; for(int id:o.table.columnOrder) if(ColumnVisible(o,id)) result.push_back(id); return result; }
@@ -552,6 +557,7 @@ void ReadInstance(Overlay& o) {
     p.rate=*std::find_if(std::begin(OverlayRates),std::end(OverlayRates)-1,[&](int choice){return choice>=rate;});
     p.enabled=ReadBool(section.c_str(),L"Enabled",kind!=TrackMapKind); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
     p.rounded=ReadBool(section.c_str(),L"RoundedCorners",false);
+    for(int i=0;i<SituationCount;++i) p.showIn[i]=ReadBool(section.c_str(),SituationKeys[i],true);
     const Bands defaults=DefaultBands(kind); auto& b=o.bands;
     b.header=ReadBool(section.c_str(),L"ShowHeader",kind==PitLimiterKind?ReadBool(L"General",L"ShowTitleBar",false):defaults.header); b.headerMetrics=ReadSlots(section.c_str(),HeaderKeys,defaults.headerMetrics);
     b.footer.enabled=ReadBool(section.c_str(),L"ShowFooter",defaults.footer.enabled); b.footer.metrics=ReadSlots(section.c_str(),FooterKeys,defaults.footer.metrics);
@@ -619,6 +625,7 @@ void Save() {
         const auto name=Section(o); const auto* section=name.c_str(); const auto& p=o.place;
         number(section,L"X",p.x); number(section,L"Y",p.y); number(section,L"Scale",p.scale); number(section,L"Opacity",p.opacity);
         number(section,L"RefreshHz",p.rate); number(section,L"Enabled",p.enabled); number(section,L"GrowLeft",p.growLeft); number(section,L"GrowUp",p.growUp); number(section,L"RoundedCorners",p.rounded);
+        for(int i=0;i<SituationCount;++i) number(section,SituationKeys[i],p.showIn[i]);
         {
             const auto& b=o.bands; number(section,L"ShowHeader",b.header); number(section,L"ShowFooter",b.footer.enabled);
             for(int i=0;i<SlotCount;++i) { number(section,HeaderKeys[i],b.headerMetrics[i]); number(section,FooterKeys[i],b.footer.metrics[i]); }
@@ -1045,7 +1052,12 @@ const CellRenderer CellRenderers[]={
         const auto status=FuelFinishStatus(r.driver.index);
         if(status==OpponentFuelStatus::None) return;
         c.text=status==OpponentFuelStatus::End?L"END":L"SAVE";
-        c.box=Cell::Filled; c.boxColor=status==OpponentFuelStatus::End?Ink::Green:Ink::Yellow; c.ink=Ink::Panel; c.font=SmallBold; }};
+        c.box=Cell::Filled; c.boxColor=status==OpponentFuelStatus::End?Ink::Green:Ink::Yellow; c.ink=Ink::Panel; c.font=SmallBold; },
+    // iRating on the license color: safety class and rating in one badge; follows the iRating column's short view.
+    +[](const Row& r,const Overlay& o,Cell& c) {
+        c.text=DriverValue(r,IRatingColumn-LicenseColumn,&o.table); if(c.text==L"—") { c.ink=Ink::Muted; return; }
+        c.box=Cell::Filled; c.boxColor=r.driver.license.empty()?Ink::NeutralBadge:LicenseFill(r.driver); c.ink=RGB(255,255,255); c.font=SmallBold; }
+};
 static_assert(std::size(CellRenderers)==ColumnCount);
 bool Editing(const Overlay& o); // Its own page is open in the visible main window.
 // Describes an overlay in physical pixels. Comparing it with the previous scene yields the exact changed areas.
@@ -1885,8 +1897,9 @@ void UpdateOverlays(bool force=true) {
     InvalidateModel();
     const bool pitVisible=app.pitVisibility.Update(app.session,app.frame);
     app.setupDials.Update(app.session,app.frame);
+    const int situation=CurrentSituation(app.frame);
     for(auto& o:app.overlays) {
-        bool visible=o.place.enabled && !app.hidden && (o.kind!=WeatherKind || std::any_of(o.weather.display.begin(),o.weather.display.begin()+WeatherPanelCount,[](bool value){return value;})) && (app.preview || (app.frame.connected && (o.kind!=PitLimiterKind || pitVisible)));
+        bool visible=o.place.enabled && !app.hidden && (o.kind!=WeatherKind || std::any_of(o.weather.display.begin(),o.weather.display.begin()+WeatherPanelCount,[](bool value){return value;})) && (app.preview || (app.frame.connected && (o.kind!=PitLimiterKind || pitVisible) && (o.kind==PitLimiterKind || o.place.showIn[situation])));
         auto style=GetWindowLongPtrW(o.window,GWL_EXSTYLE);
         const auto desired=app.edit?(style&~WS_EX_TRANSPARENT):(style|WS_EX_TRANSPARENT);
         if(style!=desired) SetWindowLongPtrW(o.window,GWL_EXSTYLE,desired);
