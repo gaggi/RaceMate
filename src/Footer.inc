@@ -51,6 +51,9 @@ MetricText Metric(int metric,const Overlay* o=nullptr) {
     const int current=reference==f.player && f.lapCompleted>=0?f.lapCompleted+1:(car?car->lap:-1);
     switch(metric) {
     case TrackMetric: return s.track.empty()?L"—":Wide(s.track);
+    case TrackLayoutMetric:
+        if(app.preview && o && o->kind==TrackMapKind) return std::wstring(TrackMapPreviewName);
+        return s.track.empty()?L"—":Wide(s.track+(s.trackConfig.empty()?"":" · "+s.trackConfig));
     case IncidentsMetric: {
         const int incidents=reference==f.player && f.incidentsKnown?f.incidents:(driver!=s.drivers.end()?driver->incidentCount:-1);
         // Race limits: the first warning (drive-through) and the disqualification.

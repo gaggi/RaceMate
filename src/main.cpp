@@ -69,10 +69,10 @@ enum Metric {
     NoMetric, TrackMetric, IncidentsMetric, TrackTempMetric, AirTempMetric, TemperaturesMetric, TimeRemainingMetric, TimeElapsedMetric,
     CurrentLapMetric, FinalLapMetric, LapsRemainingMetric, LocalTimeMetric, SimTimeMetric, SessionTypeMetric, WetnessMetric, WindMetric,
     SofMetric, OverlayNameMetric, PositionMetric, BrakeBiasMetric, StopsNeededMetric, DeclaredWetMetric,
-    LeaderDistanceMetric, WhiteFlagTimeMetric, LapLeaderDistanceMetric
+    LeaderDistanceMetric, WhiteFlagTimeMetric, LapLeaderDistanceMetric, TrackLayoutMetric
 };
-constexpr int MetricCount=LapLeaderDistanceMetric+1;
-const wchar_t* MetricTitles[]={L"None",L"Track",L"Incidents",L"Track Temperature",L"Air Temperature",L"Temperatures",L"Session Time Remaining",L"Session Time Elapsed",L"Current Lap",L"Current / Expected Final Lap",L"Estimated Laps Remaining",L"Local Time",L"Sim Time",L"Session Type",L"Track Wetness",L"Wind",L"Class SOF",L"Overlay Name",L"Position in Class",L"Brake Bias (your car)",L"Stops Needed (your car)",L"Declared Wet",L"Leader projected race distance",L"Time left at leader's final lap",L"Current lap / Leader projected distance"};
+constexpr int MetricCount=TrackLayoutMetric+1;
+const wchar_t* MetricTitles[]={L"None",L"Track",L"Incidents",L"Track Temperature",L"Air Temperature",L"Temperatures",L"Session Time Remaining",L"Session Time Elapsed",L"Current Lap",L"Current / Expected Final Lap",L"Estimated Laps Remaining",L"Local Time",L"Sim Time",L"Session Type",L"Track Wetness",L"Wind",L"Class SOF",L"Overlay Name",L"Position in Class",L"Brake Bias (your car)",L"Stops Needed (your car)",L"Declared Wet",L"Leader projected race distance",L"Time left at leader's final lap",L"Current lap / Leader projected distance",L"Track and layout"};
 static_assert(std::size(MetricTitles)==MetricCount);
 // The first slot sits on the left, the others right-aligned in order. Keys keep their earlier names.
 constexpr int SlotCount=4;
@@ -168,17 +168,18 @@ Bands DefaultBands(int kind) {
     if(kind==FuelKind) return {true,{OverlayNameMetric,FinalLapMetric,StopsNeededMetric,NoMetric},{false,DefaultFooter}};
     if(kind==WeatherKind) return {true,{OverlayNameMetric,DeclaredWetMetric,NoMetric,NoMetric},{false,DefaultFooter}};
     if(kind==PitLimiterKind) return {false,{OverlayNameMetric,NoMetric,NoMetric,NoMetric},{false,DefaultFooter}};
-    if(kind==TrackMapKind) return {true,{OverlayNameMetric,NoMetric,NoMetric,NoMetric},{false,DefaultFooter}};
+    if(kind==TrackMapKind) return {true,{TrackLayoutMetric,NoMetric,NoMetric,NoMetric},{false,DefaultFooter}};
     return {};
 }
 struct FuelSettings { std::array<bool,FuelModuleCount> display{}; std::array<bool,FuelMetricCount> figures{}; std::vector<int> order=FuelOrder; bool strip=false; };
 struct WeatherSettings { std::array<bool,WeatherModuleCount> display{}; std::vector<int> order=WeatherOrder; bool strip=false; };
 struct TrackMapSettings {
-    bool numbers=true, ownClass=false, pit=true, details=true, background=true, pitLane=true, startFinish=true;
+    bool numbers=true, ownClass=false, pit=true, details=false, background=true, pitLane=true, startFinish=true;
     bool cornerNumbers=false, cornerNames=false, labelContrast=true;
     int labelScale=100;
 };
-constexpr int TrackMapWidth=440, TrackMapBodyHeight=328;
+constexpr int TrackMapWidth=440, TrackMapBodyHeight=264;
+constexpr const wchar_t* TrackMapPreviewName=L"Lime Rock Park · Grand Prix"; // The preview's map and sample cars.
 constexpr COLORREF TrackMapTransparentKey=RGB(1,2,3); // Reserved, distinct from marker text and fills.
 // One overlay window. A kind can have several instances; the first keeps the kind's plain name and settings section.
 struct Overlay {
@@ -194,8 +195,11 @@ struct Overlay {
     struct Logo { int index, size; HBITMAP bitmap; };
     std::vector<Logo> logos; // Car brand logos at this overlay's size, premultiplied for AlphaBlend.
     HBITMAP mapBitmap=nullptr; int mapWidth=0,mapHeight=0,mapStyle=-1; unsigned mapRevision=~0u;
-    struct MapMarker { int width,height,stroke; COLORREF color; bool hollow; HBITMAP bitmap; };
+    struct MapMarker { int width,height,stroke; COLORREF color; bool hollow; HBITMAP bitmap; const std::uint32_t* bits; };
     std::vector<MapMarker> mapMarkers;
+    // The map area plus a margin, where car markers are blended in software before one copy back.
+    HDC canvasDc=nullptr; HBITMAP canvas=nullptr; HGDIOBJ canvasOriginal=nullptr; std::uint32_t* canvasBits=nullptr;
+    RECT canvasRect{}; bool canvasPending=false;
     // Rows for the current model version.
     mutable unsigned rowsVersion=~0u; mutable std::vector<Row> relativeRows; mutable std::vector<StandingsGroup> standingsGroups;
     void Free() {
@@ -206,6 +210,8 @@ struct Overlay {
         mapBitmap=nullptr; mapWidth=mapHeight=0; mapStyle=-1; mapRevision=~0u;
         for(const auto& marker:mapMarkers) DeleteObject(marker.bitmap);
         mapMarkers.clear();
+        if(canvasDc) { SelectObject(canvasDc,canvasOriginal); DeleteDC(canvasDc); DeleteObject(canvas); }
+        canvasDc=nullptr; canvas=nullptr; canvasBits=nullptr; canvasRect={}; canvasPending=false;
         for(HFONT& font:fonts) if(font) { DeleteObject(font); font=nullptr; }
         dc=nullptr; bitmap=nullptr; width=height=dpi=0; scene.clear(); widths.clear();
     }
@@ -505,7 +511,7 @@ void ReadInstance(Overlay& o) {
     o.weather.strip=o.fuel.strip;
     if(kind==TrackMapKind) {
         o.map.numbers=ReadBool(section.c_str(),L"ShowCarNumbers",true); o.map.ownClass=ReadBool(section.c_str(),L"OwnClass",false);
-        o.map.pit=ReadBool(section.c_str(),L"ShowPitCars",true); o.map.details=ReadBool(section.c_str(),L"ShowMapDetails",true);
+        o.map.pit=ReadBool(section.c_str(),L"ShowPitCars",true); o.map.details=ReadBool(section.c_str(),L"ShowMapDetails",false);
         o.map.background=ReadBool(section.c_str(),L"ShowBackground",true); o.map.pitLane=ReadBool(section.c_str(),L"ShowPitLane",true);
         o.map.startFinish=ReadBool(section.c_str(),L"ShowStartFinish",true);
         o.map.cornerNumbers=ReadBool(section.c_str(),L"ShowCornerNumbers",false); o.map.cornerNames=ReadBool(section.c_str(),L"ShowCornerNames",false);
@@ -1390,6 +1396,7 @@ void PaintScene(Overlay& o,HRGN dirty) {
     int font=-1;
     for(const auto& c:o.scene) {
         if(dirty && !RectInRegion(dirty,&c.r)) continue;
+        if(o.canvasPending && c.type!=DrawCommand::MapCar) FlushMapCanvas(o);
         switch(c.type) {
         case DrawCommand::Fill: SetDCBrushColor(dc,c.color); FillRect(dc,&c.r,static_cast<HBRUSH>(GetStockObject(DC_BRUSH))); break;
         case DrawCommand::Text: if(font!=c.font) { SelectObject(dc,o.fonts[c.font]); font=c.font; } DrawLabel(dc,c); break;
@@ -1461,6 +1468,7 @@ void PaintScene(Overlay& o,HRGN dirty) {
         }
         }
     }
+    if(o.canvasPending) FlushMapCanvas(o);
     SelectClipRgn(dc,nullptr);
     if(logoAtlas.bitmap) ReleaseLogoAtlas();
 }
@@ -1490,15 +1498,15 @@ void RefreshOverlay(Overlay& o) {
     const bool full=resized || app.sceneBuffer.size()!=o.scene.size();
     HRGN dirty=nullptr;
     if(!full) {
-        for(size_t i=0;i<app.sceneBuffer.size();++i) {
-            const auto& a=app.sceneBuffer[i]; const auto& b=o.scene[i];
-            if(a==b) continue;
-            for(const RECT* r:{&a.r,&b.r}) {
-                HRGN part=CreateRectRgnIndirect(r);
-                if(!dirty) dirty=part; else { CombineRgn(dirty,dirty,part,RGN_OR); DeleteObject(part); }
-            }
+        // The old and new areas of what changed. Many small areas, such as cars moving on the track map,
+        // cost more to combine and to clip against than repainting the whole scene once.
+        constexpr size_t MaxChanges=24; size_t changed[MaxChanges]; size_t count=0; bool many=false;
+        for(size_t i=0;i<app.sceneBuffer.size() && !many;++i) if(!(app.sceneBuffer[i]==o.scene[i])) { if(count==MaxChanges) many=true; else changed[count++]=i; }
+        if(!count) return;
+        if(!many) for(size_t n=0;n<count;++n) for(const RECT* r:{&app.sceneBuffer[changed[n]].r,&o.scene[changed[n]].r}) {
+            HRGN part=CreateRectRgnIndirect(r);
+            if(!dirty) dirty=part; else { CombineRgn(dirty,dirty,part,RGN_OR); DeleteObject(part); }
         }
-        if(!dirty) return;
     }
     std::swap(o.scene,app.sceneBuffer);
     PaintScene(o,dirty);

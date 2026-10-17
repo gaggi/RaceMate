@@ -16,10 +16,10 @@ private:
         toggle(L"Background and frame",L"Off: transparent map and cars only. Hides the frame, captions, header and footer; their settings are kept.",o_.map.background,Background);
         toggle(L"Pit lane",L"Show the official pit-lane drawing, independently of cars in the pits.",o_.map.pitLane,PitLane);
         toggle(L"Start/finish marking",L"Show the line and direction arrow. Position mapping keeps using these data when hidden.",o_.map.startFinish,StartFinish);
-        toggle(L"Car numbers",L"Switch off for smaller dots. Your reference car is yellow with a white outline.",o_.map.numbers,Numbers);
+        toggle(L"Car numbers",L"Switch off for smaller dots. Cars use their class color; the car you drive or watch is yellow with a white ring.",o_.map.numbers,Numbers);
         toggle(L"Own class only",L"Uses the class of your car, or the car you are watching.",o_.map.ownClass,OwnClass);
         toggle(L"Cars in the pits",L"Hollow markers at their lap percentage on the main circuit; not their exact pit-lane position.",o_.map.pit,Pit);
-        toggle(L"Projection details",L"Show track ID, cache source, refresh rate and the distance-projection notice. With background only.",o_.map.details,Details);
+        toggle(L"Projection details",L"A line under the map with track ID, cache source, refresh rate and the projection notice. With background only.",o_.map.details,Details);
         rows.back().muted=MapOnly(o_); rows.back().toggleEnabled=!MapOnly(o_);
         auto rounded=RoundedRow(o_); rounded.muted=MapOnly(o_); rounded.toggleEnabled=!MapOnly(o_); push(std::move(rounded),Rounded);
         heading(L"Corner labels");

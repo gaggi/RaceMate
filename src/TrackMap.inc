@@ -118,7 +118,7 @@ void PaintMap(Overlay& o,const DrawCommand& c) {
             DrawMapLayer(graphics,trackMap.geometry.active,transform,RGB(110,120,134));
             // The stripe is clear on the map; the arrow may lie outside its tight bounds.
             if(o.map.startFinish) DrawMapLayer(graphics,trackMap.geometry.finish,transform,Ink::White);
-            Gdiplus::FontFamily family(L"Arial");
+            Gdiplus::FontFamily family(L"Segoe UI");
             Gdiplus::StringFormat format(Gdiplus::StringFormat::GenericTypographic());
             format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
             Gdiplus::SolidBrush brush(Gdiplus::Color(255,232,237,242));
@@ -144,11 +144,49 @@ void PaintMap(Overlay& o,const DrawCommand& c) {
     HDC source=CreateCompatibleDC(o.dc); const auto old=SelectObject(source,o.mapBitmap);
     BitBlt(o.dc,c.r.left,c.r.top,width,height,source,0,0,SRCCOPY);
     SelectObject(source,old); DeleteDC(source);
+    // The cars follow: copy the map area with room for markers at its edge into the canvas.
+    const int margin=MulDiv(18,o.dpi*o.place.scale,9600);
+    RECT area=c.r; InflateRect(&area,margin,margin);
+    const RECT buffer{0,0,o.width,o.height}; IntersectRect(&area,&area,&buffer);
+    const int w=area.right-area.left,h=area.bottom-area.top;
+    if(w<=0 || h<=0) return;
+    if(!o.canvasDc || o.canvasRect.right-o.canvasRect.left!=w || o.canvasRect.bottom-o.canvasRect.top!=h) {
+        if(o.canvasDc) { SelectObject(o.canvasDc,o.canvasOriginal); DeleteDC(o.canvasDc); DeleteObject(o.canvas); o.canvasDc=nullptr; }
+        BITMAPINFO info{}; info.bmiHeader={sizeof(BITMAPINFOHEADER),w,-h,1,32,BI_RGB}; void* bits=nullptr;
+        o.canvas=CreateDIBSection(nullptr,&info,DIB_RGB_COLORS,&bits,nullptr,0);
+        if(!o.canvas) return;
+        o.canvasDc=CreateCompatibleDC(o.dc); o.canvasOriginal=SelectObject(o.canvasDc,o.canvas); o.canvasBits=static_cast<std::uint32_t*>(bits);
+    }
+    o.canvasRect=area;
+    BitBlt(o.canvasDc,0,0,w,h,o.dc,area.left,area.top,SRCCOPY); GdiFlush();
+    o.canvasPending=true;
+}
+// Back into the buffer, clipped like every other command.
+void FlushMapCanvas(Overlay& o) {
+    o.canvasPending=false;
+    const auto& r=o.canvasRect;
+    BitBlt(o.dc,r.left,r.top,r.right-r.left,r.bottom-r.top,o.canvasDc,0,0,SRCCOPY);
+}
+// Premultiplied source over the canvas: a few hundred pixels per car instead of one AlphaBlend call each.
+void BlendMarker(Overlay& o,const RECT& r,const std::uint32_t* source,int width,int height) {
+    const int W=o.canvasRect.right-o.canvasRect.left,H=o.canvasRect.bottom-o.canvasRect.top;
+    const int left=r.left-o.canvasRect.left,top=r.top-o.canvasRect.top;
+    for(int y=std::max(0,-top);y<height && top+y<H;++y) {
+        const std::uint32_t* from=source+y*width; std::uint32_t* to=o.canvasBits+(top+y)*W+left;
+        for(int x=std::max(0,-left);x<width && left+x<W;++x) {
+            const std::uint32_t s=from[x],alpha=s>>24;
+            if(!alpha) continue;
+            if(alpha==255) { to[x]=s; continue; }
+            const std::uint32_t d=to[x],keep=255-alpha;
+            auto channel=[&](int shift){ return ((s>>shift)&255)+(((d>>shift)&255)*keep+127)/255; };
+            to[x]=channel(0)|channel(8)<<8|channel(16)<<16|0xFF000000u;
+        }
+    }
 }
 void PaintMapCar(Overlay& o,const DrawCommand& c) {
     const int width=c.r.right-c.r.left,height=c.r.bottom-c.r.top,stroke=std::max(1,static_cast<int>(c.shape[0]));
-    const bool hollow=c.shape[1]!=0; HBITMAP bitmap=nullptr;
-    for(const auto& marker:o.mapMarkers) if(marker.width==width && marker.height==height && marker.stroke==stroke && marker.color==c.color && marker.hollow==hollow) { bitmap=marker.bitmap; break; }
+    const bool hollow=c.shape[1]!=0; HBITMAP bitmap=nullptr; const std::uint32_t* pixels=nullptr;
+    for(const auto& marker:o.mapMarkers) if(marker.width==width && marker.height==height && marker.stroke==stroke && marker.color==c.color && marker.hollow==hollow) { bitmap=marker.bitmap; pixels=marker.bits; break; }
     if(!bitmap) {
         // Draw each antialiased symbol once into premultiplied pixels. GDI+ / GDI
         // transitions for every moving car are much more expensive than AlphaBlend.
@@ -168,8 +206,11 @@ void PaintMapCar(Overlay& o,const DrawCommand& c) {
         // Even the most unusual multiclass session is bounded by MaxCars colors;
         // scale/DPI changes clear the entire cache in Overlay::Free().
         if(o.mapMarkers.size()>=MaxCars*4+4) { for(const auto& marker:o.mapMarkers) DeleteObject(marker.bitmap); o.mapMarkers.clear(); }
-        o.mapMarkers.push_back({width,height,stroke,c.color,hollow,bitmap});
+        GdiFlush(); pixels=static_cast<const std::uint32_t*>(bits);
+        o.mapMarkers.push_back({width,height,stroke,c.color,hollow,bitmap,pixels});
     }
+    if(o.canvasPending) { BlendMarker(o,c.r,pixels,width,height); return; }
+    // Only the cars changed and the map was not repainted: blend directly.
     HDC source=CreateCompatibleDC(o.dc); const auto old=SelectObject(source,bitmap);
     AlphaBlend(o.dc,c.r.left,c.r.top,width,height,source,0,0,width,height,{AC_SRC_OVER,0,255,AC_SRC_ALPHA});
     SelectObject(source,old); DeleteDC(source);
