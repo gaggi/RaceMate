@@ -162,6 +162,7 @@ struct TableSettings {
     int nameFormat=0;
     int rows=7, gapDecimals=1; bool hidePit=false, best=false, last=false, lapColors=true; // Relative.
     StandingsOptions standings; bool interval=false, laps=false, gained=false, progress=true, pitExit=false; // Standings.
+    int pitExitAhead=2, pitExitBehind=2; // Cars shown around the pit exit row.
 };
 // Every overlay uses the same selectable header/footer metrics.
 struct Bands { bool header=false; Slots headerMetrics=DefaultHeader; FooterSettings footer; };
@@ -495,6 +496,7 @@ void ReadTable(const wchar_t* section,int kind,TableSettings& t) {
         standings.ahead=std::clamp(ReadInt(section,L"Ahead",2),0,MaxCars);
         standings.behind=std::clamp(ReadInt(section,L"Behind",2),0,MaxCars);
         t.progress=ReadBool(section,L"ShowProgress",true); t.pitExit=ReadBool(section,L"ShowPitExitRow",false);
+        t.pitExitAhead=std::clamp(ReadInt(section,L"PitExitAhead",2),0,MaxCars); t.pitExitBehind=std::clamp(ReadInt(section,L"PitExitBehind",2),0,MaxCars);
         t.laps=ReadBool(section,L"ShowLaps",false);
         t.gained=ReadBool(section,L"ShowPositionsGained",false);
     }
@@ -604,7 +606,8 @@ void Save() {
                 number(section,L"SeparateClasses",standings.separateClasses); number(section,L"OwnClass",standings.ownClass);
                 number(section,L"LiveGaps",standings.liveGaps); number(section,L"FallbackByIRating",standings.fallbackByRating);
                 number(section,L"Leaders",standings.leaders); number(section,L"Ahead",standings.ahead); number(section,L"Behind",standings.behind);
-                number(section,L"ShowProgress",t.progress); number(section,L"ShowPitExitRow",t.pitExit); number(section,L"ShowLaps",t.laps); number(section,L"ShowPositionsGained",t.gained);
+                number(section,L"ShowProgress",t.progress); number(section,L"ShowPitExitRow",t.pitExit);
+                number(section,L"PitExitAhead",t.pitExitAhead); number(section,L"PitExitBehind",t.pitExitBehind); number(section,L"ShowLaps",t.laps); number(section,L"ShowPositionsGained",t.gained);
             }
         }
         if(o.kind==FuelKind) {
@@ -712,19 +715,42 @@ const std::vector<Row>& RelativeRows(const Overlay& o) {
     return o.relativeRows;
 }
 const PitRejoin& PitExit();
+// The pit exit as a row of its own, right behind the car that would then be just ahead, with the chosen number of
+// cars around it, added from the full standings where the usual selection leaves them out.
+void AddPitExitRow(const Overlay& o) {
+    const auto& rejoin=PitExit(); if(!rejoin.valid) return;
+    auto everyone=o.table.standings; everyone.leaders=MaxCars; everyone.ahead=everyone.behind=0;
+    const auto full=SelectStandings(app.session,app.frame,everyone);
+    const bool byClass=o.table.standings.separateClasses; const int ahead=byClass?rejoin.classAhead:rejoin.overallAhead;
+    for(const auto& source:full) {
+        const auto own=std::find_if(source.rows.begin(),source.rows.end(),[](const Row& r){ return r.player; });
+        if(own==source.rows.end()) continue;
+        const auto target=std::find_if(o.standingsGroups.begin(),o.standingsGroups.end(),[&](const StandingsGroup& g){ return g.classId==source.classId; });
+        if(target==o.standingsGroups.end()) return;
+        // The other cars in race order; the pit exit follows the car just ahead after the stop, else it leads.
+        std::vector<const Row*> others; for(const auto& r:source.rows) if(!r.player) others.push_back(&r);
+        // The neighbour this view orders by; with only one class shown it may be the class neighbour instead.
+        int at=0; bool found=false;
+        for(int candidate:{ahead,rejoin.classAhead,rejoin.overallAhead}) for(int i=0;i<static_cast<int>(others.size()) && !found;++i)
+            if(candidate>=0 && others[i]->driver.index==candidate) { at=i+1; found=true; }
+        auto& rows=target->rows;
+        auto shown=[&](int index){ return std::any_of(rows.begin(),rows.end(),[&](const Row& r){ return r.driver.index==index; }); };
+        for(int i=std::max(0,at-o.table.pitExitAhead);i<std::min(static_cast<int>(others.size()),at+o.table.pitExitBehind);++i)
+            if(!shown(others[i]->driver.index)) rows.push_back(*others[i]);
+        // Back into race order, then the row itself before the first other car from that point on.
+        auto order=[&](const Row& r){ for(size_t i=0;i<source.rows.size();++i) if(source.rows[i].driver.index==r.driver.index) return static_cast<int>(i); return MaxCars; };
+        std::stable_sort(rows.begin(),rows.end(),[&](const Row& a,const Row& b){ return order(a)<order(b); });
+        auto rank=[&](const Row& r){ for(int i=0;i<static_cast<int>(others.size());++i) if(others[i]->driver.index==r.driver.index) return i; return -1; };
+        const auto before=std::find_if(rows.begin(),rows.end(),[&](const Row& r){ return !r.player && rank(r)>=at; });
+        Row row=*own; row.player=false; row.pitExit=true; row.car.position=rejoin.position; row.car.classPosition=rejoin.classPosition;
+        rows.insert(before,row);
+        return;
+    }
+}
 const std::vector<StandingsGroup>& StandingsGroups(const Overlay& o) {
     if(o.rowsVersion!=app.modelVersion) {
         o.standingsGroups=SelectStandings(app.session,app.frame,o.table.standings); o.rowsVersion=app.modelVersion;
-        // The pit exit as a row of its own, before the first car that would then be behind.
-        const auto& rejoin=PitExit();
-        if(o.table.pitExit && rejoin.valid) for(auto& group:o.standingsGroups) {
-            const auto own=std::find_if(group.rows.begin(),group.rows.end(),[](const Row& r){ return r.player; });
-            if(own==group.rows.end()) continue;
-            Row ghost=*own; ghost.player=false; ghost.pitExit=true; ghost.car.position=rejoin.position; ghost.car.classPosition=rejoin.classPosition;
-            const bool byClass=o.table.standings.separateClasses; const int position=byClass?rejoin.classPosition:rejoin.position;
-            const auto at=std::find_if(group.rows.begin(),group.rows.end(),[&](const Row& r){ return !r.player && (byClass?r.car.classPosition:r.car.position)>=position; });
-            group.rows.insert(at,ghost); break;
-        }
+        if(o.table.pitExit) AddPitExitRow(o);
     }
     return o.standingsGroups;
 }
@@ -804,8 +830,8 @@ const PitRejoin& PitExit() {
     return app.pitExit;
 }
 std::wstring PitExitAhead() {
-    const auto& r=PitExit(); if(!r.valid || r.ahead<0) return {};
-    for(const auto& d:app.session.drivers) if(d.index==r.ahead) return Format(r.aheadGap,1)+L" s behind #"+Wide(d.number);
+    const auto& r=PitExit(); if(!r.valid || r.classAhead<0) return {};
+    for(const auto& d:app.session.drivers) if(d.index==r.classAhead) return Format(r.classAheadGap,1)+L" s behind #"+Wide(d.number);
     return {};
 }
 PitWindow FuelWindow() {
@@ -1072,8 +1098,14 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                     label(std::move(cell.text),rect(x,y,ColumnWidth(o,PositionColumn)-8,27),Ink::Accent,Regular,Columns[PositionColumn].align);
                     x+=ColumnWidth(o,PositionColumn);
                 }
-                const auto ahead=PitExitAhead();
-                label(L"PIT EXIT  ·  "+Format(rejoin.loss,0)+L" s"+(app.pitExitPartial?L"?":L"")+(ahead.empty()?L"":L"  ·  "+ahead),rect(x,y,OverlayWidth(o)-x-12,27),Ink::Accent,Regular);
+                // The cars above and below are the neighbours; the row gives the gaps to them.
+                const bool byClass=o.table.standings.separateClasses;
+                const double front=byClass?(rejoin.classAhead>=0?rejoin.classAheadGap:-1):(rejoin.overallAhead>=0?rejoin.overallAheadGap:-1);
+                const double back=byClass?(rejoin.classBehind>=0?rejoin.classBehindGap:-1):(rejoin.overallBehind>=0?rejoin.overallBehindGap:-1);
+                std::wstring text=L"PIT EXIT  ·  "+Format(rejoin.loss,0)+L" s"+(app.pitExitPartial?L"?":L"");
+                if(front>=0) text+=L"  ·  "+Format(front,1)+L" s to the car ahead";
+                if(back>=0) text+=L"  ·  "+Format(back,1)+L" s to the car behind";
+                label(std::move(text),rect(x,y,OverlayWidth(o)-x-12,27),Ink::Accent,Regular);
                 y+=27; return;
             }
             fill({0,px(y),width,px(y+27)},r.player?Ink::OwnRow:Ink::Panel);

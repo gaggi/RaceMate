@@ -114,7 +114,12 @@ PitRejoin PredictRejoin(const Session& s,const Frame& f,double loss,double pace)
         if(d.index<0 || d.index>=MaxCars || d.index==f.player || d.paceCar || d.spectator) continue;
         const auto& car=f.cars[d.index];
         if(car.surface<0 || Completed(car)<0 || car.pct<0 || car.pct>=1) continue;
-        if(Completed(car)+car.pct>progress) { ++r.position; if(d.classId==own->classId) ++r.classPosition; }
+        const double lead=(Completed(car)+car.pct-progress)*pace; const bool sameClass=d.classId==own->classId;
+        if(lead>0) { ++r.position; if(sameClass) ++r.classPosition; }
+        // Neighbours in the race after the stop: smallest lead ahead and behind.
+        auto keep=[&](int& index,double& gap,double seconds) { if(index<0 || seconds<gap) { index=d.index; gap=seconds; } };
+        if(lead>0) { keep(r.overallAhead,r.overallAheadGap,lead); if(sameClass) keep(r.classAhead,r.classAheadGap,lead); }
+        else { keep(r.overallBehind,r.overallBehindGap,-lead); if(sameClass) keep(r.classBehind,r.classBehindGap,-lead); }
         if(car.estTime<0) continue;
         const double gap=Wrap(car.estTime-ghost,lap);
         // The lap fraction follows the nearest car, so slow and fast sections place the marker correctly.

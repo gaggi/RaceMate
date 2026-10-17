@@ -173,6 +173,19 @@ int RunDiagnostics() {
         const auto withExit=Rows(standings);
         pitOk=std::count_if(withExit.begin(),withExit.end(),[](const Row& r){ return r.pitExit; })==1 && pitOk;
         pitOk=std::any_of(standings.scene.begin(),standings.scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::Fill && c.color==Ink::PitExitRow; }) && Export(standings.window,L"build\\qa\\standings-pit-exit.bmp") && pitOk;
+        // Right behind the car just ahead after the stop, even where the usual selection shows only the leader:
+        // two cars ahead and two behind the row are added.
+        standings.table.standings.separateClasses=true; standings.table.standings.leaders=1; standings.table.standings.ahead=standings.table.standings.behind=0; SettingChanged();
+        {
+            const auto rows=Rows(standings); const auto row=std::find_if(rows.begin(),rows.end(),[](const Row& r){ return r.pitExit; });
+            const auto& r=PitExit();
+            if(row!=rows.end()) { auto previous=row; while(previous!=rows.begin() && (previous-1)->player) --previous; pitOk=(r.classAhead<0 || (previous!=rows.begin() && (previous-1)->driver.index==r.classAhead)) && pitOk; }
+            else pitOk=false;
+            int own=0; for(const auto& x:rows) if(!x.pitExit && x.driver.classId==row->driver.classId && !x.player) ++own;
+            // Only the leader would be shown besides you; the cars around the row make it at least three.
+            pitOk=own>=3 && pitOk;
+            pitOk=Export(standings.window,L"build\\qa\\standings-pit-exit-around.bmp") && pitOk;
+        }
         standings.table=table; SettingChanged();
         // Leaving the pits or replays give no estimate.
         app.frame.pit=true; InvalidateModel(); pitOk=!PitExit().valid && FooterValue(PitExitMetric)==L"Pit exit —" && pitOk;

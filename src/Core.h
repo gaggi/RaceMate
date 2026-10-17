@@ -282,6 +282,9 @@ struct PitRejoin {
     int position = -1, classPosition = -1; // Overall and in class after the stop, if everyone keeps their pace.
     int ahead = -1, behind = -1;           // Nearest cars on track at the rejoin point and their gaps in seconds.
     double aheadGap = -1, behindGap = -1;
+    // The cars just ahead and just behind in the race after the stop, in class and overall, with gaps in seconds.
+    int classAhead = -1, classBehind = -1, overallAhead = -1, overallBehind = -1;
+    double classAheadGap = -1, classBehindGap = -1, overallAheadGap = -1, overallBehindGap = -1;
 };
 PitRejoin PredictRejoin(const Session&, const Frame&, double loss, double pace);
 Session DemoSession();

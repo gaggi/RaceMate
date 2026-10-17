@@ -82,6 +82,8 @@ void PitStopTests() {
         const auto r=PredictRejoin(s,f,20,Lap);
         Require(r.valid && r.position==3 && r.classPosition==2,"one car passes during the stop, one stays behind; other class counted overall");
         Require(r.ahead==1 && r.behind==2,"nearest cars at the rejoin point");
+        Require(r.classAhead==1 && r.classBehind==2 && r.overallAhead==1 && r.overallBehind==2,"neighbours in the race after the stop");
+        Near(r.classAheadGap,5,"5 s to the class car ahead"); Near(r.classBehindGap,5,"5 s to the class car behind");
         Near(r.aheadGap,5,"5 s to the car ahead"); Near(r.behindGap,5,"5 s to the car behind"); Near(r.pct,.30,"rejoins at 30 %");
         f.replay=true; f.onTrack=false; Require(!PredictRejoin(s,f,20,Lap).valid,"no estimate while old footage plays");
     }

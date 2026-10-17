@@ -5,7 +5,7 @@ public:
     explicit TablePage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
     enum class Key { None, Rounded, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, ClassView, OwnClass, LiveGaps, UntimedOrder, ClassColors, LapColors, Progress, PitExit, Column, Header, Footer, ColumnHeadings };
-    static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, NameFormatEditId=201, FlagEditId=202, ShortViewEditId=205, SlotEditId=206, BrandLogoEditId=213, BrandNameEditId=214;
+    static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, PitAheadEditId=215, PitBehindEditId=216, NameFormatEditId=201, FlagEditId=202, ShortViewEditId=205, SlotEditId=206, BrandLogoEditId=213, BrandNameEditId=214;
     static constexpr UINT_PTR TypingTimer=1;
     static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E', UpGlyph=L'\uE74A', DownGlyph=L'\uE74B';
     struct ColumnText { const wchar_t* name; const wchar_t* detail; };
@@ -105,8 +105,9 @@ private:
         if(o_.kind==StandingsKind) {
             RowList::Row progress; progress.title=L"Session progress"; progress.detail=L"A thin bar under the header, by laps or by time.";
             progress.toggle=o_.table.progress?1:0; push(std::move(progress),Key::Progress);
-            RowList::Row pitExit; pitExit.title=L"Pit exit row"; pitExit.detail=L"In races, a faded row of your own where you would rejoin if you boxed now. Times under Settings, Pit stop estimate.";
-            pitExit.toggle=o_.table.pitExit?1:0; push(std::move(pitExit),Key::PitExit);
+            RowList::Row pitExit; pitExit.title=L"Pit exit row";
+            pitExit.detail=L"In races, a faded row where you would rejoin if you boxed now, with "+std::to_wstring(o_.table.pitExitAhead)+L" cars ahead and "+std::to_wstring(o_.table.pitExitBehind)+L" behind it. Times under Settings, Pit stop estimate.";
+            pitExit.toggle=o_.table.pitExit?1:0; expandable(pitExit,Key::PitExit,-1,48); push(std::move(pitExit),Key::PitExit);
         }
         header(L"Columns  \u00B7  left to right");
         const auto& order=o_.table.columnOrder;
@@ -154,6 +155,14 @@ private:
                 SetWindowLongPtrW(edit,GWL_STYLE,GetWindowLongPtrW(edit,GWL_STYLE)|ES_NUMBER); SendMessageW(edit,EM_SETLIMITTEXT,3,0);
             }
             editors_.Label(L"0 to 128 each",450,10,0);
+        } else if(expandedKey_==Key::PitExit) {
+            const wchar_t* labels[]={L"Ahead",L"Behind"}; const int values[]={o_.table.pitExitAhead,o_.table.pitExitBehind};
+            for(int i=0;i<2;++i) {
+                editors_.Label(labels[i],i*150,10,56);
+                const HWND edit=editors_.Edit(PitAheadEditId+i,std::to_wstring(values[i]),i*150+60,10,64);
+                SetWindowLongPtrW(edit,GWL_STYLE,GetWindowLongPtrW(edit,GWL_STYLE)|ES_NUMBER); SendMessageW(edit,EM_SETLIMITTEXT,3,0);
+            }
+            editors_.Label(L"cars around the pit exit row",300,10,0);
         } else if(expandedKey_==Key::Header || expandedKey_==Key::Footer) {
             BandEditors(editors_,o_,expandedKey_==Key::Footer,SlotEditId);
         } else if(expandedId_==DriverColumn) {
@@ -196,6 +205,10 @@ private:
             changed=read(AheadEditId,o_.table.standings.ahead,0) | changed;
             changed=read(BehindEditId,o_.table.standings.behind,0) | changed;
         }
+        if(expandedKey_==Key::PitExit) {
+            changed=read(PitAheadEditId,o_.table.pitExitAhead,0) | changed;
+            changed=read(PitBehindEditId,o_.table.pitExitBehind,0) | changed;
+        }
         if(changed) Changed();
     }
     void ChooseDecimals() {
@@ -206,7 +219,7 @@ private:
     void OnTimer(UINT_PTR id) override { if(id==TypingTimer) ApplyRows(); }
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); return true; }
-        if(id==RowsEditId || (id>=LeadersEditId && id<=BehindEditId)) { if(code==EN_CHANGE && !syncing_) { typing_=true; SetTimer(Handle(),TypingTimer,500,nullptr); } return true; }
+        if(id==RowsEditId || (id>=LeadersEditId && id<=BehindEditId) || id==PitAheadEditId || id==PitBehindEditId) { if(code==EN_CHANGE && !syncing_) { typing_=true; SetTimer(Handle(),TypingTimer,500,nullptr); } return true; }
         if(id==BrandLogoEditId || id==BrandNameEditId) {
             if(!syncing_ && code==BN_CLICKED) { (id==BrandLogoEditId?o_.table.brandLogo:o_.table.brandName)=editors_.Checked(id); Changed(); }
             return true;
@@ -242,7 +255,7 @@ private:
         case Key::ClassColors: if(code==RowList::kToggled) { o_.table.classColors=on; Changed(); } break;
         case Key::LapColors: if(code==RowList::kToggled) { o_.table.lapColors=on; Changed(); } break;
         case Key::Progress: if(code==RowList::kToggled) { o_.table.progress=on; Changed(); } break;
-        case Key::PitExit: if(code==RowList::kToggled) { o_.table.pitExit=on; Changed(); } break;
+        case Key::PitExit: if(code==RowList::kToggled) { o_.table.pitExit=on; Changed(); } else if(toggleExpand) Expand(key,-1); break;
         case Key::LiveGaps: if(code==RowList::kToggled) { o_.table.standings.liveGaps=on; Changed(); } break;
         case Key::UntimedOrder:
             if(pressed) { const int choice=ChooseFromMenu({L"By car number",L"By iRating, highest first"},o_.table.standings.fallbackByRating?1:0); if(choice>=0) { o_.table.standings.fallbackByRating=choice==1; Changed(); } }
