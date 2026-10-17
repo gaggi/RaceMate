@@ -147,6 +147,7 @@ The Race Control page independently switches **Fuel to finish** (the same green 
 - **Background rate** 5, 10, 15 or 20 Hz (default 10, Settings page): how often RaceMate reads iRacing for Race Control events, pit stops, fuel learning and the finish forecast, even while no overlay redraws. Overlays have their own rate; one set faster raises it. One connection attempt per second while iRacing is not running.
 - Each overlay updates at its own rate, keeps a list of draw commands and repaints only the parts that changed.
 - Session YAML is parsed only when iRacing updates it.
+- `RaceMate.exe --profile` measures where the time goes while it runs: telemetry and session YAML, each analysis, each overlay's update, presentation and screen copy, against the process CPU. Every 10 s it overwrites `%LOCALAPPDATA%\RaceMate\profile.txt` with the last 10 s. Without the switch each measured spot costs one check of a flag.
 
 Measured on the development machine (`build.ps1 -Diagnostics`, then the benchmarks below): with 60 cars in three classes and every overlay visible, a refresh of all overlays costs about 0.6 ms of CPU time, about 2.5 ms per second at the default rates; reading a telemetry frame about 4 µs.
 

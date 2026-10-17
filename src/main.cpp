@@ -20,6 +20,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <deque>
+#include <fstream>
 #include <list>
 #include <map>
 #ifdef RACEMATE_DIAGNOSTICS
@@ -269,6 +271,26 @@ struct App {
     std::vector<DrawCommand> sceneBuffer; bool overlayClass=false;
     NOTIFYICONDATAW tray{};
 } app;
+// --profile: where RaceMate spends its time while it runs, written every 10 s to profile.txt beside settings.ini.
+// Off, each measured spot costs one check of a flag.
+struct Profiler {
+    struct Entry { std::string name; LONGLONG ticks=0; long long calls=0; };
+    bool on=false; ULONGLONG start=0; ULONGLONG cpuStart=0; long long ticks=0; LONGLONG sessionStart=0; int parsesStart=0;
+    std::deque<Entry> entries; // A deque keeps entries in place while nested scopes hold them.
+    Entry& At(const std::string& name) { for(auto& e:entries) if(e.name==name) return e; entries.push_back({name}); return entries.back(); }
+} profiler;
+struct ProfileScope {
+    Profiler::Entry* entry=nullptr; LARGE_INTEGER started{};
+    explicit ProfileScope(const char* name) { if(profiler.on) { entry=&profiler.At(name); QueryPerformanceCounter(&started); } }
+    template<class Name> explicit ProfileScope(bool,const Name& name) { if(profiler.on) { entry=&profiler.At(name()); QueryPerformanceCounter(&started); } }
+    ~ProfileScope() { if(entry) { LARGE_INTEGER now{}; QueryPerformanceCounter(&now); entry->ticks+=now.QuadPart-started.QuadPart; ++entry->calls; } }
+    ProfileScope(const ProfileScope&)=delete; ProfileScope& operator=(const ProfileScope&)=delete;
+};
+ULONGLONG ProcessCpuMicroseconds() {
+    FILETIME created{},exited{},kernel{},user{}; GetProcessTimes(GetCurrentProcess(),&created,&exited,&kernel,&user);
+    auto value=[](FILETIME t){ return (static_cast<ULONGLONG>(t.dwHighDateTime)<<32|t.dwLowDateTime)/10; };
+    return value(kernel)+value(user);
+}
 std::wstring Numbered(const wchar_t* name,int number) { return number>1?std::wstring(name)+L" "+std::to_wstring(number):std::wstring(name); }
 std::wstring Name(const Overlay& o) { return Numbered(Titles[o.kind],o.number); }
 std::wstring Section(const Overlay& o) { return Numbered(Sections[o.kind],o.number); }
@@ -1658,9 +1680,12 @@ bool EnsureBuffer(Overlay& o,int width,int height,int dpi) {
     return true;
 }
 // Rebuilds the scene and redraws only the commands that changed since the last refresh.
+// An overlay's part of the profile, named after it.
+std::string ProfileName(const Overlay& o,const char* part) { std::string name="overlay "; for(wchar_t c:Name(o)) name+=static_cast<char>(c<128?c:'?'); return name+": "+part; }
 // The buffer with its alpha as the window's content, at the overlay's opacity.
 void PresentLayered(const Overlay& o) {
     if(!o.dc || !o.window) return;
+    ProfileScope profile(true,[&]{ return ProfileName(o,"present (UpdateLayeredWindow)"); });
     RECT r{}; GetWindowRect(o.window,&r); POINT position{r.left,r.top}, source{0,0}; SIZE size{o.width,o.height};
     BLENDFUNCTION blend{AC_SRC_OVER,0,static_cast<BYTE>(o.place.opacity*255/100),AC_SRC_ALPHA};
     UpdateLayeredWindow(o.window,nullptr,&position,&size,o.dc,&source,0,&blend,ULW_ALPHA);
@@ -1669,6 +1694,7 @@ void PresentLayered(const Overlay& o) {
 std::array<LONGLONG,OverlayCount> refreshTicks{}; // Scene, changed areas and drawing into the buffer, per kind.
 #endif
 void RefreshOverlay(Overlay& o) {
+    ProfileScope profile(true,[&]{ return ProfileName(o,"update (scene, changes, drawing, present)"); });
 #ifdef RACEMATE_DIAGNOSTICS
     LARGE_INTEGER started{}; QueryPerformanceCounter(&started);
     struct Timer { LONGLONG& total; LARGE_INTEGER start; ~Timer() { LARGE_INTEGER now{}; QueryPerformanceCounter(&now); total+=now.QuadPart-start.QuadPart; } } timer{refreshTicks[o.kind],started};
@@ -1872,13 +1898,52 @@ void PollUpdates();
 constexpr UINT RefreshUiMessage=WM_APP+2;
 void ProcessFrame(bool connected) {
     if(!connected) { app.frame={}; app.events.Update(app.session,app.frame); app.session={}; app.pitLane.Reset(); app.refuel.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.weatherHistory.Reset(); }
-    else { app.pitHistory.Update(app.session,app.frame); UpdatePitStop(); app.events.Update(app.session,app.frame); app.fuel.Update(app.session,app.frame,true); app.weatherHistory.Update(app.session,app.frame); app.predictor.Update(app.session,app.frame); }
+    else {
+        { ProfileScope p("analysis: pit history"); app.pitHistory.Update(app.session,app.frame); }
+        { ProfileScope p("analysis: pit stop estimate"); UpdatePitStop(); }
+        { ProfileScope p("analysis: race control events"); app.events.Update(app.session,app.frame); }
+        { ProfileScope p("analysis: fuel"); app.fuel.Update(app.session,app.frame,true); }
+        { ProfileScope p("analysis: weather history"); app.weatherHistory.Update(app.session,app.frame); }
+        { ProfileScope p("analysis: finish prediction"); app.predictor.Update(app.session,app.frame); }
+    }
 }
+void WriteProfile();
 void Tick() {
-    app.now=GetTickCount64();
-    if(app.preview) PreviewData(app.now/1000.0);
-    else ProcessFrame(app.telemetry.Read(app.frame,app.session));
-    UpdateStatus(); UpdateOverlays(false); UpdateRaceControl(); PollUpdates(); Timer();
+    {
+        ProfileScope total("tick (everything below)");
+        app.now=GetTickCount64();
+        if(app.preview) PreviewData(app.now/1000.0);
+        else {
+            bool connected=false;
+            { ProfileScope p("telemetry read (session YAML included)"); connected=app.telemetry.Read(app.frame,app.session); }
+            ProcessFrame(connected);
+        }
+        { ProfileScope p("status"); UpdateStatus(); }
+        { ProfileScope p("overlays (all, update and present)"); UpdateOverlays(false); }
+        { ProfileScope p("race control window"); UpdateRaceControl(); }
+        PollUpdates(); Timer();
+    }
+    if(profiler.on) { ++profiler.ticks; if(app.now-profiler.start>=10000) WriteProfile(); }
+}
+// The last 10 s: process CPU against what was measured, then each part per second and per call.
+void WriteProfile() {
+    const double seconds=(app.now-profiler.start)/1000.0; if(seconds<=0) return;
+    LARGE_INTEGER frequency{}; QueryPerformanceFrequency(&frequency);
+    auto ms=[&](LONGLONG ticks){ return ticks*1000.0/frequency.QuadPart/seconds; };
+    const double cpu=(ProcessCpuMicroseconds()-profiler.cpuStart)/1000.0/seconds;
+    std::ofstream out(std::filesystem::path(app.config).parent_path()/L"profile.txt",std::ios::trunc);
+    char line[256];
+    std::snprintf(line,sizeof(line),"RaceMate %s profile, last %.1f s, %.1f ticks/s, timer %d ms\n",RACEMATE_VERSION,seconds,profiler.ticks/seconds,app.timerMs); out<<line;
+    std::snprintf(line,sizeof(line),"Process CPU (all threads): %.2f ms/s = %.2f %% of one core\n\n",cpu,cpu/10); out<<line;
+    out<<"  ms/s     us/call   calls/s  part\n";
+    auto row=[&](double perSecond,double perCall,double calls,const std::string& name){ std::snprintf(line,sizeof(line),"%7.3f  %9.1f  %8.1f  %s\n",perSecond,perCall,calls,name.c_str()); out<<line; };
+    for(const auto& e:profiler.entries) row(ms(e.ticks),e.calls?e.ticks*1e6/frequency.QuadPart/e.calls:0,e.calls/seconds,e.name);
+    const int parses=app.telemetry.sessionParses-profiler.parsesStart; const LONGLONG parseTicks=app.telemetry.sessionParseTicks-profiler.sessionStart;
+    row(ms(parseTicks),parses?parseTicks*1e6/frequency.QuadPart/parses:0,parses/seconds,"  of which session YAML parsing");
+    // The next window.
+    for(auto& e:profiler.entries) { e.ticks=0; e.calls=0; }
+    profiler.start=app.now; profiler.cpuStart=ProcessCpuMicroseconds(); profiler.ticks=0;
+    profiler.sessionStart=app.telemetry.sessionParseTicks; profiler.parsesStart=app.telemetry.sessionParses;
 }
 void ShowSettings() { ShowWindow(app.main,IsIconic(app.main)?SW_RESTORE:SW_SHOW); SetForegroundWindow(app.main); UpdateOverlays(); }
 void TogglePreview() { app.preview=!app.preview; app.pitLane.Reset(); app.refuel.Reset(); app.frame={}; app.session={}; app.weatherHistory.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.telemetry.Close(); app.events.Reset(); Tick(); RefreshPage(); }
@@ -1891,6 +1956,7 @@ LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     switch(m) {
     case WM_PAINT: {
         if(!o->dc) RefreshOverlay(*o);
+        ProfileScope profile(true,[&]{ return ProfileName(*o,"screen copy (WM_PAINT)"); });
         PAINTSTRUCT p{}; HDC dc=BeginPaint(w,&p); const RECT& r=p.rcPaint;
         if(o->dc) BitBlt(dc,r.left,r.top,r.right-r.left,r.bottom-r.top,o->dc,r.left,r.top,SRCCOPY);
         EndPaint(w,&p); return 0;
@@ -2013,6 +2079,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
 #endif
     const bool benchmark=wcsstr(args,L"--benchmark")!=nullptr;
     app.instance=instance; app.diagnostics=diagnostics || benchmark;
+    profiler.on=wcsstr(args,L"--profile")!=nullptr; profiler.start=GetTickCount64(); profiler.cpuStart=ProcessCpuMicroseconds();
     HANDLE mutex=nullptr;
     if(!app.diagnostics) {
         mutex=CreateMutexW(nullptr,FALSE,L"Local\\RaceMate.SingleInstance");

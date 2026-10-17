@@ -144,7 +144,9 @@ bool Telemetry::Read(Frame& f, Session& s) {
         MemoryBarrier();
         if(before!=h.sessionUpdate || before!=live->sessionUpdate || h.sessionOffset!=live->sessionOffset || h.sessionLength!=live->sessionLength) return f.connected;
         if(auto nul=yaml.find('\0');nul!=yaml.npos) yaml.resize(nul);
+        LARGE_INTEGER parseStart{},parseEnd{}; QueryPerformanceCounter(&parseStart);
         s=ParseSession(yaml,next.session); sessionUpdate_=before; sessionNumber_=next.session;
+        QueryPerformanceCounter(&parseEnd); sessionParseTicks+=parseEnd.QuadPart-parseStart.QuadPart; ++sessionParses;
     }
     if(next.player<0) next.player=s.player;
     if(!next.replay && next.player>=0 && next.player<MaxCars) {

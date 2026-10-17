@@ -35,6 +35,8 @@ public:
     explicit Telemetry(const wchar_t* mappingName = L"Local\\IRSDKMemMapFileName") : name_(mappingName) {}
     ~Telemetry() { Close(); }
     bool Read(Frame&, Session&);
+    // Time spent parsing the session YAML, in QueryPerformanceCounter ticks, and how often; for --profile.
+    long long sessionParseTicks = 0; int sessionParses = 0;
     void Close();
 private:
     bool Range(int offset, size_t size) const;

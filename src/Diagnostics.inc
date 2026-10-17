@@ -152,6 +152,19 @@ int RunDiagnostics() {
         ShowPage(Page::Overlays);
     }
     {
+        // --profile: ticks are measured per part and written to profile.txt beside settings.ini.
+        bool profileOk=true; auto& map=First(TrackMapKind); const auto placement=map.place; map.place.enabled=true; SettingChanged();
+        profiler.on=true; profiler.entries.clear(); profiler.start=GetTickCount64(); profiler.cpuStart=ProcessCpuMicroseconds(); profiler.ticks=0;
+        for(int i=0;i<20;++i) { for(auto& o:app.overlays) o.due=0; Tick(); }
+        profiler.start=GetTickCount64()-10001; Tick();
+        std::ifstream file(std::filesystem::path(app.config).parent_path()/L"profile.txt"); const std::string text((std::istreambuf_iterator<char>(file)),{});
+        profileOk=text.find("Process CPU")!=std::string::npos && text.find("tick (everything below)")!=std::string::npos
+            && text.find("overlay Track Map: update")!=std::string::npos && text.find("session YAML parsing")!=std::string::npos && profileOk;
+        profiler.on=false; profiler.entries.clear(); map.place=placement; SettingChanged();
+        report<<"Profile: parts measured and written every 10 s: "<<(profileOk?"PASS":"FAIL")<<"\n"; ok=profileOk && ok;
+        if(!profileOk) report<<text;
+    }
+    {
         // Pit exit in the preview: 22 s lane loss plus 20 s service; metric, Fuel module and the ring on the track map.
         bool pitOk=true; InvalidateModel();
         const auto& rejoin=PitExit(); const std::wstring position=L"P"+std::to_wstring(rejoin.classPosition);
