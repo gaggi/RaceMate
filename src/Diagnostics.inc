@@ -171,6 +171,15 @@ int RunDiagnostics() {
             // Your car is drawn last, marker then number, above every other car and number.
             std::vector<const DrawCommand*> drawn; for(const auto& c:map.scene) if(c.type==DrawCommand::MapCar || c.type==DrawCommand::MapLabel) drawn.push_back(&c);
             pitOk=drawn.size()>=2 && drawn.back()->type==DrawCommand::MapLabel && drawn[drawn.size()-2]->type==DrawCommand::MapCar && drawn[drawn.size()-2]->color==Ink::Yellow && pitOk;
+            // The other cars from the back to the front, each number right after its own marker, so the leader is on top.
+            int previousPosition=MaxCars+2; const DrawCommand* previous=nullptr;
+            for(size_t i=0;i+2<drawn.size();++i) if(drawn[i]->type==DrawCommand::MapLabel && drawn[i]->text!=L"PIT") {
+                const auto d=std::find_if(app.session.drivers.begin(),app.session.drivers.end(),[&](const Driver& x){ return Wide(x.number)==drawn[i]->text; });
+                const int standing=d!=app.session.drivers.end() && app.frame.cars[d->index].position>0?app.frame.cars[d->index].position:MaxCars+1;
+                pitOk=standing<=previousPosition && i>0 && drawn[i-1]->type==DrawCommand::MapCar && pitOk;
+                previousPosition=standing; previous=drawn[i];
+            }
+            pitOk=previous!=nullptr && pitOk;
         }
         // Three-digit numbers keep all digits: the label is as wide as the text, centred on the marker.
         {

@@ -21,7 +21,7 @@
                 };
                 const int reference=ReferenceCar(app.frame);
                 const auto own=std::find_if(app.session.drivers.begin(),app.session.drivers.end(),[&](const Driver& d){return d.index==reference;});
-                // A marker, or the number on it; the other cars get all markers first, then all numbers.
+                // A marker, or the number on it.
                 auto drawCar=[&](const Driver& d,bool highlight,bool number) {
                     if(d.index<0 || d.index>=MaxCars || d.paceCar || d.spectator) return;
                     const auto& car=app.frame.cars[d.index];
@@ -50,12 +50,13 @@
                     if(number) { out.push_back({DrawCommand::MapLabel,SmallBold,DT_CENTER,{x-radius-px(4),y-radius-titleOffset,x+radius+px(5),y+radius+1-titleOffset},Ink::Accent,{},L"PIT"}); return; }
                     out.push_back({DrawCommand::MapCar,Regular,0,{x-radius,y-radius-titleOffset,x+radius+1,y+radius+1-titleOffset},Ink::Accent,{static_cast<float>(std::max(1,px(2))),1}});
                 };
-                // Bottom to top: the other cars (markers, then their numbers), the PIT ring, and the car you drive or
-                // watch last, with its number, so nothing ever covers it.
-                for(bool number:{false,true}) {
-                    if(number && !o.map.numbers) break;
-                    for(const auto& d:app.session.drivers) if(d.index!=reference) drawCar(d,false,number);
-                }
+                // Each car whole, marker and number together, from the back of the race to the front: the leader
+                // covers the car behind it, and so on. The PIT ring and the car you drive or watch come last.
+                std::vector<const Driver*> stack;
+                for(const auto& d:app.session.drivers) if(d.index!=reference && d.index>=0 && d.index<MaxCars) stack.push_back(&d);
+                auto rank=[](const Driver* d){ const int p=app.frame.cars[d->index].position; return p>0?p:MaxCars+1; };
+                std::stable_sort(stack.begin(),stack.end(),[&](const Driver* a,const Driver* b){ return rank(a)>rank(b); });
+                for(const auto* d:stack) { drawCar(*d,false,false); drawCar(*d,false,true); }
                 drawGhost(false); drawGhost(true);
                 if(own!=app.session.drivers.end()) { drawCar(*own,true,false); drawCar(*own,true,true); }
             }
