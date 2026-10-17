@@ -51,6 +51,11 @@ MetricText Metric(int metric,const Overlay* o=nullptr) {
     const int current=reference==f.player && f.lapCompleted>=0?f.lapCompleted+1:(car?car->lap:-1);
     switch(metric) {
     case TrackMetric: return s.track.empty()?L"—":Wide(s.track);
+    case PitExitMetric: {
+        const auto& r=PitExit();
+        if(!r.valid) return {L"Pit exit ",L"—"};
+        return {L"Pit exit ",L"P"+std::to_wstring(r.classPosition),L" · ",Format(r.loss,0)+L" s"+(app.pitExitPartial?L"?":L"")};
+    }
     case TrackLayoutMetric:
         if(app.preview && o && o->kind==TrackMapKind) return std::wstring(TrackMapPreviewName);
         return s.track.empty()?L"—":Wide(s.track+(s.trackConfig.empty()?"":" · "+s.trackConfig));

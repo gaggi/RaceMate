@@ -16,6 +16,8 @@ constexpr unsigned DriverFlags = Black | Disqualify | Servicible | Furled | Repa
 }
 // EngineWarnings bits from the iRacing SDK (irsdk_EngineWarnings).
 namespace EngineWarning { constexpr unsigned PitSpeedLimiter = 0x10u; }
+// irsdk_PitSvFlags: the boxes ticked in the pit menu.
+namespace PitServiceFlag { constexpr unsigned LeftFront = 0x1u, RightFront = 0x2u, LeftRear = 0x4u, RightRear = 0x8u, Fuel = 0x10u; }
 struct Driver {
     int index = -1, classId = 0, rating = 0;
     unsigned classColor = 0xeac14c;
@@ -81,6 +83,8 @@ struct Frame {
     double replayTime = -1;
     unsigned flags = 0;
     double time = 0, timeLeft = -1, lapsLeft = -1, fuel = 0, lapPct = 0, lastLap = -1, bestLap = -1;
+    // The pit menu: PitSvFlags, PitSvFuel (litres to add) and PitRepairLeft (mandatory repair seconds).
+    unsigned pitSvFlags = 0; double pitSvFuel = 0, pitRepair = 0;
     std::array<Car, MaxCars> cars{};
 };
 // Clockwise source bearing on screen: 0 is ahead, pi/2 is right.
@@ -231,6 +235,48 @@ private:
     double maximum_ = 0, minimum_ = std::numeric_limits<double>::max();
     std::array<double, 10> burns_{};
 };
+// Pit stop rejoin estimate. The lane loss is what driving through the pit lane costs against the same
+// stretch on track, learned from every observed visit of every car: time on pit road, minus the time
+// standing still, minus the reference time of that stretch. CarIdxEstTime is iRacing's reference time to
+// each point of the lap, so a slow entry after a corner counts as slow on track too, which a constant lap
+// speed would get wrong; the class reference lap scales it to the car's pace.
+class PitLaneLoss {
+public:
+    void Reset() { *this={}; }
+    void Update(const Session&, const Frame&); // After PitHistory, which measures the time standing still.
+    double Loss() const;                         // Median of the observed visits, else the seed; -1 while unknown.
+    int Samples() const { return static_cast<int>(samples_.size()); }
+    // A value saved for a track, used until a visit there is observed.
+    void Seed(int track,double seconds) { if(track!=track_) { *this={}; track_=track; } seed_=seconds; }
+    int Track() const { return track_; }
+private:
+    struct Visit { bool seen=false, pit=false, active=false; double time=-1, est=-1, progress=-1; };
+    std::array<Visit,MaxCars> visits_{};
+    std::vector<double> samples_; double seed_=-1, time_=-1;
+    int track_=-1, session_=-1;
+};
+// Litres per second, measured while the own car is filled in its stall.
+class RefuelRate {
+public:
+    void Reset() { *this={}; }
+    void Update(const Frame&);
+    double Rate() const { return rate_; }
+private:
+    double startTime_=-1, startFuel_=-1, lastTime_=-1, lastFuel_=-1, rate_=-1;
+};
+// The next stop as set in the pit menu: litres to add (what fits), tires changed, mandatory repair seconds.
+struct PitService { double fuel=0; int tires=0; double repair=0; };
+PitService PlannedService(const Session&, const Frame&);
+// Fuel and tires at the same time, repairs on top; -1 when a needed time is unknown. tireChange is for four tires.
+double ServiceTime(const PitService&, double fuelRate, double tireChange);
+struct PitRejoin {
+    bool valid = false;
+    double loss = -1, pct = -1;            // Total seconds lost and the lap fraction where the own car rejoins.
+    int position = -1, classPosition = -1; // Overall and in class after the stop, if everyone keeps their pace.
+    int ahead = -1, behind = -1;           // Nearest cars on track at the rejoin point and their gaps in seconds.
+    double aheadGap = -1, behindGap = -1;
+};
+PitRejoin PredictRejoin(const Session&, const Frame&, double loss, double pace);
 Session DemoSession();
 Frame DemoFrame(double time);
 }

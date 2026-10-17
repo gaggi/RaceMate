@@ -147,6 +147,37 @@ int RunDiagnostics() {
         ShowPage(Page::Overlays);
     }
     {
+        // Pit exit in the preview: 22 s lane loss plus 20 s service; metric, Fuel module and the ring on the track map.
+        bool pitOk=true; InvalidateModel();
+        const auto& rejoin=PitExit(); const std::wstring position=L"P"+std::to_wstring(rejoin.classPosition);
+        pitOk=rejoin.valid && rejoin.loss==42 && rejoin.classPosition>=1 && FooterValue(PitExitMetric)==L"Pit exit "+position+L" · 42 s" && pitOk;
+        auto& fuel=First(FuelKind); const auto fuelSettings=fuel.fuel;
+        fuel.fuel.display[PitExitModule]=true; SettingChanged();
+        pitOk=std::any_of(fuel.scene.begin(),fuel.scene.end(),[&](const DrawCommand& c){ return c.type==DrawCommand::Text && c.text==position; }) && Export(fuel.window,L"build\\qa\\fuel-pit-exit.bmp") && pitOk;
+        fuel.fuel=fuelSettings; SettingChanged();
+        auto& map=First(TrackMapKind); const auto placement=map.place; map.place.enabled=true; SettingChanged();
+        if(trackMap.ready) pitOk=std::any_of(map.scene.begin(),map.scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::MapCar && c.color==Ink::Accent; }) && Export(map.window,L"build\\qa\\trackmap-pit-exit.bmp") && pitOk;
+        map.place=placement; SettingChanged();
+        // Leaving the pits or replays give no estimate.
+        app.frame.pit=true; InvalidateModel(); pitOk=!PitExit().valid && FooterValue(PitExitMetric)==L"Pit exit —" && pitOk;
+        app.frame.pit=false; InvalidateModel();
+        // Settings: lane loss and service times, the service row expanded to its two fields.
+        ShowPage(Page::Settings);
+        if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) {
+            auto* rows=reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA)); int service=-1, lane=-1;
+            for(size_t i=0;i<rows->Rows().size();++i) { if(rows->Rows()[i].title==L"Pit lane loss") lane=static_cast<int>(i); if(rows->Rows()[i].title.rfind(L"Service times",0)==0) service=static_cast<int>(i); }
+            pitOk=lane>=0 && service>=0 && pitOk;
+            if(service>=0) {
+                rows->PressIconButton(service,0); rows->ScrollIntoView(service);
+                RedrawWindow(app.main,nullptr,nullptr,RDW_INVALIDATE|RDW_UPDATENOW|RDW_ALLCHILDREN);
+                pitOk=Export(app.main,L"build\\qa\\settings-pit-stop.bmp") && pitOk;
+                rows->PressIconButton(service,0);
+            }
+        } else pitOk=false;
+        ShowPage(Page::Overlays);
+        report<<"Pit exit estimate: metric, Fuel module, track map ring and settings: "<<(pitOk?"PASS":"FAIL")<<"\n"; ok=pitOk && ok;
+    }
+    {
         bool forecastOk=true;
         InvalidateModel(); Plan();
         const auto savedPlan=app.fuelPlan;
@@ -658,7 +689,7 @@ int RunDiagnostics() {
         auto& fuel=First(FuelKind); const int paired=BaseHeight(fuel);
         ok=MoveInOrder(fuel.fuel.order,WindowCard,1) && BaseHeight(fuel)==paired+92 && ok;
         MoveInOrder(fuel.fuel.order,TankModule,2); Load();
-        ok=First(FuelKind).fuel.order==std::vector<int>{LeaderDistanceModule,FiguresModule,TankModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,TimelineModule,WindowCard,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow} && BaseHeight(First(FuelKind))==paired+92 && ok;
+        ok=First(FuelKind).fuel.order==std::vector<int>{LeaderDistanceModule,FiguresModule,TankModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,TimelineModule,WindowCard,PitExitModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow} && BaseHeight(First(FuelKind))==paired+92 && ok;
         ok=Export(First(FuelKind).window,L"build\\qa\\fuel-reordered.bmp") && ok;
         auto& weather=First(WeatherKind); const int weatherHeight=BaseHeight(weather);
         ok=MoveInOrder(weather.weather.order,ConditionModule,3) && BaseHeight(weather)==weatherHeight && ok;
@@ -728,7 +759,7 @@ int RunDiagnostics() {
             ok=std::none_of(First(FuelKind).fuel.display.begin(),First(FuelKind).fuel.display.end(),[](bool value){return value;}) && ok;
             ok=Export(First(2).window,L"build\\qa\\fuel-compact.bmp") && ok;
             First(FuelKind).fuel.display.fill(true); SettingChanged();
-            ok=HeightWithTitle(First(2))==32+112+52+104+92+46+16+4*24+2*32 && BaseHeight(First(2))==HeightWithTitle(First(2)) && ok;
+            ok=HeightWithTitle(First(2))==32+112+52+104+92+46+16+4*24+3*32 && BaseHeight(First(2))==HeightWithTitle(First(2)) && ok;
             ok=Export(First(2).window,L"build\\qa\\fuel-all.bmp") && ok;
             First(FuelKind).fuel.strip=true; SettingChanged(); ok=Export(First(2).window,L"build\\qa\\fuel-strip.bmp") && ok;
             First(FuelKind).fuel.strip=false; SettingChanged();

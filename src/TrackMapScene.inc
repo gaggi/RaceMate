@@ -29,8 +29,18 @@
                     }
                     out.push_back({DrawCommand::MapCar,Regular,0,bounds,color,{static_cast<float>(stroke),car.pit?1.f:0.f}});
                 };
+                // Where the own car would rejoin after a stop now: a hollow accent ring with its class position.
+                const auto& rejoin=PitExit();
+                auto drawGhost=[&](bool number) {
+                    if(!o.map.pitExit || !rejoin.valid) return;
+                    const auto point=transform.Apply(trackMap.geometry.At(app.preview?std::fmod(app.now/90000.+reference*.091+.7,1.):rejoin.pct));
+                    const int x=area.left+static_cast<int>(std::lround(point.x)), y=area.top+static_cast<int>(std::lround(point.y)), radius=px(11);
+                    if(number) { label(L"P"+std::to_wstring(rejoin.classPosition),{x-radius,y-radius,x+radius+1,y+radius+1},Ink::Accent,SmallBold,DT_CENTER); return; }
+                    out.push_back({DrawCommand::MapCar,Regular,0,{x-radius,y-radius-titleOffset,x+radius+1,y+radius+1-titleOffset},Ink::Accent,{static_cast<float>(std::max(1,px(2))),1}});
+                };
                 for(bool number:{false,true}) {
                     for(const auto& d:app.session.drivers) if(d.index!=reference) drawCar(d,false,number);
+                    drawGhost(number);
                     if(own!=app.session.drivers.end()) drawCar(*own,true,number);
                 }
             }

@@ -69,10 +69,10 @@ enum Metric {
     NoMetric, TrackMetric, IncidentsMetric, TrackTempMetric, AirTempMetric, TemperaturesMetric, TimeRemainingMetric, TimeElapsedMetric,
     CurrentLapMetric, FinalLapMetric, LapsRemainingMetric, LocalTimeMetric, SimTimeMetric, SessionTypeMetric, WetnessMetric, WindMetric,
     SofMetric, OverlayNameMetric, PositionMetric, BrakeBiasMetric, StopsNeededMetric, DeclaredWetMetric,
-    LeaderDistanceMetric, WhiteFlagTimeMetric, LapLeaderDistanceMetric, TrackLayoutMetric
+    LeaderDistanceMetric, WhiteFlagTimeMetric, LapLeaderDistanceMetric, TrackLayoutMetric, PitExitMetric
 };
-constexpr int MetricCount=TrackLayoutMetric+1;
-const wchar_t* MetricTitles[]={L"None",L"Track",L"Incidents",L"Track Temperature",L"Air Temperature",L"Temperatures",L"Session Time Remaining",L"Session Time Elapsed",L"Current Lap",L"Current / Expected Final Lap",L"Estimated Laps Remaining",L"Local Time",L"Sim Time",L"Session Type",L"Track Wetness",L"Wind",L"Class SOF",L"Overlay Name",L"Position in Class",L"Brake Bias (your car)",L"Stops Needed (your car)",L"Declared Wet",L"Leader projected race distance",L"Time left at leader's final lap",L"Current lap / Leader projected distance",L"Track and layout"};
+constexpr int MetricCount=PitExitMetric+1;
+const wchar_t* MetricTitles[]={L"None",L"Track",L"Incidents",L"Track Temperature",L"Air Temperature",L"Temperatures",L"Session Time Remaining",L"Session Time Elapsed",L"Current Lap",L"Current / Expected Final Lap",L"Estimated Laps Remaining",L"Local Time",L"Sim Time",L"Session Type",L"Track Wetness",L"Wind",L"Class SOF",L"Overlay Name",L"Position in Class",L"Brake Bias (your car)",L"Stops Needed (your car)",L"Declared Wet",L"Leader projected race distance",L"Time left at leader's final lap",L"Current lap / Leader projected distance",L"Track and layout",L"Pit exit (your car)"};
 static_assert(std::size(MetricTitles)==MetricCount);
 // The first slot sits on the left, the others right-aligned in order. Keys keep their earlier names.
 constexpr int SlotCount=4;
@@ -83,9 +83,9 @@ constexpr Slots DefaultHeader{OverlayNameMetric,SofMetric,IncidentsMetric,TimeRe
 // Fuel Calculator modules, top to bottom; each switch is stored under its key.
 enum FuelModule {
     TankModule, FiguresModule, HistoryModule, CautionMarks, RefuelCard, WindowCard, TimelineModule,
-    OneShorterRow, TargetRow, OneLongerRow, TwoLongerRow, LeaderDistanceModule, WhiteFlagTimeModule
+    OneShorterRow, TargetRow, OneLongerRow, TwoLongerRow, LeaderDistanceModule, WhiteFlagTimeModule, PitExitModule
 };
-constexpr int FuelModuleCount=WhiteFlagTimeModule+1;
+constexpr int FuelModuleCount=PitExitModule+1;
 struct ModuleInfo { const wchar_t* key; const wchar_t* title; const wchar_t* detail; bool on; };
 constexpr ModuleInfo FuelModules[]={
     {L"ShowTank",L"Tank",L"Fuel, range in laps and a bar of the fuel to the finish",true},
@@ -101,7 +101,8 @@ constexpr ModuleInfo FuelModules[]={
     {L"ShowOneLonger",L"One lap longer",L"Most fuel per lap for one lap more",true},
     {L"ShowTwoLonger",L"Two laps longer",L"Most fuel per lap for two laps more",false},
     {L"ShowLeaderDistance",L"Leader projected race distance",L"Total leader laps at time expiry, with two decimals; at the finish for lap-limited races. No future stops assumed.",false},
-    {L"ShowFinalLapTime",L"Time left at leader's final lap",L"Race clock when the current overall leader is projected to start the final lap. No future stops assumed.",false}};
+    {L"ShowFinalLapTime",L"Time left at leader's final lap",L"Race clock when the current overall leader is projected to start the final lap. No future stops assumed.",false},
+    {L"ShowPitExit",L"Pit exit",L"Class position and the car ahead if you box now: pit lane loss plus the service set in the pit menu",false}};
 static_assert(std::size(FuelModules)==FuelModuleCount);
 // Consumption figures in display order; app.fuelRows follows this order.
 struct FigureInfo { int metric; const wchar_t* heading; const wchar_t* title; const wchar_t* key; bool on; };
@@ -133,7 +134,7 @@ constexpr ModuleInfo WeatherModules[]={
     {L"ShowWindText",L"Wind text",L"Speed, compass direction and crosswind",true}};
 static_assert(std::size(WeatherModules)==WeatherModuleCount);
 // Modules in their default order; the page moves them, the rest are display options.
-const std::vector<int> FuelOrder{TankModule,FiguresModule,LeaderDistanceModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,WindowCard,TimelineModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow};
+const std::vector<int> FuelOrder{TankModule,FiguresModule,LeaderDistanceModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,WindowCard,TimelineModule,PitExitModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow};
 const std::vector<int> WeatherOrder{ConditionModule,RainModule,TemperatureModule,TemperatureHistoryModule,WindModule,DetailsModule,UsageModule};
 const wchar_t* WetnessNames[]={L"—",L"Dry",L"Mostly Dry",L"Very Lightly Wet",L"Lightly Wet",L"Moderately Wet",L"Very Wet",L"Extremely Wet"};
 struct Placement { int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=true, growLeft=false, growUp=false, rounded=false; };
@@ -175,7 +176,7 @@ struct FuelSettings { std::array<bool,FuelModuleCount> display{}; std::array<boo
 struct WeatherSettings { std::array<bool,WeatherModuleCount> display{}; std::vector<int> order=WeatherOrder; bool strip=false; };
 struct TrackMapSettings {
     bool numbers=true, ownClass=false, pit=true, details=false, background=true, pitLane=true, startFinish=true;
-    bool cornerNumbers=false, cornerNames=false, labelContrast=true;
+    bool cornerNumbers=false, cornerNames=false, labelContrast=true, pitExit=true;
     int labelScale=100;
 };
 constexpr int TrackMapWidth=440, TrackMapBodyHeight=264;
@@ -239,6 +240,10 @@ struct App {
     std::array<WORD,HotkeyCount> hotkeys{}; bool hotkeysEnabled=false; std::wstring hotkeyError;
     int rate=10,timerMs=0; ULONGLONG now=0;
     int opponentFuelExtraLaps=3;
+    // Pit stop estimate: lane loss learned per track or fixed by the user, service times per car (CarPath).
+    PitLaneLoss pitLane; RefuelRate refuel;
+    struct { int track=-1; std::wstring car; double fixedLane=-1, tires=-1, rate=-1; int samplesSaved=0; } pitTimes;
+    unsigned pitExitVersion=~0u; PitRejoin pitExit; bool pitExitPartial=false;
     unsigned modelVersion=0,planVersion=~0u,ratingVersion=~0u;
     std::array<int,MaxCars> ratingChanges{};
     unsigned opponentFuelVersion=~0u; int opponentFuelExtra=-1; bool opponentFuelPreview=false;
@@ -261,6 +266,11 @@ std::wstring Wide(const std::string& s) {
     int n=MultiByteToWideChar(cp,flags,s.data(),static_cast<int>(s.size()),nullptr,0);
     if(!n) { cp=CP_ACP; flags=0; n=MultiByteToWideChar(cp,flags,s.data(),static_cast<int>(s.size()),nullptr,0); }
     std::wstring w(n,0); MultiByteToWideChar(cp,flags,s.data(),static_cast<int>(s.size()),w.data(),n); return w;
+}
+double ReadNumber(const wchar_t* section,const std::wstring& key) {
+    wchar_t text[32]{}; GetPrivateProfileStringW(section,key.c_str(),L"",text,32,app.config.c_str());
+    wchar_t* end=nullptr; const double value=wcstod(text,&end);
+    return end!=text && std::isfinite(value) && value>0?value:-1;
 }
 std::wstring Format(double x,int decimals=1) {
     if(!std::isfinite(x) || x<0) return L"—";
@@ -321,11 +331,11 @@ int WeatherHeight(const Overlay& o) {
     return std::max(h,40);
 }
 // Values in the strip layout, including the two independent overall-leader forecasts.
-int FuelStripCount(const Overlay& o) { const auto& d=o.fuel.display; return 2*d[TankModule]+d[FiguresModule]+d[RefuelCard]+d[WindowCard]+d[TargetRow]+d[OneLongerRow]+d[LeaderDistanceModule]+d[WhiteFlagTimeModule]; }
+int FuelStripCount(const Overlay& o) { const auto& d=o.fuel.display; return 2*d[TankModule]+d[FiguresModule]+d[RefuelCard]+d[WindowCard]+d[TargetRow]+d[OneLongerRow]+d[LeaderDistanceModule]+d[WhiteFlagTimeModule]+d[PitExitModule]; }
 constexpr int FuelPanelWidth=440, FuelStripCell=86;
 // Whether the strip layout shows a module or uses an option; the page marks the others "Panel only".
 bool InStrip(int kind,int id) {
-    if(kind==FuelKind) return id==TankModule || id==FiguresModule || id==RefuelCard || id==WindowCard || id==TargetRow || id==OneLongerRow || id==LeaderDistanceModule || id==WhiteFlagTimeModule;
+    if(kind==FuelKind) return id==TankModule || id==FiguresModule || id==RefuelCard || id==WindowCard || id==TargetRow || id==OneLongerRow || id==LeaderDistanceModule || id==WhiteFlagTimeModule || id==PitExitModule;
     return id==ConditionModule || id==RainModule || id==TemperatureModule || id==WindModule || id==TrendArrows || id==WindRelative;
 }
 // The panel's modules that show, in their order. Refuel and pit window share a row when
@@ -339,7 +349,7 @@ bool IsCard(int id) { return id==RefuelCard || id==WindowCard; }
 bool IsTarget(int id) { return id>=OneShorterRow && id<=TwoLongerRow; }
 int FuelHeight(const Overlay& o) {
     if(o.fuel.strip) return 50;
-    constexpr int heights[]={112,52,104,0,92,92,46,24,24,24,24,32,32};
+    constexpr int heights[]={112,52,104,0,92,92,46,24,24,24,24,32,32,32};
     static_assert(std::size(heights)==FuelModuleCount);
     const auto shown=FuelShown(o); int h=0;
     for(size_t k=0;k<shown.size();++k) {
@@ -515,7 +525,7 @@ void ReadInstance(Overlay& o) {
         o.map.background=ReadBool(section.c_str(),L"ShowBackground",true); o.map.pitLane=ReadBool(section.c_str(),L"ShowPitLane",true);
         o.map.startFinish=ReadBool(section.c_str(),L"ShowStartFinish",true);
         o.map.cornerNumbers=ReadBool(section.c_str(),L"ShowCornerNumbers",false); o.map.cornerNames=ReadBool(section.c_str(),L"ShowCornerNames",false);
-        o.map.labelContrast=ReadBool(section.c_str(),L"CornerLabelContrast",true);
+        o.map.labelContrast=ReadBool(section.c_str(),L"CornerLabelContrast",true); o.map.pitExit=ReadBool(section.c_str(),L"ShowPitExit",true);
         o.map.labelScale=((std::clamp(ReadInt(section.c_str(),L"CornerLabelScale",100),75,200)+12)/25)*25;
     }
 }
@@ -602,7 +612,7 @@ void Save() {
             number(section,L"ShowPitCars",o.map.pit); number(section,L"ShowMapDetails",o.map.details);
             number(section,L"ShowBackground",o.map.background); number(section,L"ShowPitLane",o.map.pitLane); number(section,L"ShowStartFinish",o.map.startFinish);
             number(section,L"ShowCornerNumbers",o.map.cornerNumbers); number(section,L"ShowCornerNames",o.map.cornerNames);
-            number(section,L"CornerLabelContrast",o.map.labelContrast); number(section,L"CornerLabelScale",o.map.labelScale);
+            number(section,L"CornerLabelContrast",o.map.labelContrast); number(section,L"CornerLabelScale",o.map.labelScale); number(section,L"ShowPitExit",o.map.pitExit);
         }
     }
     number(L"General",L"ShowTitleBar",app.showTitleBar); number(L"General",L"RefreshHz",app.rate);
@@ -718,6 +728,51 @@ COLORREF Mix(COLORREF base,COLORREF ink,double alpha) {
     return RGB(channel(GetRValue(base),GetRValue(ink)),channel(GetGValue(base),GetGValue(ink)),channel(GetBValue(base),GetBValue(ink)));
 }
 // The pit window at the 10-lap average and the own pace, as the Fuel Calculator and the Stops Needed metric show it.
+// Writes a positive value, or removes the key.
+void WriteNumber(const wchar_t* section,const std::wstring& key,double value) {
+    const auto text=Format(value,2); WritePrivateProfileStringW(section,key.c_str(),value>0?text.c_str():nullptr,app.config.c_str());
+}
+const Driver* PlayerDriver() {
+    const auto it=std::find_if(app.session.drivers.begin(),app.session.drivers.end(),[](const Driver& d){ return d.index==app.frame.player; });
+    return it==app.session.drivers.end()?nullptr:&*it;
+}
+void LoadPitTimes() {
+    auto& t=app.pitTimes; const auto track=std::to_wstring(app.session.trackId);
+    if(app.session.trackId>=0 && app.pitLane.Track()!=app.session.trackId) { app.pitLane.Seed(app.session.trackId,ReadNumber(L"PitStop",L"Lane "+track)); t.samplesSaved=0; }
+    if(t.track!=app.session.trackId) { t.track=app.session.trackId; t.fixedLane=t.track>=0?ReadNumber(L"PitStop",L"LaneFixed "+track):-1; }
+    const auto* own=PlayerDriver(); const std::wstring car=own?Wide(own->carPath):L"";
+    if(car!=t.car) { t.car=car; t.tires=car.empty()?-1:ReadNumber(L"PitStop",L"Tires "+car); t.rate=car.empty()?-1:ReadNumber(L"PitStop",L"FuelRate "+car); app.refuel.Reset(); }
+}
+// Learns from every frame; a new lane loss or a measured refuel rate is kept for the next session.
+void UpdatePitStop() {
+    LoadPitTimes();
+    app.pitLane.Update(app.session,app.frame); app.refuel.Update(app.frame);
+    auto& t=app.pitTimes;
+    if(app.pitLane.Samples()!=t.samplesSaved && app.pitLane.Samples()>0 && t.track>=0) { t.samplesSaved=app.pitLane.Samples(); WriteNumber(L"PitStop",L"Lane "+std::to_wstring(t.track),app.pitLane.Loss()); }
+    if(app.refuel.Rate()>0 && std::abs(app.refuel.Rate()-t.rate)>.01 && !t.car.empty()) { t.rate=app.refuel.Rate(); WriteNumber(L"PitStop",L"FuelRate "+t.car,t.rate); }
+}
+double PitLaneSeconds() { return app.pitTimes.fixedLane>0?app.pitTimes.fixedLane:app.pitLane.Loss(); }
+// Where the own car rejoins if it boxes now. Service parts without a known time count as zero and mark it partial.
+const PitRejoin& PitExit() {
+    if(app.pitExitVersion==app.modelVersion) return app.pitExit;
+    app.pitExitVersion=app.modelVersion; app.pitExit={}; app.pitExitPartial=false;
+    const auto& f=app.frame;
+    if(app.session.type!="Race" || f.pit || View(f)!=ViewMode::InCar) return app.pitExit;
+    const double lane=app.preview?22:PitLaneSeconds();
+    if(lane<=0) return app.pitExit;
+    auto service=PlannedService(app.session,f); const auto& t=app.pitTimes;
+    if(service.fuel>0 && t.rate<=0) { service.fuel=0; app.pitExitPartial=true; }
+    if(service.tires>0 && t.tires<=0) { service.tires=0; app.pitExitPartial=true; }
+    const double stop=app.preview?20:std::max(0.0,ServiceTime(service,t.rate,t.tires));
+    double pace=Plan().prediction.ownPace; if(!(pace>0)) pace=f.lastLap>0?f.lastLap:f.bestLap;
+    app.pitExit=PredictRejoin(app.session,f,lane+stop,pace);
+    return app.pitExit;
+}
+std::wstring PitExitAhead() {
+    const auto& r=PitExit(); if(!r.valid || r.ahead<0) return {};
+    for(const auto& d:app.session.drivers) if(d.index==r.ahead) return Format(r.aheadGap,1)+L" s behind #"+Wide(d.number);
+    return {};
+}
 PitWindow FuelWindow() {
     const auto& p=Plan(); const auto& f=app.frame; const auto& basis=p.estimates[FuelBasis];
     double pace=p.prediction.ownPace; if(pace<=0) pace=f.lastLap>0?f.lastLap:f.bestLap;
@@ -1065,6 +1120,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             case OneLongerRow: item(L"+1 LAP",target(1)>=0?Format(target(1),2):L"—",targetInk(target(1))); break;
             case LeaderDistanceModule: item(L"LEADER LAPS",LeaderDistanceValue(),Ink::Accent); break;
             case WhiteFlagTimeModule: item(L"FINAL LAP",WhiteFlagTimeValue(),white); break;
+            case PitExitModule: item(L"PIT EXIT",PitExit().valid?L"P"+std::to_wstring(PitExit().classPosition):L"—",Ink::Accent); break;
             default: break;
             }
             y+=50;
@@ -1074,6 +1130,17 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                 const int id=shown[k], next=k+1<shown.size()?shown[k+1]:-1;
                 // A line above each module that has none of its own; the consumption figures close with one.
                 auto separator=[&]{ if(y>32 && (!k || shown[k-1]!=FiguresModule)) fill(rect(0,y,W,1),Ink::Line); };
+                if(id==PitExitModule) {
+                    // Box now: class position and the car ahead at the rejoin point, with the time lost.
+                    separator();
+                    const auto& r=PitExit();
+                    label(r.valid?L"PIT EXIT  ·  "+Format(r.loss,0)+L" s"+(app.pitExitPartial?L"?":L""):L"PIT EXIT",rect(16,y,W/2,32),Ink::Label,Small);
+                    const std::wstring position=r.valid?L"P"+std::to_wstring(r.classPosition):L"—", ahead=PitExitAhead();
+                    const int w=measure(position,Bold);
+                    label(position,{px(W-16)-w,px(y),px(W-16),px(y+32)},Ink::Accent,Bold);
+                    if(!ahead.empty()) label(ahead,{px(W/2),px(y),px(W-16)-w-px(8),px(y+32)},Ink::Muted,Small,DT_RIGHT);
+                    y+=32;
+                }
                 if(id==LeaderDistanceModule || id==WhiteFlagTimeModule) {
                     // One value row each, like Weather's precipitation.
                     separator();
@@ -1666,8 +1733,8 @@ void PollUpdates();
 // Posted to the main window when the banner and the current page should show new state.
 constexpr UINT RefreshUiMessage=WM_APP+2;
 void ProcessFrame(bool connected) {
-    if(!connected) { app.frame={}; app.events.Update(app.session,app.frame); app.session={}; app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.weatherHistory.Reset(); }
-    else { app.pitHistory.Update(app.session,app.frame); app.events.Update(app.session,app.frame); app.fuel.Update(app.session,app.frame,true); app.weatherHistory.Update(app.session,app.frame); app.predictor.Update(app.session,app.frame); }
+    if(!connected) { app.frame={}; app.events.Update(app.session,app.frame); app.session={}; app.pitLane.Reset(); app.refuel.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.weatherHistory.Reset(); }
+    else { app.pitHistory.Update(app.session,app.frame); UpdatePitStop(); app.events.Update(app.session,app.frame); app.fuel.Update(app.session,app.frame,true); app.weatherHistory.Update(app.session,app.frame); app.predictor.Update(app.session,app.frame); }
 }
 void Tick() {
     app.now=GetTickCount64();
@@ -1676,7 +1743,7 @@ void Tick() {
     UpdateStatus(); UpdateOverlays(false); UpdateRaceControl(); PollUpdates(); Timer();
 }
 void ShowSettings() { ShowWindow(app.main,IsIconic(app.main)?SW_RESTORE:SW_SHOW); SetForegroundWindow(app.main); UpdateOverlays(); }
-void TogglePreview() { app.preview=!app.preview; app.frame={}; app.session={}; app.weatherHistory.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.telemetry.Close(); app.events.Reset(); Tick(); RefreshPage(); }
+void TogglePreview() { app.preview=!app.preview; app.pitLane.Reset(); app.refuel.Reset(); app.frame={}; app.session={}; app.weatherHistory.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.telemetry.Close(); app.events.Reset(); Tick(); RefreshPage(); }
 void ToggleEdit() { app.edit=!app.edit; Tick(); UpdateOverlays(); RefreshPage(); }
 void ToggleHidden() { app.hidden=!app.hidden; UpdateOverlays(); RefreshPage(); }
 LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {

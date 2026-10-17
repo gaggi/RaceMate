@@ -99,6 +99,14 @@ Modules, each with its own switch and ordered with the arrows on the overlay's p
 - Layout **Panel** or **Strip** (condition, rain, temperatures and wind in one line; the others are marked **Panel only**).
 - Trends compare with 10 minutes ago and pause while old footage plays; the temperature history is recorded while you drive or watch live and says how many minutes it holds so far. Precipitation is the current rain, not a forecast.
 
+### Pit exit estimate
+
+Where you rejoin if you box now: your class position after the stop, the car ahead at that point and the time lost. It appears as **Pit exit (your car)** in every header and footer, as the **Pit exit** module of the Fuel Calculator (off by default) and as a blue ring with the position on the Track Map. It needs a race, your own car on track and outside the pit lane.
+
+- **Pit lane loss**: what driving through the pit lane costs against the same stretch on track. RaceMate learns it from every car's observed pit visit, drive-throughs too: time on pit road, minus the time standing still, minus iRacing's reference time (`CarIdxEstTime`) for the bypassed stretch. Slow entries after a corner and exits onto a straight therefore count correctly, which a constant lap speed would not. The median of the last visits is kept per track for the next session; **Settings → Pit stop estimate** can fix a value instead.
+- **Service**: from the pit menu (`PitSvFlags`, `PitSvFuel`, `PitRepairLeft`). Fuel and tires run at the same time, repairs add, and fuel is limited to what fits in the tank. The four-tire time is set per car under **Service times**; the refuel rate is measured at your own stop and kept per car, or can be typed in. Parts without a known time count as zero and mark the time lost with `?`.
+- Everyone is assumed to keep their pace; positions count cars whose race progress stays ahead of yours after the time lost.
+
 ### Track Map (experimental)
 
 Enable **Track Map** on the Overlays page; it starts disabled. The exact layout is selected by iRacing's `TrackID` and checked against its internal `TrackName`. The built-in index currently covers 424 layouts. Unknown layouts stay empty.
