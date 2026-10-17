@@ -18,8 +18,12 @@ bool Export(HWND window,const std::wstring& path,bool transparentChecker=false) 
     else SendMessageW(window,WM_PRINTCLIENT,reinterpret_cast<WPARAM>(dc),PRF_CLIENT);
     if(transparentChecker) {
         auto* pixels=static_cast<uint32_t*>(bits);
-        const uint32_t key=((TrackMapTransparentKey&0xff)<<16)|(TrackMapTransparentKey&0xff00)|((TrackMapTransparentKey>>16)&0xff);
-        for(int y=0;y<h;++y) for(int x=0;x<w;++x) if((pixels[y*w+x]&0xffffff)==key) pixels[y*w+x]=((x/18+y/18)%2)?0x303840:0x46515c;
+        // Premultiplied pixels over a checkerboard, as the desktop would show them.
+        for(int y=0;y<h;++y) for(int x=0;x<w;++x) {
+            const uint32_t p=pixels[y*w+x], keep=255-(p>>24), back=((x/18+y/18)%2)?0x303840u:0x46515cu;
+            uint32_t out=0; for(int shift:{0,8,16}) out|=std::min(255u,((p>>shift)&255)+((back>>shift)&255)*keep/255)<<shift;
+            pixels[y*w+x]=out;
+        }
     }
     BITMAPFILEHEADER file{}; file.bfType=0x4d42; file.bfOffBits=sizeof(file)+sizeof(info.bmiHeader); file.bfSize=file.bfOffBits+w*h*4;
     std::ofstream out(path,std::ios::binary); out.write(reinterpret_cast<char*>(&file),sizeof(file)); out.write(reinterpret_cast<char*>(&info.bmiHeader),sizeof(info.bmiHeader)); out.write(static_cast<char*>(bits),static_cast<std::streamsize>(w)*h*4);
@@ -128,13 +132,14 @@ int RunDiagnostics() {
             mapOk=withoutPit!=mapPixels() && trackMap.revision==revision && trackMap.geometry.At(0).x==start.x && trackMap.geometry.At(0).y==start.y && mapOk;
             o.map.background=false; Save(); Load(); UpdateOverlays();
             COLORREF key=0; BYTE alpha=0; DWORD flags=0;
-            mapOk=!o.map.background && !o.map.pitLane && !o.map.startFinish && GetLayeredWindowAttributes(o.window,&key,&alpha,&flags)
-                && (flags&LWA_COLORKEY) && (flags&LWA_ALPHA) && key==TrackMapTransparentKey && GetPixel(o.dc,0,0)==key && BaseHeight(o)==240
+            // Per-pixel alpha: an empty corner is fully transparent, the window takes its content from the buffer.
+            mapOk=!o.map.background && !o.map.pitLane && !o.map.startFinish && o.layeredAlpha && o.pixels && (o.pixels[0]>>24)==0
+                && !GetLayeredWindowAttributes(o.window,&key,&alpha,&flags) && BaseHeight(o)==240
                 && !ShowOverlayHeader(o) && FooterHeight(o)==0 && std::none_of(o.scene.begin(),o.scene.end(),[](const DrawCommand& c){return c.type==DrawCommand::Outline;}) && mapOk;
             mapOk=Export(o.window,L"build\\qa\\trackmap-transparent-"+std::to_wstring(id)+L".bmp",true) && mapOk;
             o.map.background=true; UpdateOverlays();
             GetLayeredWindowAttributes(o.window,&key,&alpha,&flags);
-            mapOk=!(flags&LWA_COLORKEY) && ShowOverlayHeader(o)==o.bands.header && mapOk;
+            mapOk=!o.layeredAlpha && (flags&LWA_ALPHA) && !(flags&LWA_COLORKEY) && ShowOverlayHeader(o)==o.bands.header && mapOk;
             o.map.numbers=false; o.map.pit=false; o.map.details=false; Save(); Load(); UpdateOverlays();
             mapOk=!o.map.numbers && o.map.ownClass && !o.map.pit && !o.map.details && Export(o.window,L"build\\qa\\trackmap-dots-"+std::to_wstring(id)+L".bmp") && mapOk;
         }
@@ -1326,6 +1331,14 @@ int RunTickBenchmark() {
     report<<"Default rates (";
     for(const auto& o:app.overlays) report<<(o.kind?", ":"")<<o.kind<<": "<<o.place.rate<<" Hz";
     report<<"), telemetry 10 Hz: "<<(ticks(kernelBefore,kernelAfter)+ticks(userBefore,userAfter))/1000/seconds<<" ms CPU per second"<<std::endl;
+    // The same with the map transparent: per-pixel alpha, presented with UpdateLayeredWindow.
+    First(TrackMapKind).map.background=false; Fit(First(TrackMapKind)); UpdateOverlays(); refreshTicks.fill(0); for(auto& o:app.overlays) o.due=0;
+    for(int t=0;t<100;++t) step(t);
+    refreshTicks.fill(0); GetThreadTimes(GetCurrentThread(),&created,&exited,&kernelBefore,&userBefore);
+    for(int t=100;t<100+iterations;++t) step(t);
+    GetThreadTimes(GetCurrentThread(),&created,&exited,&kernelAfter,&userAfter);
+    report<<"Track map without background: "<<(ticks(kernelBefore,kernelAfter)+ticks(userBefore,userAfter))/1000/seconds<<" ms CPU per second, its update "<<static_cast<double>(refreshTicks[TrackMapKind])*1e6/frequency.QuadPart/iterations<<" us per refresh, presentation included"<<std::endl;
+    First(TrackMapKind).map.background=true; Fit(First(TrackMapKind));
     // The same with the track map switched off, as it ships: nothing of it may remain.
     First(TrackMapKind).place.enabled=false; UpdateOverlays(); for(auto& o:app.overlays) o.due=0;
     for(int t=0;t<100;++t) step(t);

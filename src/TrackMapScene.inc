@@ -67,5 +67,6 @@
             }
             label(std::move(text),line?rect(14,82,W-28,18):rect(14,266,W-28,18),warning?Ink::Yellow:Ink::Muted,Small,DT_CENTER);
         }
-        else if(MapOnly(o) && warning) label(trackMap.message,rect(14,32,W-28,16),Ink::Yellow,Small,DT_CENTER);
+        // Without background text needs alpha too, like the car numbers.
+        else if(MapOnly(o) && warning) { RECT r=rect(14,32,W-28,16); r.top-=titleOffset; r.bottom-=titleOffset; out.push_back({DrawCommand::MapLabel,Small,DT_CENTER,r,Ink::Yellow,{},trackMap.message}); }
         footer(end);

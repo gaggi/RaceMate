@@ -190,7 +190,9 @@ int TrackMapBody(const TrackMapSettings& m,bool mapOnly,bool note) {
     return mapOnly?240:TrackMapBodyHeight;
 }
 constexpr const wchar_t* TrackMapPreviewName=L"Lime Rock Park · Grand Prix"; // The preview's map and sample cars.
-constexpr COLORREF TrackMapTransparentKey=RGB(1,2,3); // Reserved, distinct from marker text and fills.
+// Background markers of a map without background: transparent, or a light veil while overlays can be moved,
+// since fully transparent pixels let clicks through. They are written as alpha, never as these colours.
+constexpr COLORREF TrackMapTransparentKey=RGB(1,2,3), TrackMapMoveKey=RGB(1,2,4);
 // One overlay window. A kind can have several instances; the first keeps the kind's plain name and settings section.
 struct Overlay {
     HWND window=nullptr; int kind=0, number=1; Placement place;
@@ -213,6 +215,8 @@ struct Overlay {
     // The track map's buffer and static map are DIBs: when a pass repaints the whole map, map, cars and numbers
     // go straight into the pixels, without a device conversion or an extra copy.
     std::uint32_t* pixels=nullptr; const std::uint32_t* mapPixels=nullptr; bool direct=false;
+    // A map without background has per-pixel alpha (UpdateLayeredWindow): edges blend smoothly with any background.
+    mutable bool layeredAlpha=false;
     // Rows for the current model version.
     mutable unsigned rowsVersion=~0u; mutable std::vector<Row> relativeRows; mutable std::vector<StandingsGroup> standingsGroups;
     void Free() {
@@ -1021,7 +1025,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         r.top-=titleOffset; r.bottom-=titleOffset; out.push_back({type,Regular,0,r,color,{static_cast<float>(px(radius))}});
     };
     const COLORREF white=Ink::White, muted=Ink::Muted;
-    out.push_back({DrawCommand::Fill,Regular,0,{0,0,width,height},MapOnly(o)?TrackMapTransparentKey:Ink::Panel});
+    out.push_back({DrawCommand::Fill,Regular,0,{0,0,width,height},MapOnly(o)?(app.edit?TrackMapMoveKey:TrackMapTransparentKey):Ink::Panel});
     // Width in physical pixels, measured with the overlay's fonts exactly as DrawLabel will.
     // Most metric texts repeat between refreshes, so widths are kept until the fonts change.
     auto measure=[&](const std::wstring& text,FontId font) {
@@ -1547,7 +1551,14 @@ void PaintScene(Overlay& o,HRGN dirty) {
     for(const auto& c:o.scene) {
         if(dirty && !RectInRegion(dirty,&c.r)) continue;
         switch(c.type) {
-        case DrawCommand::Fill: SetDCBrushColor(dc,c.color); FillRect(dc,&c.r,static_cast<HBRUSH>(GetStockObject(DC_BRUSH))); break;
+        case DrawCommand::Fill:
+            if(o.pixels && (c.color==TrackMapTransparentKey || c.color==TrackMapMoveKey)) {
+                // Premultiplied: nothing, or the panel colour at a quarter so the map can be grabbed.
+                GdiFlush(); const std::uint32_t value=c.color==TrackMapMoveKey?0x40030405u:0;
+                for(LONG y=std::max(0L,c.r.top);y<std::min(static_cast<LONG>(o.height),c.r.bottom);++y) std::fill(o.pixels+y*o.width+std::max(0L,c.r.left),o.pixels+y*o.width+std::min(static_cast<LONG>(o.width),c.r.right),value);
+                break;
+            }
+            SetDCBrushColor(dc,c.color); FillRect(dc,&c.r,static_cast<HBRUSH>(GetStockObject(DC_BRUSH))); break;
         case DrawCommand::Text: if(font!=c.font) { SelectObject(dc,o.fonts[c.font]); font=c.font; } DrawLabel(dc,c); break;
         case DrawCommand::DottedLine: {
             HPEN pen=CreatePen(PS_DASH,1,c.color); const auto old=SelectObject(dc,pen);
@@ -1644,6 +1655,13 @@ bool EnsureBuffer(Overlay& o,int width,int height,int dpi) {
     return true;
 }
 // Rebuilds the scene and redraws only the commands that changed since the last refresh.
+// The buffer with its alpha as the window's content, at the overlay's opacity.
+void PresentLayered(const Overlay& o) {
+    if(!o.dc || !o.window) return;
+    RECT r{}; GetWindowRect(o.window,&r); POINT position{r.left,r.top}, source{0,0}; SIZE size{o.width,o.height};
+    BLENDFUNCTION blend{AC_SRC_OVER,0,static_cast<BYTE>(o.place.opacity*255/100),AC_SRC_ALPHA};
+    UpdateLayeredWindow(o.window,nullptr,&position,&size,o.dc,&source,0,&blend,ULW_ALPHA);
+}
 #ifdef RACEMATE_DIAGNOSTICS
 std::array<LONGLONG,OverlayCount> refreshTicks{}; // Scene, changed areas and drawing into the buffer, per kind.
 #endif
@@ -1658,7 +1676,7 @@ void RefreshOverlay(Overlay& o) {
     // The buffer comes first: building the scene measures text with its fonts.
     const bool resized=EnsureBuffer(o,client.right,client.bottom,dpi);
     BuildScene(o,client.right,client.bottom,dpi,app.sceneBuffer);
-    const bool full=resized || app.sceneBuffer.size()!=o.scene.size();
+    const bool full=resized || app.sceneBuffer.size()!=o.scene.size() || o.layeredAlpha;
     HRGN dirty=nullptr;
     if(!full) {
         // The old and new areas of what changed. Many small areas, such as cars moving on the track map,
@@ -1682,6 +1700,7 @@ void RefreshOverlay(Overlay& o) {
     }
     std::swap(o.scene,app.sceneBuffer);
     PaintScene(o,dirty);
+    if(o.layeredAlpha) { PresentLayered(o); if(dirty) DeleteObject(dirty); return; }
     if(dirty) { InvalidateRgn(o.window,dirty,FALSE); DeleteObject(dirty); }
     else InvalidateRect(o.window,nullptr,FALSE);
 }
@@ -1695,7 +1714,18 @@ void SetOverlayOrigin(Overlay& o,int x,int y) {
     o.place.x=x+(o.place.growLeft?MulDiv(OverlayWidth(o),dpi*o.place.scale,9600):0);
     o.place.y=y+(o.place.growUp?MulDiv(BaseHeight(o),dpi*o.place.scale,9600):0);
 }
-void ApplyOpacity(const Overlay& o) { SetLayeredWindowAttributes(o.window,MapOnly(o)?TrackMapTransparentKey:0,static_cast<BYTE>(o.place.opacity*255/100),LWA_ALPHA|(MapOnly(o)?LWA_COLORKEY:0)); }
+// Opacity for the whole window, or per pixel for a map without background. Switching between the two needs the
+// layered style set anew: a window given SetLayeredWindowAttributes refuses UpdateLayeredWindow until then.
+void ApplyOpacity(const Overlay& o) {
+    const bool perPixel=MapOnly(o);
+    if(perPixel!=o.layeredAlpha) {
+        const auto style=GetWindowLongPtrW(o.window,GWL_EXSTYLE);
+        SetWindowLongPtrW(o.window,GWL_EXSTYLE,style&~WS_EX_LAYERED); SetWindowLongPtrW(o.window,GWL_EXSTYLE,style|WS_EX_LAYERED);
+        o.layeredAlpha=perPixel;
+    }
+    if(perPixel) PresentLayered(o);
+    else SetLayeredWindowAttributes(o.window,0,static_cast<BYTE>(o.place.opacity*255/100),LWA_ALPHA);
+}
 void Fit(Overlay& o,bool recover=false) {
     InvalidateModel();
     const int dpi=GetDpiForWindow(o.window);

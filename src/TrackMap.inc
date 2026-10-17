@@ -126,10 +126,11 @@ void PaintMap(Overlay& o,const DrawCommand& c,HRGN dirty) {
         o.mapBitmap=CreateDIBSection(o.dc,&info,DIB_RGB_COLORS,&bits,nullptr,0); o.mapPixels=static_cast<const std::uint32_t*>(bits);
         o.mapWidth=width; o.mapHeight=height; o.mapRevision=trackMap.revision; o.mapStyle=style;
         if(!o.mapBitmap) return;
-        HDC dc=CreateCompatibleDC(o.dc); const auto old=SelectObject(dc,o.mapBitmap);
-        RECT bounds{0,0,width,height}; SetDCBrushColor(dc,MapOnly(o)?TrackMapTransparentKey:Ink::Panel); FillRect(dc,&bounds,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
         {
-            Gdiplus::Graphics graphics(dc); graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias); graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+            // Drawn with alpha: without background the empty map is transparent and every edge keeps its coverage.
+            Gdiplus::Bitmap canvas(width,height,width*4,PixelFormat32bppPARGB,static_cast<BYTE*>(bits));
+            Gdiplus::Graphics graphics(&canvas); graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias); graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+            graphics.Clear(MapOnly(o)?Gdiplus::Color(0,0,0,0):Gdiplus::Color(255,12,15,19));
             if(o.map.layout!=MapLayout) {
                 // The circuit as a ring or a bar in the map's color; start/finish as a white mark at 0 %.
                 const auto shape=MapShape(o,width,height); const float stroke=static_cast<float>(std::max(2,MulDiv(6,o.dpi*o.place.scale,9600)));
@@ -170,7 +171,7 @@ void PaintMap(Overlay& o,const DrawCommand& c,HRGN dirty) {
                 }
             }
         }
-        SelectObject(dc,old); DeleteDC(dc);
+        GdiFlush();
     }
     // The whole map in this pass: its rows straight into the buffer, and the cars and numbers after it too.
     RECT box{}; const bool whole=!dirty || (GetRgnBox(dirty,&box)==SIMPLEREGION && box.left<=c.r.left && box.top<=c.r.top && box.right>=c.r.right && box.bottom>=c.r.bottom);
@@ -195,11 +196,12 @@ void Blend(Overlay& o,const RECT& r,const std::uint32_t* source,int width,int he
             const std::uint32_t s=from[x],alpha=s>>24;
             if(!alpha) continue;
             if(alpha==255) { to[x]=s; continue; }
-            // Red and blue together, green apart; (x+128+((x+128)>>8))>>8 is x/255 rounded, without a division.
+            // Red with blue and alpha with green, two channels at a time; (x+128+((x+128)>>8))>>8 is x/255 rounded.
             const std::uint32_t d=to[x],keep=255-alpha;
             std::uint32_t rb=(d&0x00FF00FFu)*keep+0x00800080u; rb=((rb+((rb>>8)&0x00FF00FFu))>>8)&0x00FF00FFu;
-            std::uint32_t g=((d>>8)&0xFFu)*keep+0x80u; g=((g+(g>>8))>>8)&0xFFu;
-            to[x]=((s&0x00FFFFFFu)+(rb|g<<8))|0xFF000000u;
+            std::uint32_t ag=((d>>8)&0x00FF00FFu)*keep+0x00800080u; ag=((ag+((ag>>8)&0x00FF00FFu))>>8)&0x00FF00FFu;
+            // Alpha blends too, so a transparent buffer gets the coverage of each edge.
+            to[x]=s+(rb|ag<<8);
         }
     }
 }
