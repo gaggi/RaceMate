@@ -1,13 +1,24 @@
-        const int W=TrackMapWidth, end=32+TrackMapBodyHeight;
+        const int W=TrackMapWidthOf(o.map);
         // Track and layout are in the header; the map takes the body, with one line under it for a warning or the details.
-        const bool warning=trackMap.ready && !trackMap.geometry.direction;
+        const bool svg=o.map.layout==MapLayout, line=o.map.layout==LineLayout;
+        const bool warning=svg && trackMap.ready && !trackMap.geometry.direction;
         const bool note=!MapOnly(o) && (warning || o.map.details);
-        const RECT area=MapOnly(o)?rect(24,48,W-48,208):rect(20,44,W-40,note?218:240);
-        if(trackMap.ready) {
+        const int end=32+TrackMapBody(o.map,MapOnly(o),note);
+        // Circle and line place cars by lap fraction alone: 0 % at the top or left, clockwise or to the right.
+        const bool live=app.preview || app.frame.connected;
+        const RECT area=line?(MapOnly(o)?rect(24,40,W-48,48):rect(24,40,W-48,40))
+            :(MapOnly(o)?rect(24,48,W-48,208):rect(20,44,W-40,note?218:240));
+        const bool ready=svg?trackMap.ready:live;
+        if(ready) {
             RECT physical=area; physical.top-=titleOffset; physical.bottom-=titleOffset;
             out.push_back({DrawCommand::Map,Regular,0,physical,0,{static_cast<float>(trackMap.revision),static_cast<float>(MapStyle(o.map))}});
-            if(trackMap.geometry.direction) {
-                const auto transform=MapFit(trackMap.geometry,area.right-area.left,area.bottom-area.top,o.map);
+            if(!svg || trackMap.geometry.direction) {
+                const auto transform=svg?MapFit(trackMap.geometry,area.right-area.left,area.bottom-area.top,o.map):MapTransform{};
+                const auto ring=MapShape(o,area.right-area.left,area.bottom-area.top);
+                auto place=[&](double pct) {
+                    const auto point=svg?transform.Apply(trackMap.geometry.At(pct)):ring.At(pct);
+                    return POINT{area.left+static_cast<int>(std::lround(point.x)),area.top+static_cast<int>(std::lround(point.y))};
+                };
                 const int reference=ReferenceCar(app.frame);
                 const auto own=std::find_if(app.session.drivers.begin(),app.session.drivers.end(),[&](const Driver& d){return d.index==reference;});
                 // Markers first, numbers second: the cars share one canvas and no marker covers another car's number.
@@ -16,9 +27,8 @@
                     const auto& car=app.frame.cars[d.index];
                     if(!std::isfinite(car.pct) || car.pct<0 || car.pct>=1 || car.surface<0 || (!o.map.pit && car.pit)) return;
                     if(o.map.ownClass && own!=app.session.drivers.end() && d.classId!=own->classId) return;
-                    const double progress=app.preview?std::fmod(app.now/90000.+d.index*.091,1.):car.pct;
-                    const auto point=transform.Apply(trackMap.geometry.At(progress));
-                    const int x=area.left+static_cast<int>(std::lround(point.x)), y=area.top+static_cast<int>(std::lround(point.y));
+                    const auto p=place(app.preview?std::fmod(app.now/90000.+d.index*.091,1.):car.pct);
+                    const int x=p.x, y=p.y;
                     const int radius=px(o.map.numbers?11:6), stroke=std::max(1,px(highlight?2:1));
                     const COLORREF color=highlight?Ink::Yellow:ColorOf(d.classColor);
                     const RECT bounds{x-radius,y-radius-titleOffset,x+radius+1,y+radius+1-titleOffset};
@@ -29,13 +39,13 @@
                     }
                     out.push_back({DrawCommand::MapCar,Regular,0,bounds,color,{static_cast<float>(stroke),car.pit?1.f:0.f}});
                 };
-                // Where the own car would rejoin after a stop now: a hollow accent ring with its class position.
+                // Where the own car would rejoin after a stop now: a hollow accent ring marked PIT.
                 const auto& rejoin=PitExit();
                 auto drawGhost=[&](bool number) {
                     if(!o.map.pitExit || !rejoin.valid) return;
-                    const auto point=transform.Apply(trackMap.geometry.At(app.preview?std::fmod(app.now/90000.+reference*.091+.7,1.):rejoin.pct));
-                    const int x=area.left+static_cast<int>(std::lround(point.x)), y=area.top+static_cast<int>(std::lround(point.y)), radius=px(11);
-                    if(number) { label(L"P"+std::to_wstring(rejoin.classPosition),{x-radius,y-radius,x+radius+1,y+radius+1},Ink::Accent,SmallBold,DT_CENTER); return; }
+                    const auto p=place(app.preview?std::fmod(app.now/90000.+reference*.091+.7,1.):rejoin.pct);
+                    const int x=p.x, y=p.y, radius=px(11);
+                    if(number) { label(L"PIT",{x-radius-px(4),y-radius,x+radius+px(5),y+radius+1},Ink::Accent,SmallBold,DT_CENTER); return; }
                     out.push_back({DrawCommand::MapCar,Regular,0,{x-radius,y-radius-titleOffset,x+radius+1,y+radius+1-titleOffset},Ink::Accent,{static_cast<float>(std::max(1,px(2))),1}});
                 };
                 for(bool number:{false,true}) {
@@ -44,14 +54,17 @@
                     if(own!=app.session.drivers.end()) drawCar(*own,true,number);
                 }
             }
-        } else label(trackMap.message,rect(20,MapOnly(o)?100:120,W-40,80),Ink::Muted,Regular,DT_CENTER);
+        } else label(svg?trackMap.message:L"Waiting for iRacing",line?rect(20,40,W-40,40):rect(20,MapOnly(o)?100:120,W-40,80),Ink::Muted,Regular,DT_CENTER);
         if(note) {
             std::wstring text=trackMap.message;
             if(!warning) {
-                text=L"ID "+std::to_wstring(trackMap.id)+(trackMap.ready?(trackMap.cached?L" · local SVG cache":L" · SVG in memory"):L"")+L" · "+std::to_wstring(o.place.rate)+L" Hz";
-                if(trackMap.ready) text+=(o.map.cornerNumbers || o.map.cornerNames) && std::none_of(trackMap.geometry.labels.begin(),trackMap.geometry.labels.end(),[&](const trackmap::Label& item){return ShowMapLabel(item,o.map);})?L" · no official labels for this selection":L" · position from SVG path length";
+                if(!svg) text=L"Lap position  ·  "+std::to_wstring(o.place.rate)+L" Hz";
+                else {
+                    text=L"ID "+std::to_wstring(trackMap.id)+(trackMap.ready?(trackMap.cached?L" · local SVG cache":L" · SVG in memory"):L"")+L" · "+std::to_wstring(o.place.rate)+L" Hz";
+                    if(trackMap.ready) text+=(o.map.cornerNumbers || o.map.cornerNames) && std::none_of(trackMap.geometry.labels.begin(),trackMap.geometry.labels.end(),[&](const trackmap::Label& item){return ShowMapLabel(item,o.map);})?L" · no official labels for this selection":L" · position from SVG path length";
+                }
             }
-            label(std::move(text),rect(14,266,W-28,18),warning?Ink::Yellow:Ink::Muted,Small,DT_CENTER);
+            label(std::move(text),line?rect(14,82,W-28,18):rect(14,266,W-28,18),warning?Ink::Yellow:Ink::Muted,Small,DT_CENTER);
         }
         else if(MapOnly(o) && warning) label(trackMap.message,rect(14,32,W-28,16),Ink::Yellow,Small,DT_CENTER);
         footer(end);

@@ -4,7 +4,7 @@ class TablePage : public PageWindow {
 public:
     explicit TablePage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
-    enum class Key { None, Rounded, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, ClassView, OwnClass, LiveGaps, UntimedOrder, ClassColors, LapColors, Progress, Column, Header, Footer, ColumnHeadings };
+    enum class Key { None, Rounded, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, ClassView, OwnClass, LiveGaps, UntimedOrder, ClassColors, LapColors, Progress, PitExit, Column, Header, Footer, ColumnHeadings };
     static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, NameFormatEditId=201, FlagEditId=202, ShortViewEditId=205, SlotEditId=206, BrandLogoEditId=213, BrandNameEditId=214;
     static constexpr UINT_PTR TypingTimer=1;
     static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E', UpGlyph=L'\uE74A', DownGlyph=L'\uE74B';
@@ -105,6 +105,8 @@ private:
         if(o_.kind==StandingsKind) {
             RowList::Row progress; progress.title=L"Session progress"; progress.detail=L"A thin bar under the header, by laps or by time.";
             progress.toggle=o_.table.progress?1:0; push(std::move(progress),Key::Progress);
+            RowList::Row pitExit; pitExit.title=L"Pit exit row"; pitExit.detail=L"In races, a faded row of your own where you would rejoin if you boxed now. Times under Settings, Pit stop estimate.";
+            pitExit.toggle=o_.table.pitExit?1:0; push(std::move(pitExit),Key::PitExit);
         }
         header(L"Columns  \u00B7  left to right");
         const auto& order=o_.table.columnOrder;
@@ -240,6 +242,7 @@ private:
         case Key::ClassColors: if(code==RowList::kToggled) { o_.table.classColors=on; Changed(); } break;
         case Key::LapColors: if(code==RowList::kToggled) { o_.table.lapColors=on; Changed(); } break;
         case Key::Progress: if(code==RowList::kToggled) { o_.table.progress=on; Changed(); } break;
+        case Key::PitExit: if(code==RowList::kToggled) { o_.table.pitExit=on; Changed(); } break;
         case Key::LiveGaps: if(code==RowList::kToggled) { o_.table.standings.liveGaps=on; Changed(); } break;
         case Key::UntimedOrder:
             if(pressed) { const int choice=ChooseFromMenu({L"By car number",L"By iRating, highest first"},o_.table.standings.fallbackByRating?1:0); if(choice>=0) { o_.table.standings.fallbackByRating=choice==1; Changed(); } }

@@ -16,7 +16,8 @@ void RetryTrackMap(bool retryLabels=false) {
     if(retryLabels && trackMap.id>=0) { std::error_code error; std::filesystem::remove(TrackMapCache()/std::to_wstring(trackMap.id)/L"turns-attempt.txt",error); }
 }
 void UpdateTrackMap() {
-    const bool enabled=std::any_of(app.overlays.begin(),app.overlays.end(),[](const Overlay& o){return o.kind==TrackMapKind && o.place.enabled;});
+    // Only the official map needs the SVGs; circle and line work without them.
+    const bool enabled=std::any_of(app.overlays.begin(),app.overlays.end(),[](const Overlay& o){return o.kind==TrackMapKind && o.place.enabled && o.map.layout==MapLayout;});
     if(!enabled || (!app.preview && !app.frame.connected)) {
         if(trackMap.task.Running() || trackMap.ready || !trackMap.identity.empty()) {
             trackMap.task.Cancel(); trackMap.identity.clear(); trackMap.geometry={}; trackMap.ready=false; ++trackMap.revision;
@@ -25,7 +26,7 @@ void UpdateTrackMap() {
     }
     const int id=app.preview?353:app.session.trackId;
     const std::string name=app.preview?"limerock 2019 gp":app.session.trackName;
-    const bool labels=std::any_of(app.overlays.begin(),app.overlays.end(),[](const Overlay& o){return o.kind==TrackMapKind && o.place.enabled && (o.map.cornerNumbers || o.map.cornerNames);});
+    const bool labels=std::any_of(app.overlays.begin(),app.overlays.end(),[](const Overlay& o){return o.kind==TrackMapKind && o.place.enabled && o.map.layout==MapLayout && (o.map.cornerNumbers || o.map.cornerNames);});
     const std::string layout=std::to_string(id)+":"+trackmap::NormalizeName(name)+(app.preview?":preview":"");
     const std::string identity=layout+(labels?":labels":"");
     if(trackMap.identity!=identity) {
@@ -61,7 +62,20 @@ bool ShowMapLabel(const trackmap::Label& label,const TrackMapSettings& settings)
 }
 int MapStyle(const TrackMapSettings& settings) {
     return (settings.background?1:0)|(settings.pitLane?2:0)|(settings.startFinish?4:0)
-        |(settings.cornerNumbers?8:0)|(settings.cornerNames?16:0)|(settings.labelContrast?32:0)|(settings.labelScale<<6);
+        |(settings.cornerNumbers?8:0)|(settings.cornerNames?16:0)|(settings.labelContrast?32:0)|(settings.labelScale<<6)|(settings.layout<<15);
+}
+// Circle and line: where a lap fraction lies in an area of this physical size; the scene and the static drawing share it.
+struct MapShapeInfo {
+    int layout=MapLayout; double width=0,height=0,inset=0;
+    double Radius() const { return std::max(1.,std::min(width,height)/2-inset); }
+    trackmap::Point At(double pct) const {
+        if(layout==LineLayout) return {inset+pct*(width-2*inset),height/2};
+        const double angle=2*3.141592653589793*pct;
+        return {width/2+Radius()*std::sin(angle),height/2-Radius()*std::cos(angle)};
+    }
+};
+MapShapeInfo MapShape(const Overlay& o,int width,int height) {
+    return {o.map.layout,static_cast<double>(width),static_cast<double>(height),static_cast<double>(MulDiv(14,o.dpi*o.place.scale,9600))};
 }
 MapTransform MapFit(const trackmap::Geometry& g,int width,int height,const TrackMapSettings& settings) {
     auto low=g.low,high=g.high;
@@ -102,7 +116,7 @@ void DrawMapLayer(Gdiplus::Graphics& graphics,const trackmap::Layer& layer,const
     }
 }
 void PaintMap(Overlay& o,const DrawCommand& c) {
-    if(!trackMap.ready) return;
+    if(o.map.layout==MapLayout && !trackMap.ready) return;
     const int width=c.r.right-c.r.left,height=c.r.bottom-c.r.top;
     const int style=MapStyle(o.map);
     if(!o.mapBitmap || o.mapRevision!=trackMap.revision || o.mapWidth!=width || o.mapHeight!=height || o.mapStyle!=style) {
@@ -113,30 +127,44 @@ void PaintMap(Overlay& o,const DrawCommand& c) {
         RECT bounds{0,0,width,height}; SetDCBrushColor(dc,MapOnly(o)?TrackMapTransparentKey:Ink::Panel); FillRect(dc,&bounds,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
         {
             Gdiplus::Graphics graphics(dc); graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias); graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
-            const auto transform=MapFit(trackMap.geometry,width,height,o.map);
-            if(o.map.pitLane) DrawMapLayer(graphics,trackMap.geometry.pit,transform,Ink::Muted);
-            DrawMapLayer(graphics,trackMap.geometry.active,transform,RGB(110,120,134));
-            // The stripe is clear on the map; the arrow may lie outside its tight bounds.
-            if(o.map.startFinish) DrawMapLayer(graphics,trackMap.geometry.finish,transform,Ink::White);
-            Gdiplus::FontFamily family(L"Segoe UI");
-            Gdiplus::StringFormat format(Gdiplus::StringFormat::GenericTypographic());
-            format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
-            Gdiplus::SolidBrush brush(Gdiplus::Color(255,232,237,242));
-            Gdiplus::Pen outline(Gdiplus::Color(255,12,15,19),static_cast<float>(std::max(1.,1.4*o.place.scale/100.)));
-            outline.SetLineJoin(Gdiplus::LineJoinRound);
-            for(const auto& item:trackMap.geometry.labels) if(ShowMapLabel(item,o.map)) {
-                const auto text=Wide(item.text); const auto p=transform.Apply(item.position);
-                const float size=static_cast<float>(item.size*transform.scale*o.map.labelScale/100.);
-                const auto fontStyle=item.number?Gdiplus::FontStyleBold:Gdiplus::FontStyleRegular;
-                const float ascent=size*family.GetCellAscent(fontStyle)/family.GetEmHeight(fontStyle);
-                format.SetAlignment(item.anchor==1?Gdiplus::StringAlignmentCenter:(item.anchor==2?Gdiplus::StringAlignmentFar:Gdiplus::StringAlignmentNear));
-                Gdiplus::GraphicsPath path;
-                path.AddString(text.c_str(),static_cast<int>(text.size()),&family,fontStyle,size,Gdiplus::PointF(0,-ascent),&format);
-                Gdiplus::Matrix matrix;
-                matrix.Translate(static_cast<float>(p.x),static_cast<float>(p.y));
-                matrix.Rotate(static_cast<float>(item.angle*180/3.141592653589793)); path.Transform(&matrix);
-                if(o.map.labelContrast) graphics.DrawPath(&outline,&path);
-                graphics.FillPath(&brush,&path);
+            if(o.map.layout!=MapLayout) {
+                // The circuit as a ring or a bar in the map's color; start/finish as a white mark at 0 %.
+                const auto shape=MapShape(o,width,height); const float stroke=static_cast<float>(std::max(2,MulDiv(6,o.dpi*o.place.scale,9600)));
+                Gdiplus::Pen road(Gdiplus::Color(255,110,120,134),stroke); road.SetStartCap(Gdiplus::LineCapRound); road.SetEndCap(Gdiplus::LineCapRound);
+                const float w=static_cast<float>(width),h=static_cast<float>(height),inset=static_cast<float>(shape.inset),r=static_cast<float>(shape.Radius());
+                if(o.map.layout==CircleLayout) graphics.DrawEllipse(&road,w/2-r,h/2-r,2*r,2*r);
+                else graphics.DrawLine(&road,inset,h/2,w-inset,h/2);
+                if(o.map.startFinish) {
+                    Gdiplus::Pen mark(Gdiplus::Color(255,255,255,255),std::max(2.f,stroke/2));
+                    if(o.map.layout==CircleLayout) graphics.DrawLine(&mark,w/2,h/2-r-stroke,w/2,h/2-r+stroke);
+                    else for(float x:{inset,w-inset}) graphics.DrawLine(&mark,x,h/2-stroke*1.5f,x,h/2+stroke*1.5f);
+                }
+            } else {
+                const auto transform=MapFit(trackMap.geometry,width,height,o.map);
+                if(o.map.pitLane) DrawMapLayer(graphics,trackMap.geometry.pit,transform,Ink::Muted);
+                DrawMapLayer(graphics,trackMap.geometry.active,transform,RGB(110,120,134));
+                // The stripe is clear on the map; the arrow may lie outside its tight bounds.
+                if(o.map.startFinish) DrawMapLayer(graphics,trackMap.geometry.finish,transform,Ink::White);
+                Gdiplus::FontFamily family(L"Segoe UI");
+                Gdiplus::StringFormat format(Gdiplus::StringFormat::GenericTypographic());
+                format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
+                Gdiplus::SolidBrush brush(Gdiplus::Color(255,232,237,242));
+                Gdiplus::Pen outline(Gdiplus::Color(255,12,15,19),static_cast<float>(std::max(1.,1.4*o.place.scale/100.)));
+                outline.SetLineJoin(Gdiplus::LineJoinRound);
+                for(const auto& item:trackMap.geometry.labels) if(ShowMapLabel(item,o.map)) {
+                    const auto text=Wide(item.text); const auto p=transform.Apply(item.position);
+                    const float size=static_cast<float>(item.size*transform.scale*o.map.labelScale/100.);
+                    const auto fontStyle=item.number?Gdiplus::FontStyleBold:Gdiplus::FontStyleRegular;
+                    const float ascent=size*family.GetCellAscent(fontStyle)/family.GetEmHeight(fontStyle);
+                    format.SetAlignment(item.anchor==1?Gdiplus::StringAlignmentCenter:(item.anchor==2?Gdiplus::StringAlignmentFar:Gdiplus::StringAlignmentNear));
+                    Gdiplus::GraphicsPath path;
+                    path.AddString(text.c_str(),static_cast<int>(text.size()),&family,fontStyle,size,Gdiplus::PointF(0,-ascent),&format);
+                    Gdiplus::Matrix matrix;
+                    matrix.Translate(static_cast<float>(p.x),static_cast<float>(p.y));
+                    matrix.Rotate(static_cast<float>(item.angle*180/3.141592653589793)); path.Transform(&matrix);
+                    if(o.map.labelContrast) graphics.DrawPath(&outline,&path);
+                    graphics.FillPath(&brush,&path);
+                }
             }
         }
         SelectObject(dc,old); DeleteDC(dc);

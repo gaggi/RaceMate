@@ -141,6 +141,7 @@ struct Row {
     double gap = std::numeric_limits<double>::quiet_NaN();
     int lapDifference = 0;
     bool player = false;
+    bool pitExit = false; // The own car where it would rejoin after a stop now; not a real entry.
     double interval = std::numeric_limits<double>::quiet_NaN();
     int intervalLaps = 0;
 };

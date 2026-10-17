@@ -2,7 +2,7 @@ class TrackMapPage : public PageWindow {
 public:
     explicit TrackMapPage(Overlay& overlay) : PageWindow(ui.heading,ui.text), o_(overlay) {}
 private:
-    enum Key { Info, Numbers, OwnClass, Pit, PitExitKey, Details, Rounded, Header, Footer, Retry, Cache, Background, PitLane, StartFinish, CornerNumbers, CornerNames, LabelSize, LabelContrast };
+    enum Key { Info, LayoutKey, Numbers, OwnClass, Pit, PitExitKey, Details, Rounded, Header, Footer, Retry, Cache, Background, PitLane, StartFinish, CornerNumbers, CornerNames, LabelSize, LabelContrast };
     static constexpr int ListId=100, SlotEditId=230, LabelSizeId=240;
     static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E';
     void OnCreate() override { list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont()); editors_.Attach(list_,Instance(),TextFont()); Refresh(); }
@@ -13,13 +13,19 @@ private:
         auto heading=[&](const wchar_t* title) { RowList::Row row; row.header=true; row.title=title; push(std::move(row),Info); };
         auto toggle=[&](const wchar_t* title,const wchar_t* detail,bool on,Key key) { RowList::Row row; row.title=title; row.detail=detail; row.toggle=on?1:0; push(std::move(row),key); };
         heading(L"Display");
+        {
+            // Circle and line need no SVG: for any track, and the line for wide monitors.
+            static constexpr const wchar_t* names[]={L"Map",L"Circle",L"Line"};
+            static constexpr const wchar_t* details[]={L"The official iRacing track drawing",L"Cars on a ring by lap position, 0 % at the top, clockwise; no download",L"Cars on a bar by lap position, for 21:9 and 32:9 monitors; no download"};
+            RowList::Row layout; layout.title=names[o_.map.layout]; layout.detail=details[o_.map.layout]; layout.button=L"Choose..."; push(std::move(layout),LayoutKey);
+        }
         toggle(L"Background and frame",L"Off: transparent map and cars only. Hides the frame, captions, header and footer; their settings are kept.",o_.map.background,Background);
         toggle(L"Pit lane",L"Show the official pit-lane drawing, independently of cars in the pits.",o_.map.pitLane,PitLane);
         toggle(L"Start/finish marking",L"Show the line and direction arrow. Position mapping keeps using these data when hidden.",o_.map.startFinish,StartFinish);
         toggle(L"Car numbers",L"Switch off for smaller dots. Cars use their class color; the car you drive or watch is yellow with a white ring.",o_.map.numbers,Numbers);
         toggle(L"Own class only",L"Uses the class of your car, or the car you are watching.",o_.map.ownClass,OwnClass);
         toggle(L"Cars in the pits",L"Hollow markers at their lap percentage on the main circuit; not their exact pit-lane position.",o_.map.pit,Pit);
-        toggle(L"Pit exit",L"A blue ring where you would rejoin if you boxed now, with your class position. Times under Settings, Pit stop estimate.",o_.map.pitExit,PitExitKey);
+        toggle(L"Pit exit",L"A blue PIT ring where you would rejoin if you boxed now. Times under Settings, Pit stop estimate.",o_.map.pitExit,PitExitKey);
         toggle(L"Projection details",L"A line under the map with track ID, cache source, refresh rate and the projection notice. With background only.",o_.map.details,Details);
         rows.back().muted=MapOnly(o_); rows.back().toggleEnabled=!MapOnly(o_);
         auto rounded=RoundedRow(o_); rounded.muted=MapOnly(o_); rounded.toggleEnabled=!MapOnly(o_); push(std::move(rounded),Rounded);
@@ -87,6 +93,10 @@ private:
         if(code==RowList::kButton || code==RowList::kActivated || code==RowList::kIconButton) {
             if(key==Header || key==Footer || key==LabelSize) { expanded_=expanded_==key?Info:key; Refresh(); BuildEditors(); if(key==LabelSize && expanded_==LabelSize) list_.ScrollIntoView(index); }
             if(key==Retry) { RetryTrackMap(true); UpdateOverlays(); }
+            if(key==LayoutKey) {
+                const int choice=ChooseFromMenu({L"Map",L"Circle",L"Line"},o_.map.layout);
+                if(choice>=0 && choice!=o_.map.layout) { o_.map.layout=choice; Fit(o_); SettingChanged(); Refresh(); }
+            }
             if(key==Cache) { std::error_code error; std::filesystem::create_directories(TrackMapCache(),error); if(!error) ShellExecuteW(Handle(),L"open",TrackMapCache().c_str(),nullptr,nullptr,SW_SHOWNORMAL); }
         }
         return true;

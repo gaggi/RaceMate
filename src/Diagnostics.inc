@@ -157,7 +157,23 @@ int RunDiagnostics() {
         fuel.fuel=fuelSettings; SettingChanged();
         auto& map=First(TrackMapKind); const auto placement=map.place; map.place.enabled=true; SettingChanged();
         if(trackMap.ready) pitOk=std::any_of(map.scene.begin(),map.scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::MapCar && c.color==Ink::Accent; }) && Export(map.window,L"build\\qa\\trackmap-pit-exit.bmp") && pitOk;
-        map.place=placement; SettingChanged();
+        // Circle and line: no SVG needed, every car placed, the ring included; their own sizes.
+        for(int layout:{CircleLayout,LineLayout}) {
+            map.map.layout=layout; Fit(map); SettingChanged();
+            const auto markers=std::count_if(map.scene.begin(),map.scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::MapCar; });
+            pitOk=OverlayWidth(map)==TrackMapWidthOf(map.map) && markers>=static_cast<long long>(app.session.drivers.size()) && std::any_of(map.scene.begin(),map.scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::Text && c.text==L"PIT"; }) && pitOk;
+            pitOk=Export(map.window,layout==CircleLayout?L"build\\qa\\trackmap-circle.bmp":L"build\\qa\\trackmap-line.bmp") && pitOk;
+        }
+        map.place=placement; map.map.layout=MapLayout; Fit(map); SettingChanged();
+        // Standings: a faded row of its own at the predicted position, only when switched on.
+        auto& standings=First(StandingsKind); const auto table=standings.table;
+        const auto withoutExit=Rows(standings);
+        pitOk=std::none_of(withoutExit.begin(),withoutExit.end(),[](const Row& r){ return r.pitExit; }) && pitOk;
+        standings.table.pitExit=true; SettingChanged();
+        const auto withExit=Rows(standings);
+        pitOk=std::count_if(withExit.begin(),withExit.end(),[](const Row& r){ return r.pitExit; })==1 && pitOk;
+        pitOk=std::any_of(standings.scene.begin(),standings.scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::Fill && c.color==Ink::PitExitRow; }) && Export(standings.window,L"build\\qa\\standings-pit-exit.bmp") && pitOk;
+        standings.table=table; SettingChanged();
         // Leaving the pits or replays give no estimate.
         app.frame.pit=true; InvalidateModel(); pitOk=!PitExit().valid && FooterValue(PitExitMetric)==L"Pit exit —" && pitOk;
         app.frame.pit=false; InvalidateModel();

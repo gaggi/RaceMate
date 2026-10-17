@@ -39,7 +39,7 @@ const wchar_t* Sections[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pitlimi
 constexpr POINT DefaultPositions[]={{40,120},{480,120},{40,470},{40,720},{40,820},{960,120}};
 // Refresh rates an overlay can choose, and each overlay's default; telemetry is read at least as often as the fastest.
 constexpr int OverlayRates[]={1,2,5,10,15,20};
-constexpr int DefaultRates[]={10,1,1,10,1,15};
+constexpr int DefaultRates[]={10,1,1,10,1,10};
 // Relative and Standings columns. The values are stored in ColumnOrder.
 enum Column {
     PositionColumn, NumberColumn, DriverColumn, GapColumn, IntervalColumn, BestColumn, LastColumn,
@@ -161,7 +161,7 @@ struct TableSettings {
     bool gapSigns=false; // + / - before gaps (and intervals in the Standings); off by default: the row order already tells.
     int nameFormat=0;
     int rows=7, gapDecimals=1; bool hidePit=false, best=false, last=false, lapColors=true; // Relative.
-    StandingsOptions standings; bool interval=false, laps=false, gained=false, progress=true; // Standings.
+    StandingsOptions standings; bool interval=false, laps=false, gained=false, progress=true, pitExit=false; // Standings.
 };
 // Every overlay uses the same selectable header/footer metrics.
 struct Bands { bool header=false; Slots headerMetrics=DefaultHeader; FooterSettings footer; };
@@ -178,8 +178,16 @@ struct TrackMapSettings {
     bool numbers=true, ownClass=false, pit=true, details=false, background=true, pitLane=true, startFinish=true;
     bool cornerNumbers=false, cornerNames=false, labelContrast=true, pitExit=true;
     int labelScale=100;
+    int layout=0; // The official map, a circle, or a line for wide monitors; circle and line need no SVG.
 };
+enum TrackMapLayout { MapLayout, CircleLayout, LineLayout };
 constexpr int TrackMapWidth=440, TrackMapBodyHeight=264;
+int TrackMapWidthOf(const TrackMapSettings& m) { return m.layout==CircleLayout?280:(m.layout==LineLayout?880:TrackMapWidth); }
+// Body under the header, or the whole height without background; the line leaves a row for a note.
+int TrackMapBody(const TrackMapSettings& m,bool mapOnly,bool note) {
+    if(m.layout==LineLayout) return mapOnly?64:(note?68:52);
+    return mapOnly?240:TrackMapBodyHeight;
+}
 constexpr const wchar_t* TrackMapPreviewName=L"Lime Rock Park · Grand Prix"; // The preview's map and sample cars.
 constexpr COLORREF TrackMapTransparentKey=RGB(1,2,3); // Reserved, distinct from marker text and fills.
 // One overlay window. A kind can have several instances; the first keeps the kind's plain name and settings section.
@@ -361,7 +369,7 @@ int FuelHeight(const Overlay& o) {
     return std::max(h,40);
 }
 int OverlayWidth(const Overlay& o) {
-    if(o.kind==TrackMapKind) return TrackMapWidth;
+    if(o.kind==TrackMapKind) return TrackMapWidthOf(o.map);
     if(IsTable(o.kind)) { int width=16; for(int id:VisibleColumns(o)) width+=ColumnWidth(o,id); return std::max(120,width); }
     if(o.kind==WeatherKind) return o.weather.strip?std::max(1,WeatherStripCount(o))*WeatherStripCell:(WindRoseOnly(o)?WindRoseWidth:WeatherPanelWidth);
     if(o.kind==FuelKind) return o.fuel.strip?std::max(1,FuelStripCount(o))*FuelStripCell:FuelPanelWidth;
@@ -486,7 +494,7 @@ void ReadTable(const wchar_t* section,int kind,TableSettings& t) {
         standings.leaders=std::clamp(ReadInt(section,L"Leaders",3),0,MaxCars);
         standings.ahead=std::clamp(ReadInt(section,L"Ahead",2),0,MaxCars);
         standings.behind=std::clamp(ReadInt(section,L"Behind",2),0,MaxCars);
-        t.progress=ReadBool(section,L"ShowProgress",true);
+        t.progress=ReadBool(section,L"ShowProgress",true); t.pitExit=ReadBool(section,L"ShowPitExitRow",false);
         t.laps=ReadBool(section,L"ShowLaps",false);
         t.gained=ReadBool(section,L"ShowPositionsGained",false);
     }
@@ -526,6 +534,7 @@ void ReadInstance(Overlay& o) {
         o.map.startFinish=ReadBool(section.c_str(),L"ShowStartFinish",true);
         o.map.cornerNumbers=ReadBool(section.c_str(),L"ShowCornerNumbers",false); o.map.cornerNames=ReadBool(section.c_str(),L"ShowCornerNames",false);
         o.map.labelContrast=ReadBool(section.c_str(),L"CornerLabelContrast",true); o.map.pitExit=ReadBool(section.c_str(),L"ShowPitExit",true);
+        o.map.layout=std::clamp(ReadInt(section.c_str(),L"MapLayout",MapLayout),0,static_cast<int>(LineLayout));
         o.map.labelScale=((std::clamp(ReadInt(section.c_str(),L"CornerLabelScale",100),75,200)+12)/25)*25;
     }
 }
@@ -595,7 +604,7 @@ void Save() {
                 number(section,L"SeparateClasses",standings.separateClasses); number(section,L"OwnClass",standings.ownClass);
                 number(section,L"LiveGaps",standings.liveGaps); number(section,L"FallbackByIRating",standings.fallbackByRating);
                 number(section,L"Leaders",standings.leaders); number(section,L"Ahead",standings.ahead); number(section,L"Behind",standings.behind);
-                number(section,L"ShowProgress",t.progress); number(section,L"ShowLaps",t.laps); number(section,L"ShowPositionsGained",t.gained);
+                number(section,L"ShowProgress",t.progress); number(section,L"ShowPitExitRow",t.pitExit); number(section,L"ShowLaps",t.laps); number(section,L"ShowPositionsGained",t.gained);
             }
         }
         if(o.kind==FuelKind) {
@@ -612,7 +621,7 @@ void Save() {
             number(section,L"ShowPitCars",o.map.pit); number(section,L"ShowMapDetails",o.map.details);
             number(section,L"ShowBackground",o.map.background); number(section,L"ShowPitLane",o.map.pitLane); number(section,L"ShowStartFinish",o.map.startFinish);
             number(section,L"ShowCornerNumbers",o.map.cornerNumbers); number(section,L"ShowCornerNames",o.map.cornerNames);
-            number(section,L"CornerLabelContrast",o.map.labelContrast); number(section,L"CornerLabelScale",o.map.labelScale); number(section,L"ShowPitExit",o.map.pitExit);
+            number(section,L"CornerLabelContrast",o.map.labelContrast); number(section,L"CornerLabelScale",o.map.labelScale); number(section,L"ShowPitExit",o.map.pitExit); number(section,L"MapLayout",o.map.layout);
         }
     }
     number(L"General",L"ShowTitleBar",app.showTitleBar); number(L"General",L"RefreshHz",app.rate);
@@ -702,8 +711,21 @@ const std::vector<Row>& RelativeRows(const Overlay& o) {
     if(o.rowsVersion!=app.modelVersion) { o.relativeRows=Relative(app.session,app.frame,o.table.rows,false,o.table.hidePit); o.rowsVersion=app.modelVersion; }
     return o.relativeRows;
 }
+const PitRejoin& PitExit();
 const std::vector<StandingsGroup>& StandingsGroups(const Overlay& o) {
-    if(o.rowsVersion!=app.modelVersion) { o.standingsGroups=SelectStandings(app.session,app.frame,o.table.standings); o.rowsVersion=app.modelVersion; }
+    if(o.rowsVersion!=app.modelVersion) {
+        o.standingsGroups=SelectStandings(app.session,app.frame,o.table.standings); o.rowsVersion=app.modelVersion;
+        // The pit exit as a row of its own, before the first car that would then be behind.
+        const auto& rejoin=PitExit();
+        if(o.table.pitExit && rejoin.valid) for(auto& group:o.standingsGroups) {
+            const auto own=std::find_if(group.rows.begin(),group.rows.end(),[](const Row& r){ return r.player; });
+            if(own==group.rows.end()) continue;
+            Row ghost=*own; ghost.player=false; ghost.pitExit=true; ghost.car.position=rejoin.position; ghost.car.classPosition=rejoin.classPosition;
+            const bool byClass=o.table.standings.separateClasses; const int position=byClass?rejoin.classPosition:rejoin.position;
+            const auto at=std::find_if(group.rows.begin(),group.rows.end(),[&](const Row& r){ return !r.player && (byClass?r.car.classPosition:r.car.position)>=position; });
+            group.rows.insert(at,ghost); break;
+        }
+    }
     return o.standingsGroups;
 }
 std::vector<Row> Rows(const Overlay& o) {
@@ -714,7 +736,7 @@ std::vector<Row> Rows(const Overlay& o) {
 }
 // Overlay palette. Translucent fills of the design are pre-blended over the panel, since the window has one alpha.
 namespace Ink {
-constexpr COLORREF Panel=RGB(12,15,19), Band=RGB(22,25,28), Line=RGB(27,29,33), Border=RGB(32,34,38), ClassBand=RGB(24,27,31), OwnRow=RGB(22,39,57), Divider=RGB(64,67,71);
+constexpr COLORREF Panel=RGB(12,15,19), Band=RGB(22,25,28), Line=RGB(27,29,33), Border=RGB(32,34,38), ClassBand=RGB(24,27,31), OwnRow=RGB(22,39,57), PitExitRow=RGB(16,27,38), Divider=RGB(64,67,71);
 constexpr COLORREF White=RGB(232,237,242), Muted=RGB(154,166,178), Label=RGB(135,148,161), Accent=RGB(77,163,255);
 constexpr COLORREF Yellow=RGB(232,184,58), Orange=RGB(255,176,103), Red=RGB(255,122,107), Green=RGB(61,220,132), Purple=RGB(192,132,252), Wet=RGB(111,182,255);
 constexpr COLORREF LapsAhead=RGB(255,138,125), LapsBehind=RGB(127,191,255);
@@ -785,7 +807,7 @@ int BrandLogo(const std::string& brand) {
     return -1;
 }
 int HeightWithTitle(const Overlay& o) {
-    if(o.kind==TrackMapKind) return 32+(MapOnly(o)?240:TrackMapBodyHeight)+FooterHeight(o);
+    if(o.kind==TrackMapKind) return 32+TrackMapBody(o.map,MapOnly(o),o.map.details)+FooterHeight(o);
     const auto& t=o.table;
     if(o.kind==RelativeKind) return TableRowsTop(o)+t.rows*27+FooterHeight(o);
     if(o.kind==StandingsKind) {
@@ -1027,6 +1049,20 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         const auto& groups=o.kind==StandingsKind?StandingsGroups(o):noGroups;
         const bool rowsEmpty=o.kind==RelativeKind?rows.empty():std::none_of(groups.begin(),groups.end(),[](const StandingsGroup& group){return !group.rows.empty();});
         auto drawRow=[&](const Row& r) {
+            if(r.pitExit) {
+                // The own row's highlight, faded: position, then what the stop costs and who is ahead.
+                const auto& rejoin=PitExit(); int x=12;
+                fill({0,px(y),width,px(y+27)},Ink::PitExitRow);
+                if(o.table.classColors) fill(rect(0,y,3,27),ColorOf(r.driver.classColor));
+                if(std::find(columns.begin(),columns.end(),PositionColumn)!=columns.end()) {
+                    Cell cell{{},Ink::Accent}; CellRenderers[PositionColumn](r,o,cell);
+                    label(std::move(cell.text),rect(x,y,ColumnWidth(o,PositionColumn)-8,27),Ink::Accent,Regular,Columns[PositionColumn].align);
+                    x+=ColumnWidth(o,PositionColumn);
+                }
+                const auto ahead=PitExitAhead();
+                label(L"PIT EXIT  ·  "+Format(rejoin.loss,0)+L" s"+(app.pitExitPartial?L"?":L"")+(ahead.empty()?L"":L"  ·  "+ahead),rect(x,y,OverlayWidth(o)-x-12,27),Ink::Accent,Regular);
+                y+=27; return;
+            }
             fill({0,px(y),width,px(y+27)},r.player?Ink::OwnRow:Ink::Panel);
             if(o.table.classColors) fill(rect(0,y,3,27),ColorOf(r.driver.classColor));
             COLORREF color=white;
