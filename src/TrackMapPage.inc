@@ -2,8 +2,8 @@ class TrackMapPage : public PageWindow {
 public:
     explicit TrackMapPage(Overlay& overlay) : PageWindow(ui.heading,ui.text), o_(overlay) {}
 private:
-    enum Key { Info, Numbers, OwnClass, Pit, Details, Rounded, Header, Footer, Retry, Cache, Background, PitLane, StartFinish };
-    static constexpr int ListId=100, SlotEditId=230;
+    enum Key { Info, Numbers, OwnClass, Pit, Details, Rounded, Header, Footer, Retry, Cache, Background, PitLane, StartFinish, CornerNumbers, CornerNames, LabelSize, LabelContrast };
+    static constexpr int ListId=100, SlotEditId=230, LabelSizeId=240;
     static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E';
     void OnCreate() override { list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont()); editors_.Attach(list_,Instance(),TextFont()); Refresh(); }
     void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
@@ -22,6 +22,12 @@ private:
         toggle(L"Projection details",L"Show track ID, cache source, refresh rate and the distance-projection notice. With background only.",o_.map.details,Details);
         rows.back().muted=MapOnly(o_); rows.back().toggleEnabled=!MapOnly(o_);
         auto rounded=RoundedRow(o_); rounded.muted=MapOnly(o_); rounded.toggleEnabled=!MapOnly(o_); push(std::move(rounded),Rounded);
+        heading(L"Corner labels");
+        toggle(L"Corner numbers",L"Numbers at their official SVG positions. Also available with a transparent background.",o_.map.cornerNumbers,CornerNumbers);
+        toggle(L"Corner names",L"Official names where iRacing supplies them. Tracks with numbers only do not get invented names.",o_.map.cornerNames,CornerNames);
+        toggle(L"Label contrast outline",L"Dark outline around the text for readability over the circuit or other windows.",o_.map.labelContrast,LabelContrast);
+        RowList::Row size; size.title=L"Label size"; size.detail=std::to_wstring(o_.map.labelScale)+L"% of the official SVG text size; follows the overlay scale.";
+        size.iconButtons={expanded_==LabelSize?CollapseGlyph:ExpandGlyph}; size.expandHeight=expanded_==LabelSize?52:0; push(std::move(size),LabelSize);
         heading(L"Header and footer");
         for(Key key:{Header,Footer}) {
             RowList::Row row=BandRow(o_,key==Footer); row.iconButtons={expanded_==key?CollapseGlyph:ExpandGlyph}; row.expandHeight=expanded_==key?BandEditorHeight:0;
@@ -30,20 +36,29 @@ private:
         }
         heading(L"SVG source");
         RowList::Row status; status.title=L"Automatic layout match"; status.detail=L"Exact iRacing TrackID plus internal TrackName. Unknown layouts are left empty. Preview uses Lime Rock GP with sample cars."; push(std::move(status),Info);
-        RowList::Row retry; retry.title=L"Retry loading this map"; retry.detail=L"Uses a valid local cache first. Failed downloads are retried only on request or after changing track."; retry.button=L"Retry"; push(std::move(retry),Retry);
+        RowList::Row retry; retry.title=L"Retry loading this map"; retry.detail=L"Uses valid cached geometry. Retries missing corner labels immediately; otherwise failed label requests wait six hours."; retry.button=L"Retry"; push(std::move(retry),Retry);
         RowList::Row cache; cache.title=L"Local SVG cache"; cache.detail=TrackMapCache().wstring(); cache.button=L"Open folder"; push(std::move(cache),Cache);
         RowList::Row note; note.title=L"Experimental distance projection"; note.detail=L"Start/finish and direction come from the official SVG. Lap percentages follow its prepared path length. No learned fallback or per-track corrections. SVGs download once per layout while this overlay is enabled."; push(std::move(note),Info);
         list_.SetRows(std::move(rows));
     }
     void BuildEditors() {
         editors_.Clear();
-        if(expanded_!=Header && expanded_!=Footer) return;
+        if(expanded_!=Header && expanded_!=Footer && expanded_!=LabelSize) return;
         for(size_t i=0;i<keys_.size();++i) if(keys_[i]==expanded_) {
-            syncing_=true; editors_.Begin(static_cast<int>(i)); BandEditors(editors_,o_,expanded_==Footer,SlotEditId); syncing_=false; editors_.Position(); return;
+            syncing_=true; editors_.Begin(static_cast<int>(i));
+            if(expanded_==LabelSize) {
+                editors_.Label(L"Text size",24,12,100);
+                editors_.Combo(LabelSizeId,{L"75%",L"100%",L"125%",L"150%",L"175%",L"200%"},std::clamp((o_.map.labelScale-75)/25,0,5),132,12,120);
+            } else BandEditors(editors_,o_,expanded_==Footer,SlotEditId);
+            syncing_=false; editors_.Position(); return;
         }
     }
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); BuildEditors(); return true; }
+        if(id==LabelSizeId) {
+            if(!syncing_ && code==CBN_SELCHANGE) { o_.map.labelScale=75+25*std::clamp(editors_.Selection(id),0,5); SettingChanged(); Refresh(); }
+            return true;
+        }
         if(id>=SlotEditId && id<SlotEditId+SlotCount) {
             if(!syncing_ && code==CBN_SELCHANGE) { ApplyBandEditor(editors_,o_,expanded_==Footer,id,SlotEditId); SettingChanged(); Refresh(); }
             return true;
@@ -60,13 +75,16 @@ private:
             if(key==Background) { o_.map.background=on; expanded_=Info; editors_.Clear(); Fit(o_); }
             if(key==PitLane) o_.map.pitLane=on;
             if(key==StartFinish) o_.map.startFinish=on;
+            if(key==CornerNumbers) o_.map.cornerNumbers=on;
+            if(key==CornerNames) o_.map.cornerNames=on;
+            if(key==LabelContrast) o_.map.labelContrast=on;
             if(key==Rounded) SetRounded(o_,on);
             if(key==Header || key==Footer) SetBand(o_,key==Footer,on);
             SettingChanged(); Refresh(); return true;
         }
         if(code==RowList::kButton || code==RowList::kActivated || code==RowList::kIconButton) {
-            if(key==Header || key==Footer) { expanded_=expanded_==key?Info:key; Refresh(); BuildEditors(); }
-            if(key==Retry) { RetryTrackMap(); UpdateOverlays(); }
+            if(key==Header || key==Footer || key==LabelSize) { expanded_=expanded_==key?Info:key; Refresh(); BuildEditors(); if(key==LabelSize && expanded_==LabelSize) list_.ScrollIntoView(index); }
+            if(key==Retry) { RetryTrackMap(true); UpdateOverlays(); }
             if(key==Cache) { std::error_code error; std::filesystem::create_directories(TrackMapCache(),error); if(!error) ShellExecuteW(Handle(),L"open",TrackMapCache().c_str(),nullptr,nullptr,SW_SHOWNORMAL); }
         }
         return true;

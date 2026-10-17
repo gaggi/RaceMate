@@ -11,6 +11,10 @@ Branch: `codex/trackmap-prototype`.
 
 **Background and frame** ausschalten zeigt nur die Karte mit Fahrzeugen auf transparentem Hintergrund. Rand, Überschriften, Legende sowie Header/Footer verschwinden dabei; ihre Einstellungen bleiben für den Modus mit Hintergrund erhalten. **Pit lane** und **Start/finish marking** schalten die gezeichnete Boxengasse beziehungsweise Linie mit Richtungspfeil unabhängig voneinander um. Das Ausblenden beeinflusst die Positionsberechnung nicht. **Cars in the pits** steuert separat die Fahrzeugmarker in der Box.
 
+**Corner numbers** und **Corner names** blenden die offiziellen Kurvenbeschriftungen getrennt ein. **Label size** stellt ihre Größe zwischen 75 und 200 Prozent ein; **Label contrast outline** gibt der Schrift einen dunklen Rand. Die Beschriftungen funktionieren auch ohne Hintergrund und werden mit der statischen Karte zwischengespeichert. Beide sind standardmäßig ausgeschaltet.
+
+Die zusätzliche `turns.svg` wird erst bei aktivierten Beschriftungen geladen und ergänzt auch vorhandene Karten-Caches. Fehlende Beschriftungen lassen die Karte weiter nutzbar; fehlgeschlagene Abrufe werden sechs Stunden zwischengespeichert. **Retry** versucht fehlende Beschriftungen sofort erneut. iRacing liefert je nach Strecke unterschiedliche Daten: Suzuka GP hat Nummern, Lime Rock GP und Okayama Full auch Namen. Fehlende Namen werden nicht erfunden.
+
 Für Rückmeldungen helfen TrackID/Layout und konkrete Stellen: zum Beispiel „Okayama Full, Marker an der Hairpin schon 30 m zu weit, an Start/Ziel passend“. So lässt sich ein Startversatz von einer Abweichung der gezeichneten Streckenlänge unterscheiden.
 
 ## Was der Prototyp macht
@@ -31,6 +35,6 @@ Fahrzeuge in der Box werden hohl an ihrer Rundenposition auf der Hauptstrecke da
 
 ## Technische Prüfung
 
-`RaceMateTrackMapTests` prüft Layout-Identität, SVG-Kurven und Transformationen, Start/Ziel, beide Richtungen, Rundenumbruch sowie fehlende, übergroße und unpassende Dateien. Eine eigene Achterstrecke prüft die Brückenlücke, beide Kreuzungsdurchfahrten, die Rundenlänge und das Ausbleiben einer Umkehr. Mit `--assets <Ordner>` lassen sich lokal vorhandene `active.svg`, `start-finish.svg` und optional `pitroad.svg` aufbereiten. Der Diagnosemodus prüft außerdem Filter, Einstellungsspeicherung, Bitmap-Wiederverwendung und das Leeren der alten Karte bei unbekanntem Layout. Echte SVG-Dateien für diese Sichtprüfung liegen ausschließlich im ignorierten Build-/Cache-Verzeichnis.
+`RaceMateTrackMapTests` prüft Layout-Identität, SVG-Kurven und Transformationen, Start/Ziel, beide Richtungen, Rundenumbruch sowie fehlende, übergroße und unpassende Dateien. Eine eigene Achterstrecke prüft die Brückenlücke, beide Kreuzungsdurchfahrten, die Rundenlänge und das Ausbleiben einer Umkehr. Mit `--assets <Ordner>` lassen sich lokal vorhandene `active.svg`, `start-finish.svg` und optional `pitroad.svg` und `turns.svg` aufbereiten. Der Diagnosemodus prüft außerdem Filter, Einstellungsspeicherung, Bitmap-Wiederverwendung, Kurvennummern/-namen mit Schriftgröße und transparenter Darstellung sowie das Leeren der alten Karte bei unbekanntem Layout. Echte SVG-Dateien für diese Sichtprüfung liegen ausschließlich im ignorierten Build-/Cache-Verzeichnis.
 
 Den Quellenindex aktualisiert `tools/UpdateTrackMapIndex.ps1`; alternativ kann eine lokale Metadatendatei mit `-MetadataPath` übergeben werden. Die App selbst lädt weder den Index aus dem Drittanbieter-Repository noch benötigt sie einen iRacing-Login.

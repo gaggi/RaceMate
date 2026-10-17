@@ -8,8 +8,17 @@ struct Point { double x=0, y=0; };
 struct Path { std::vector<Point> points; bool closed=false; };
 struct Shape { std::vector<Path> paths; bool evenOdd=false; double strokeWidth=0; bool filled=true; };
 struct Layer { double width=0, height=0; std::vector<Shape> shapes; };
+// Text from the official turns layer; coordinates share the map's SVG viewport.
+struct Label {
+    Point position;
+    std::string text;
+    double size=36, angle=0;
+    int anchor=0; // start, middle, end
+    bool number=false;
+};
 struct Geometry {
     Layer active, finish, pit;
+    std::vector<Label> labels;
     std::vector<Point> route;
     std::vector<double> distances;
     Point low, high;
@@ -24,7 +33,7 @@ struct Result {
     explicit operator bool() const { return error.empty() && geometry.length>0; }
 };
 // SVGs are parsed once on a worker. No telemetry learning or track-specific corrections.
-Result Prepare(std::string active, std::string finish, std::string pit={});
+Result Prepare(std::string active, std::string finish, std::string pit={}, std::string turns={});
 struct Source { int id; const char* slug; const char* folder; };
 const Source* FindSource(int trackId, std::string_view trackName={});
 std::string NormalizeName(std::string_view name);

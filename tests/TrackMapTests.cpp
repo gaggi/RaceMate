@@ -58,7 +58,35 @@ void BridgeTests() {
     Require(!Prepare(Svg("<rect x=\"20\" y=\"40\" width=\"180\" height=\"6\"/>"),openFinish),"ordinary open straight ribbon is not joined into an invented circuit");
     Require(!Prepare(Svg("<path d=\"M20 77H107V20H113V77H200V83H20Z\"/>"),Svg("<line x1=\"100\" y1=\"70\" x2=\"100\" y2=\"90\" stroke=\"red\"/>"+Arrow)),"ambiguous junction cannot silently lose a branch");
 }
+void LabelTests() {
+    const auto text=Svg("<style>.corner{font-size:20px;} .hidden{display:none;}</style>"
+        "<g transform=\"translate(10 20)\"><text transform=\"matrix(1 0 0 1 30 40)\" class=\"corner\">12</text>"
+        "<text x=\"60\" y=\"70\" text-anchor=\"middle\">Moss &#x2018;S&#x2019; &amp; Co</text>"
+        "<text class=\"hidden\">99</text><g visibility=\"hidden\"><text>98</text></g></g>");
+    const auto map=Prepare(Svg(Band),Svg(Stripe+Arrow),{},text);
+    Require(map && map.geometry.labels.size()==2,"official text layer and CSS visibility are supported");
+    const auto& number=map.geometry.labels[0]; const auto& name=map.geometry.labels[1];
+    Require(number.number && number.text=="12" && number.size==20 && std::abs(number.position.x-40)<.01 && std::abs(number.position.y-60)<.01,"number, CSS font size and nested SVG transforms");
+    Require(!name.number && name.anchor==1 && name.text=="Moss ‘S’ & Co","UTF-8, XML numeric/named entities and text anchor");
+    const auto plain=Prepare(Svg(Band),Svg(Stripe+Arrow));
+    Require(plain.geometry.length==map.geometry.length && plain.geometry.start==map.geometry.start && plain.geometry.At(.37).x==map.geometry.At(.37).x,"labels do not affect the route or car projection");
+    const auto spans=Prepare(Svg(Band),Svg(Stripe+Arrow),{},Svg("<text x=\"10\" y=\"30\" font-size=\"16\"><tspan>Hair</tspan><tspan x=\"10\" dy=\"18\">Pin</tspan></text>"));
+    Require(spans && spans.geometry.labels.size()==2 && spans.geometry.labels[1].text=="Pin" && spans.geometry.labels[1].position.y==48,"positioned multiline tspan labels");
+    auto mismatch=text; mismatch.replace(mismatch.find("240 180"),7,"240 190");
+    const auto wrong=Prepare(Svg(Band),Svg(Stripe+Arrow),{},mismatch);
+    Require(wrong && wrong.geometry.labels.empty(),"different turns viewport is ignored without losing map");
+    Require(Prepare(Svg(Band),Svg(Stripe+Arrow),{},"<html>missing</html>").geometry.labels.empty(),"missing optional labels do not remove map");
+    Require(Prepare(Svg(Band),Svg(Stripe+Arrow),{},std::string(1024*1024+1,'x')).geometry.labels.empty(),"oversized labels rejected independently");
+    std::string many,deep;
+    for(int i=0;i<300;++i) many+="<text x=\"10\" y=\"20\">1</text>";
+    Require(Prepare(Svg(Band),Svg(Stripe+Arrow),{},Svg(many)).geometry.labels.size()==256,"label count is bounded");
+    for(int i=0;i<80;++i) deep+="<g>";
+    deep+="<text>1</text>";
+    for(int i=0;i<80;++i) deep+="</g>";
+    Require(Prepare(Svg(Band),Svg(Stripe+Arrow),{},Svg(deep)).geometry.labels.empty(),"excessive nesting is rejected safely");
+}
 void UnitTests() {
+    LabelTests();
     BridgeTests();
     const auto session=rm::ParseSession("WeekendInfo:\n TrackID: 353\n TrackName: limerock 2019 gp\n TrackConfigName: Grand Prix\n",0);
     Require(session.trackId==353 && session.trackName=="limerock 2019 gp" && session.trackConfig=="Grand Prix","layout identity parsed from WeekendInfo");
@@ -103,14 +131,22 @@ void UnitTests() {
     const std::atomic_bool running=false;
     const auto cached=Load(*source,cache,running);
     Require(cached.map && cached.fromCache && cached.cached,"valid identity-tagged cache loads without a network call");
-    for(const char* file:{"source.txt","active.svg","start-finish.svg"}) std::filesystem::remove(directory/file);
+    { std::ofstream(directory/"turns.svg",std::ios::binary)<<Svg("<text x=\"20\" y=\"30\">1</text><text x=\"40\" y=\"50\">Bend</text>"); }
+    const auto labeled=Load(*source,cache,running,true);
+    Require(labeled.fromCache && labeled.map && labeled.map.geometry.labels.size()==2,"cached corner labels load without network");
+    Require(Load(*source,cache,running).map.geometry.labels.empty(),"disabled labels do not parse the optional text layer");
+    std::filesystem::remove(directory/"turns.svg");
+    { std::ofstream(directory/"turns-attempt.txt",std::ios::binary)<<source->folder<<"\n"; }
+    const auto missingLabels=Load(*source,cache,running,true);
+    Require(missingLabels.fromCache && missingLabels.map && missingLabels.map.geometry.labels.empty(),"negative cache keeps geometry available without repeated failed downloads");
+    for(const char* file:{"source.txt","active.svg","start-finish.svg","turns-attempt.txt"}) std::filesystem::remove(directory/file);
     std::filesystem::remove(directory); std::filesystem::remove(cache);
 }
 int AssetCheck(const std::filesystem::path& directory) {
-    const auto result=Prepare(Read(directory/L"active.svg"),Read(directory/L"start-finish.svg"),Read(directory/L"pitroad.svg"));
+    const auto result=Prepare(Read(directory/L"active.svg"),Read(directory/L"start-finish.svg"),Read(directory/L"pitroad.svg"),Read(directory/L"turns.svg"));
     if(!result) throw std::runtime_error(result.error);
     const auto& g=result.geometry;
-    std::cout<<"centered="<<g.centered<<" bridged="<<g.bridged<<" direction="<<g.direction<<" length="<<g.length<<" start="<<g.start/g.length<<"\n";
+    std::cout<<"centered="<<g.centered<<" bridged="<<g.bridged<<" direction="<<g.direction<<" length="<<g.length<<" start="<<g.start/g.length<<" labels="<<g.labels.size()<<"\n";
     for(double pct:{0.,.01,.1,.25,.5,.75,.99}) { const auto p=g.At(pct); std::cout<<pct<<": "<<p.x<<", "<<p.y<<"\n"; }
     Require(g.direction!=0,"official start/finish arrow resolves direction");
     return 0;

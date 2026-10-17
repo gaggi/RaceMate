@@ -10,9 +10,9 @@
         const RECT area=rect(24,MapOnly(o)?48:92,W-48,208);
         if(trackMap.ready) {
             RECT physical=area; physical.top-=titleOffset; physical.bottom-=titleOffset;
-            out.push_back({DrawCommand::Map,Regular,0,physical,0,{static_cast<float>(trackMap.revision),static_cast<float>((o.map.background?1:0)|(o.map.pitLane?2:0)|(o.map.startFinish?4:0))}});
+            out.push_back({DrawCommand::Map,Regular,0,physical,0,{static_cast<float>(trackMap.revision),static_cast<float>(MapStyle(o.map))}});
             if(trackMap.geometry.direction) {
-                const auto transform=MapFit(trackMap.geometry,area.right-area.left,area.bottom-area.top);
+                const auto transform=MapFit(trackMap.geometry,area.right-area.left,area.bottom-area.top,o.map);
                 const int reference=ReferenceCar(app.frame);
                 const auto own=std::find_if(app.session.drivers.begin(),app.session.drivers.end(),[&](const Driver& d){return d.index==reference;});
                 auto drawCar=[&](const Driver& d,bool highlight) {
@@ -40,5 +40,5 @@
         const bool warning=trackMap.ready && !trackMap.geometry.direction;
         if(!MapOnly(o)) label(trackMap.ready?(warning?trackMap.message:L"FOCUS: white ring · CLASS: color · PIT: hollow"):L"Official iRacing SVGs · prototype",rect(14,307,W-28,18),warning?Ink::Yellow:Ink::Muted,Small,DT_CENTER);
         else if(warning) label(trackMap.message,rect(14,32,W-28,16),Ink::Yellow,Small,DT_CENTER);
-        if(trackMap.ready && o.map.details && !warning && !MapOnly(o)) label(L"Approximate position from SVG path length",rect(14,330,W-28,18),Ink::Muted,Small,DT_CENTER);
+        if(trackMap.ready && o.map.details && !warning && !MapOnly(o)) label((o.map.cornerNumbers || o.map.cornerNames) && std::none_of(trackMap.geometry.labels.begin(),trackMap.geometry.labels.end(),[&](const trackmap::Label& item){return ShowMapLabel(item,o.map);})?L"No official labels available for this selection":L"Approximate position from SVG path length",rect(14,330,W-28,18),Ink::Muted,Small,DT_CENTER);
         footer(end);

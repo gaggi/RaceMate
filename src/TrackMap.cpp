@@ -2,8 +2,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
+#include <cstdlib>
 #include <limits>
 #include <memory>
+#include <map>
+#include <sstream>
 #include <numbers>
 #include <queue>
 #include <stdexcept>
@@ -66,6 +70,7 @@ Layer Parse(std::string svg) {
     if(layer.shapes.empty()) throw std::runtime_error("SVG contains no supported paths");
     return layer;
 }
+#include "TrackMapLabels.inc"
 std::vector<double> Distances(const std::vector<Point>& p) {
     std::vector<double> d(p.size());
     for(size_t i=1;i<p.size();++i) d[i]=d[i-1]+Length(p[i]-p[i-1]);
@@ -273,10 +278,11 @@ Point Geometry::At(double fraction,int overrideDirection,double offset) const {
     const int sign=overrideDirection?overrideDirection:direction;
     return Sample(route,distances,Wrap(start/length+sign*(fraction+offset))*length);
 }
-Result Prepare(std::string active,std::string finish,std::string pit) {
+Result Prepare(std::string active,std::string finish,std::string pit,std::string turns) {
     Result result;
     try {
         auto& g=result.geometry; g.active=Parse(std::move(active)); g.finish=Parse(std::move(finish));
+        try { g.labels=ParseLabels(std::move(turns),g.active); } catch(const std::exception&) { g.labels.clear(); }
         if(!SameViewport(g.active,g.finish)) throw std::runtime_error("SVG layer viewports do not match");
         if(!pit.empty()) { try { g.pit=Parse(std::move(pit)); if(!SameViewport(g.active,g.pit)) g.pit={}; } catch(const std::exception&) { g.pit={}; } }
         struct Ring { const Path* path; double length; bool filled; };

@@ -10,5 +10,5 @@ struct Loaded {
     bool cached=false;
 };
 // Only the official HTTPS CDN is contacted, and only while an enabled map needs a layout.
-Loaded Load(const Source&,const std::filesystem::path& cache,const std::atomic_bool& cancelled);
+Loaded Load(const Source&,const std::filesystem::path& cache,const std::atomic_bool& cancelled,bool labels=false);
 }

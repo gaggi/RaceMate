@@ -61,7 +61,9 @@ int RunDiagnostics() {
             const auto cache=TrackMapCache(); std::error_code error;
             if(!std::filesystem::exists(cache/std::to_wstring(id)/L"source.txt",error)) continue;
             exercised=true;
-            const std::atomic_bool cancelled=false; auto loaded=trackmap::Load(*trackmap::FindSource(id),cache,cancelled);
+            const std::atomic_bool cancelled=false;
+            const bool haveTurns=std::filesystem::exists(cache/std::to_wstring(id)/L"turns.svg",error);
+            auto loaded=trackmap::Load(*trackmap::FindSource(id),cache,cancelled,haveTurns);
             mapOk=loaded.fromCache && loaded.map && loaded.map.geometry.direction!=0 && mapOk;
             if(!loaded.map) continue;
             app.preview=false; app.session.trackId=id; app.session.trackName=id==353?"limerock 2019 gp":(id==168?"suzuka grandprix":"okayama full");
@@ -87,6 +89,38 @@ int RunDiagnostics() {
                 for(auto& pixel:pixels) pixel&=0xffffff;
                 return pixels;
             };
+            if(!trackMap.geometry.labels.empty()) {
+                const auto basePixels=mapPixels(); const auto routePoint=trackMap.geometry.At(.37);
+                o.map.cornerNumbers=true; trackMap.identity+=":labels"; UpdateOverlays();
+                mapOk=basePixels!=mapPixels() && (o.mapStyle&8)!=0 && mapOk;
+                mapOk=Export(o.window,L"build\\qa\\trackmap-corner-numbers-"+std::to_wstring(id)+L".bmp") && mapOk;
+                o.map.cornerNames=true; o.map.labelScale=125; Save(); Load(); UpdateOverlays();
+                mapOk=o.map.cornerNumbers && o.map.cornerNames && o.map.labelScale==125 && o.map.labelContrast && trackMap.geometry.At(.37).x==routePoint.x && mapOk;
+                mapOk=Export(o.window,L"build\\qa\\trackmap-corner-labels-"+std::to_wstring(id)+L".bmp") && mapOk;
+                const auto labeledBitmap=o.mapBitmap; app.frame.cars[0].pct+=.001; UpdateOverlays();
+                mapOk=o.mapBitmap==labeledBitmap && mapOk;
+                o.map.background=false; UpdateOverlays();
+                mapOk=Export(o.window,L"build\\qa\\trackmap-corner-transparent-"+std::to_wstring(id)+L".bmp",true) && mapOk;
+                OpenOverlay(o);
+                if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) {
+                    auto* rows=reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA));
+                    for(size_t row=0;row<rows->Rows().size();++row) if(rows->Rows()[row].title==L"Label size") {
+                        rows->PressIconButton(static_cast<int>(row),0); rows->ScrollIntoView(static_cast<int>(row));
+                        const HWND combo=GetDlgItem(list,240);
+                        mapOk=combo && SendMessageW(combo,CB_GETCOUNT,0,0)==6 && mapOk;
+                        if(combo) { SendMessageW(combo,CB_SETCURSEL,3,0); SendMessageW(ui.host.Content(),WM_COMMAND,MAKEWPARAM(240,CBN_SELCHANGE),reinterpret_cast<LPARAM>(combo)); }
+                        mapOk=o.map.labelScale==150 && mapOk;
+                        mapOk=Export(app.main,L"build\\qa\\trackmap-corner-settings.bmp") && mapOk;
+                        break;
+                    }
+                } else mapOk=false;
+                ShowPage(Page::Overlays);
+                o.map.cornerNumbers=o.map.cornerNames=false; o.map.labelScale=100; o.map.background=true;
+                UpdateOverlays(); mapOk=trackMap.ready && !trackMap.task.Running() && mapOk;
+                o.map.cornerNames=true; UpdateOverlays();
+                mapOk=trackMap.ready && !trackMap.task.Running() && mapOk;
+                o.map.cornerNames=false; UpdateOverlays();
+            }
             const auto start=trackMap.geometry.At(0); const auto revision=trackMap.revision; const auto withLayers=mapPixels();
             o.map.pitLane=false; UpdateOverlays(); const auto withoutPit=mapPixels();
             mapOk=(trackMap.geometry.pit.shapes.empty() || withLayers!=withoutPit) && mapOk;
@@ -108,7 +142,7 @@ int RunDiagnostics() {
         mapOk=!trackMap.ready && !trackMap.task.Running() && std::none_of(o.scene.begin(),o.scene.end(),[](const DrawCommand& c){return c.type==DrawCommand::Map;}) && mapOk;
         o.map=settings; app.preview=true; app.session=savedSession; app.frame=savedFrame; RetryTrackMap(); UpdateOverlays(); Save();
         OpenOverlay(o); mapOk=Export(app.main,L"build\\qa\\trackmap-settings.bmp") && mapOk;
-        report<<"Track map: cached SVGs/markers, class/pit filters, transparent background, optional pit lane/start-finish, persistence and unchanged geometry: "<<(mapOk?(exercised?"PASS":"PASS (no cached real SVGs to render)"):"FAIL")<<"\n";
+        report<<"Track map: cached SVGs/markers, class/pit filters, transparent background, optional pit lane/start-finish, corner labels/size editor, persistence and unchanged geometry: "<<(mapOk?(exercised?"PASS":"PASS (no cached real SVGs to render)"):"FAIL")<<"\n";
         ok=mapOk && ok;
         ShowPage(Page::Overlays);
     }

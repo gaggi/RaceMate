@@ -173,7 +173,11 @@ Bands DefaultBands(int kind) {
 }
 struct FuelSettings { std::array<bool,FuelModuleCount> display{}; std::array<bool,FuelMetricCount> figures{}; std::vector<int> order=FuelOrder; bool strip=false; };
 struct WeatherSettings { std::array<bool,WeatherModuleCount> display{}; std::vector<int> order=WeatherOrder; bool strip=false; };
-struct TrackMapSettings { bool numbers=true, ownClass=false, pit=true, details=true, background=true, pitLane=true, startFinish=true; };
+struct TrackMapSettings {
+    bool numbers=true, ownClass=false, pit=true, details=true, background=true, pitLane=true, startFinish=true;
+    bool cornerNumbers=false, cornerNames=false, labelContrast=true;
+    int labelScale=100;
+};
 constexpr int TrackMapWidth=440, TrackMapBodyHeight=328;
 constexpr COLORREF TrackMapTransparentKey=RGB(1,2,3); // Reserved, distinct from marker text and fills.
 // One overlay window. A kind can have several instances; the first keeps the kind's plain name and settings section.
@@ -504,6 +508,9 @@ void ReadInstance(Overlay& o) {
         o.map.pit=ReadBool(section.c_str(),L"ShowPitCars",true); o.map.details=ReadBool(section.c_str(),L"ShowMapDetails",true);
         o.map.background=ReadBool(section.c_str(),L"ShowBackground",true); o.map.pitLane=ReadBool(section.c_str(),L"ShowPitLane",true);
         o.map.startFinish=ReadBool(section.c_str(),L"ShowStartFinish",true);
+        o.map.cornerNumbers=ReadBool(section.c_str(),L"ShowCornerNumbers",false); o.map.cornerNames=ReadBool(section.c_str(),L"ShowCornerNames",false);
+        o.map.labelContrast=ReadBool(section.c_str(),L"CornerLabelContrast",true);
+        o.map.labelScale=((std::clamp(ReadInt(section.c_str(),L"CornerLabelScale",100),75,200)+12)/25)*25;
     }
 }
 void Load() {
@@ -588,6 +595,8 @@ void Save() {
             number(section,L"ShowCarNumbers",o.map.numbers); number(section,L"OwnClass",o.map.ownClass);
             number(section,L"ShowPitCars",o.map.pit); number(section,L"ShowMapDetails",o.map.details);
             number(section,L"ShowBackground",o.map.background); number(section,L"ShowPitLane",o.map.pitLane); number(section,L"ShowStartFinish",o.map.startFinish);
+            number(section,L"ShowCornerNumbers",o.map.cornerNumbers); number(section,L"ShowCornerNames",o.map.cornerNames);
+            number(section,L"CornerLabelContrast",o.map.labelContrast); number(section,L"CornerLabelScale",o.map.labelScale);
         }
     }
     number(L"General",L"ShowTitleBar",app.showTitleBar); number(L"General",L"RefreshHz",app.rate);
