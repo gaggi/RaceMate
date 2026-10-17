@@ -88,7 +88,9 @@ RaceMate cannot determine another car's remaining fuel from the telemetry it rea
 
 ### Pit Limiter
 
-Green when the limiter is on, red when it is off, gray when unknown. Shown while you drive on pit approach or in the pit lane, and as long as the limiter stays on after pit exit.
+Green when the limiter is on, red when it is off, gray when unknown. Shown while you drive on pit approach or in the pit lane. Past pit exit with the limiter still on it flashes red, **TURN OFF PIT LIMITER**, until you switch it off.
+
+**Setup changes** (on by default): in the pit lane it lists in-car adjustments, such as brake bias, ABS, TC, throttle map, fuel mixture and engine braking, that no longer match the loaded setup, each with its value now and in the setup. It compares the dials your car has with the values its setup lists; a dial that differs already when you get in the car is taken as not comparable on that car and left out.
 
 ### Weather
 

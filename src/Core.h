@@ -50,8 +50,13 @@ struct Session {
     std::vector<CameraGroup> cameras;
     std::array<SessionResult, MaxCars> results{};
     std::array<int,MaxCars> gridPositions{};
+    // CarSetup, own car only: every value with its key as iRacing lists it; setupUpdate is its UpdateCount.
+    std::vector<std::pair<std::string,std::string>> setup; int setupUpdate = -1;
 };
 Session ParseSession(const std::string& yaml, int sessionNumber);
+// In-car adjustments that can be changed while driving (the dc variables), against the loaded setup.
+enum Dial { BrakeBiasDial, AbsDial, TractionDial, Traction2Dial, ThrottleDial, MixtureDial, EngineBrakingDial, DialCount };
+const wchar_t* DialName(int dial);
 struct Car {
     int position = 0, classPosition = 0, lap = -1, surface = -1, completed = -1;
     double pct = -1, estTime = -1, f2Time = -1, best = -1, last = -1;
@@ -86,7 +91,28 @@ struct Frame {
     double time = 0, timeLeft = -1, lapsLeft = -1, fuel = 0, lapPct = 0, lastLap = -1, bestLap = -1;
     // The pit menu: PitSvFlags, PitSvFuel (litres to add) and PitRepairLeft (mandatory repair seconds).
     unsigned pitSvFlags = 0; double pitSvFuel = 0, pitRepair = 0;
+    // The in-car adjustments this car has: bit d of dialsKnown marks dials[d].
+    std::array<double, DialCount> dials{}; unsigned dialsKnown = 0;
     std::array<Car, MaxCars> cars{};
+};
+// A dial that no longer matches the setup: its value as in the setup (with that many decimals, % when given so) and now.
+struct DialChange { int dial = 0; double setup = 0, current = 0; int decimals = 0; bool percent = false; };
+// Each dial's value in the CarSetup, found under the names iRacing gives it; found is false where the setup has none.
+struct SetupValue { bool found = false; double value = 0; int decimals = 0; bool percent = false; };
+std::array<SetupValue, DialCount> SetupValues(const Session&);
+// Each known dial against the setup value of the same meaning; dials the setup does not list are left out.
+std::vector<DialChange> SetupChanges(const std::array<SetupValue, DialCount>&, const Frame&);
+inline std::vector<DialChange> SetupChanges(const Session& s, const Frame& f) { return SetupChanges(SetupValues(s), f); }
+// The same while you drive your own car. Right after getting in, the dials equal the setup; a dial that differs then
+// is not the setup's value on this car and stays out until the setup or car changes.
+class SetupDials {
+public:
+    void Reset() { *this={}; }
+    const std::vector<DialChange>& Update(const Session&, const Frame&);
+    const std::vector<DialChange>& Changes() const { return changes_; }
+private:
+    std::string key_; int session_=-1, player_=-1, setupUpdate_=-1; size_t setupSize_=0; bool inCar_=false; double entered_=-1;
+    std::array<bool, DialCount> ignored_{}; std::array<SetupValue, DialCount> values_{}; std::vector<DialChange> changes_;
 };
 // Clockwise source bearing on screen: 0 is ahead, pi/2 is right.
 double RelativeWindAngle(const Frame&);
@@ -113,8 +139,12 @@ class PitLimiterVisibility {
 public:
     void Reset() { *this={}; }
     bool Update(const Session&,const Frame&);
+    // Past pit exit, or out on track, with the limiter still on.
+    bool Warning() const { return warning_; }
+    // On pit road or in the stall.
+    bool InPits() const { return inPit_; }
 private:
-    std::string key_; int session_=-1,player_=-1; double time_=-1; bool inPit_=false, exited_=false; int surface_=-1;
+    std::string key_; int session_=-1,player_=-1; double time_=-1; bool inPit_=false, exited_=false, warning_=false; int surface_=-1;
 };
 class PitHistory {
 public:

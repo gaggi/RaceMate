@@ -202,6 +202,7 @@ constexpr COLORREF TrackMapTransparentKey=RGB(1,2,3), TrackMapMoveKey=RGB(1,2,4)
 struct Overlay {
     HWND window=nullptr; int kind=0, number=1; Placement place;
     Bands bands; TableSettings table; FuelSettings fuel; WeatherSettings weather; TrackMapSettings map;
+    bool setupChanges=true; // Pit Limiter: in the pit lane, list in-car adjustments that differ from the setup.
     HDC dc=nullptr; HBITMAP bitmap=nullptr; HGDIOBJ original=nullptr, originalFont=nullptr;
     HWND frame=nullptr; int frameState=-1; RECT frameRect{}; // The ring around it while edited or movable.
     std::array<HFONT,FontCount> fonts{}; int width=0,height=0,dpi=0;
@@ -249,7 +250,7 @@ struct App {
     RECT windowRect{}; bool windowMaximized=false;
     std::list<Overlay> overlays; // Grouped by kind, in instance order; each stays at its address for its window.
     Frame frame; Session session; Telemetry telemetry; FuelCalculator fuel;
-    EventRecorder events; PitHistory pitHistory; PitLimiterVisibility pitVisibility;
+    EventRecorder events; PitHistory pitHistory; PitLimiterVisibility pitVisibility; SetupDials setupDials;
     RacePredictor predictor; FuelPlan fuelPlan;
     std::wstring config;
     unsigned classBestVersion=~0u; std::vector<std::pair<int,double>> classBest;
@@ -562,6 +563,7 @@ void ReadInstance(Overlay& o) {
     if(kind==WeatherKind) o.weather.order=ReadOrder(section.c_str(),L"ModuleOrder",WeatherOrder);
     for(int i=0;i<WeatherModuleCount;++i) o.weather.display[i]=ReadBool(section.c_str(),WeatherModules[i].key,WeatherModules[i].on);
     o.weather.strip=o.fuel.strip;
+    if(kind==PitLimiterKind) o.setupChanges=ReadBool(section.c_str(),L"ShowSetupChanges",true);
     if(kind==TrackMapKind) {
         o.map.numbers=ReadBool(section.c_str(),L"ShowCarNumbers",true); o.map.ownClass=ReadBool(section.c_str(),L"OwnClass",false);
         o.map.markerText=std::clamp(ReadInt(section.c_str(),L"MarkerText",0),0,2); o.map.whiteTrack=ReadBool(section.c_str(),L"WhiteTrack",true);
@@ -653,6 +655,7 @@ void Save() {
             for(int i=0;i<WeatherModuleCount;++i) number(section,WeatherModules[i].key,o.weather.display[i]);
             number(section,L"Layout",o.weather.strip); order(section,L"ModuleOrder",o.weather.order);
         }
+        if(o.kind==PitLimiterKind) number(section,L"ShowSetupChanges",o.setupChanges);
         if(o.kind==TrackMapKind) {
             number(section,L"ShowCarNumbers",o.map.numbers); number(section,L"OwnClass",o.map.ownClass); number(section,L"MarkerText",o.map.markerText); number(section,L"WhiteTrack",o.map.whiteTrack);
             number(section,L"ShowPitCars",o.map.pit); number(section,L"ShowMapDetails",o.map.details);
@@ -879,6 +882,13 @@ int BrandLogo(const std::string& brand) {
     for(int i=0;i<static_cast<int>(std::size(BrandLogoNames));++i) if(brand==BrandLogoNames[i]) return i;
     return -1;
 }
+// In-car adjustments that differ from the setup, while the Pit Limiter shows them: in the pit lane; an example in preview.
+std::vector<DialChange> ShownSetupChanges(const Overlay& o) {
+    if(o.kind!=PitLimiterKind || !o.setupChanges) return {};
+    if(app.preview) return {{AbsDial,5,3,0,false},{BrakeBiasDial,52.5,53.5,1,true}};
+    return app.pitVisibility.InPits()?app.setupDials.Changes():std::vector<DialChange>{};
+}
+constexpr int SetupChangeRow=28;
 int HeightWithTitle(const Overlay& o) {
     if(o.kind==TrackMapKind) return 32+TrackMapBody(o.map,MapOnly(o),o.map.details)+FooterHeight(o);
     const auto& t=o.table;
@@ -891,6 +901,7 @@ int HeightWithTitle(const Overlay& o) {
         return height+(count==0?54:0);
     }
     if(o.kind==FuelKind) return 32+FuelHeight(o)+FooterHeight(o);
+    if(o.kind==PitLimiterKind) { const int rows=static_cast<int>(ShownSetupChanges(o).size()); return 90+(rows?rows*SetupChangeRow+8:0)+FooterHeight(o); }
     return o.kind==WeatherKind?32+WeatherHeight(o)+FooterHeight(o):90+FooterHeight(o);
 }
 int BaseHeight(const Overlay& o) { return HeightWithTitle(o)-(ShowOverlayHeader(o)?0:32); }
@@ -1516,9 +1527,27 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         footer(y);
     } else {
         const bool known=app.frame.limiterKnown;
-        fill({0,px(32),width,px(90)},!known?RGB(95,100,110):(app.frame.limiter?RGB(27,135,68):RGB(182,41,44)));
-        label(!known?L"PIT LIMITER STATUS UNKNOWN":(app.frame.limiter?L"PIT LIMITER ACTIVE":L"PIT LIMITER NOT ACTIVE"),{px(12),px(38),width-px(12),px(84)},RGB(255,255,255),Bold,DT_CENTER);
-        footer(90);
+        if(!app.preview && app.pitVisibility.Warning()) {
+            // Past pit exit with the limiter still on: flashing red, three times a second, so it can't be missed.
+            fill({0,px(32),width,px(90)},(app.now/167)%2?RGB(90,10,12):RGB(230,32,36));
+            label(L"TURN OFF PIT LIMITER",{px(12),px(38),width-px(12),px(84)},RGB(255,255,255),Bold,DT_CENTER);
+        } else {
+            fill({0,px(32),width,px(90)},!known?RGB(95,100,110):(app.frame.limiter?RGB(27,135,68):RGB(182,41,44)));
+            label(!known?L"PIT LIMITER STATUS UNKNOWN":(app.frame.limiter?L"PIT LIMITER ACTIVE":L"PIT LIMITER NOT ACTIVE"),{px(12),px(38),width-px(12),px(84)},RGB(255,255,255),Bold,DT_CENTER);
+        }
+        // Adjustments made in the car since the setup was loaded: the dial, now in yellow, then the setup's value.
+        int y=90;
+        const auto changes=ShownSetupChanges(o);
+        for(const auto& change:changes) {
+            auto value=[&](double v){ wchar_t b[32]; swprintf_s(b,L"%.*f%s",change.decimals,v,change.percent?L" %":L""); return std::wstring(b); };
+            std::wstring setup=L"setup "+value(change.setup), now=value(change.current);
+            const int right=width-px(14), setupWidth=measure(setup,Regular), nowWidth=measure(now,Bold);
+            label(DialName(change.dial),{px(14),px(y+4),right-setupWidth-nowWidth-px(12),px(y+4+SetupChangeRow)},Ink::Label,Regular);
+            label(std::move(now),{right-setupWidth-nowWidth-px(12),px(y+4),right-setupWidth-px(12)+1,px(y+4+SetupChangeRow)},Ink::Yellow,Bold);
+            label(std::move(setup),{right-setupWidth,px(y+4),right+1,px(y+4+SetupChangeRow)},muted,Regular);
+            y+=SetupChangeRow;
+        }
+        footer(changes.empty()?90:y+8);
     }
     // The 1 px border, last so it stays on top; the window region rounds the same corners. The Pit Limiter's color needs none.
     if(o.kind!=PitLimiterKind && !MapOnly(o)) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{static_cast<float>(o.place.rounded?px(CornerRadius):0)}});
@@ -1855,6 +1884,7 @@ void UpdateOverlays(bool force=true) {
     UpdateTrackMap();
     InvalidateModel();
     const bool pitVisible=app.pitVisibility.Update(app.session,app.frame);
+    app.setupDials.Update(app.session,app.frame);
     for(auto& o:app.overlays) {
         bool visible=o.place.enabled && !app.hidden && (o.kind!=WeatherKind || std::any_of(o.weather.display.begin(),o.weather.display.begin()+WeatherPanelCount,[](bool value){return value;})) && (app.preview || (app.frame.connected && (o.kind!=PitLimiterKind || pitVisible)));
         auto style=GetWindowLongPtrW(o.window,GWL_EXSTYLE);
@@ -1866,8 +1896,9 @@ void UpdateOverlays(bool force=true) {
         if(visible) {
             const int dpi=GetDpiForWindow(o.window);
             RECT client{}; GetClientRect(o.window,&client);
-            if(force) o.due=app.now+1000/o.place.rate;
-            else if(!RefreshDue(o.due,app.now,1000/o.place.rate,app.timerMs/2)) continue;
+            const int rate=o.kind==PitLimiterKind && app.pitVisibility.Warning()?std::max(o.place.rate,10):o.place.rate;
+            if(force) o.due=app.now+1000/rate;
+            else if(!RefreshDue(o.due,app.now,1000/rate,app.timerMs/2)) continue;
             if(client.bottom!=MulDiv(BaseHeight(o),dpi*o.place.scale,9600) || client.right!=MulDiv(OverlayWidth(o),dpi*o.place.scale,9600)) { Fit(o); InvalidateModel(); }
             RefreshOverlay(o);
         }

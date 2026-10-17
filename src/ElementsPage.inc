@@ -5,7 +5,7 @@ class ElementsPage : public PageWindow {
 public:
     explicit ElementsPage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
-    enum class Key { None, Layout, Rounded, Module, Band, Info };
+    enum class Key { None, Layout, Rounded, Module, Band, Info, SetupChanges };
     static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210, CautionEditId=220, SlotEditId=230, HeaderRow=1000, FooterRow=1001;
     static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E', UpGlyph=L'\uE74A', DownGlyph=L'\uE74B';
 
@@ -51,10 +51,15 @@ private:
             bands();
             header(L"When it shows");
             info(L"On pit approach and in the pit lane",L"Only while you drive your own car, not while spotting or in replays.");
-            info(L"After pit exit",L"Stays until you switch the limiter off; with the limiter off it hides at pit exit.");
+            info(L"After pit exit",L"With the limiter still on it flashes TURN OFF PIT LIMITER until you switch it off; with the limiter off it hides at pit exit.");
+            header(L"In the pit lane");
+            RowList::Row setup; setup.title=L"Setup changes"; setup.toggle=o_.setupChanges?1:0;
+            setup.detail=L"Lists brake bias, ABS, TC and other in-car adjustments that no longer match the loaded setup, as long as you're in the pit lane.";
+            push(std::move(setup),Key::SetupChanges);
             header(L"Colors");
             info(L"Limiter on",L"PIT LIMITER ACTIVE",L"Green",RowList::Tone::Active);
             info(L"Limiter off",L"PIT LIMITER NOT ACTIVE",L"Red",RowList::Tone::Warning);
+            info(L"Limiter on after pit exit",L"TURN OFF PIT LIMITER",L"Flashing red",RowList::Tone::Warning);
             info(L"Status unknown",L"iRacing doesn't report the limiter",L"Gray");
             list_.SetRows(std::move(rows)); return;
         }
@@ -146,6 +151,7 @@ private:
             else if(glyph==ExpandGlyph || glyph==CollapseGlyph || code==RowList::kActivated) Expand(element);
             break;
         case Key::Rounded: if(code==RowList::kToggled) { SetRounded(o_,on); Changed(); } break;
+        case Key::SetupChanges: if(code==RowList::kToggled) { o_.setupChanges=on; Fit(o_); Changed(); } break;
         case Key::Layout:
             if(pressed) { const int choice=ChooseFromMenu({L"Panel",L"Strip"},Strip()?1:0); if(choice>=0) { Strip()=choice==1; Changed(); } }
             break;

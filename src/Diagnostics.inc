@@ -1224,7 +1224,29 @@ int RunDiagnostics() {
     app.frame.cars[app.frame.player].surface=2; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
     ok=Export(First(3).window,L"build\\qa\\pit-approach.bmp") && ok;
     app.frame.cars[app.frame.player].surface=3; app.frame.pit=true; app.frame.time+=1; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
+    {
+        // In the pit lane: an in-car adjustment changed after getting in is listed under the limiter, with the setup's value.
+        auto text=[](const wchar_t* t){ return std::any_of(First(3).scene.begin(),First(3).scene.end(),[&](const DrawCommand& c){ return c.type==DrawCommand::Text && c.text==t; }); };
+        auto client=[]{ RECT r{}; GetClientRect(First(3).window,&r); return r.bottom; };
+        const auto savedSetup=app.session.setup; const int savedUpdate=app.session.setupUpdate;
+        app.session.setup={{"BrakePressureBias","52.5%"},{"AbsSetting","5 (ABS)"}}; app.session.setupUpdate=7;
+        app.frame.dialsKnown=1u<<BrakeBiasDial|1u<<AbsDial; app.frame.dials[BrakeBiasDial]=52.5; app.frame.dials[AbsDial]=5;
+        app.setupDials.Reset(); UpdateOverlays(); const LONG plain=client();
+        bool setupOk=!text(L"ABS") && First(3).setupChanges;
+        app.frame.time+=3; app.frame.dials[AbsDial]=3; UpdateOverlays();
+        setupOk=text(L"ABS") && text(L"3") && text(L"setup 5") && !text(L"Brake bias") && client()>plain && setupOk;
+        setupOk=Export(First(3).window,L"build\\qa\\pit-setup-changes.bmp") && setupOk;
+        First(3).setupChanges=false; UpdateOverlays(); setupOk=!text(L"ABS") && client()==plain && setupOk;
+        First(3).setupChanges=true; app.session.setup=savedSetup; app.session.setupUpdate=savedUpdate; app.frame.dialsKnown=0; UpdateOverlays();
+        report<<"Pit Limiter lists in-car adjustments that differ from the setup, in the pit lane: "<<(setupOk?"PASS":"FAIL")<<"\n"; ok=setupOk && ok;
+    }
     app.frame.pit=false; app.frame.limiter=true; app.frame.time+=1; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
+    {
+        // Past pit exit with the limiter on: the flashing warning instead of the green bar.
+        const bool warning=app.pitVisibility.Warning() && std::any_of(First(3).scene.begin(),First(3).scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::Text && c.text==L"TURN OFF PIT LIMITER"; });
+        const bool exported=Export(First(3).window,L"build\\qa\\pit-turn-off-limiter.bmp");
+        report<<"Pit Limiter warns to turn off the limiter after pit exit: "<<(warning && exported?"PASS":"FAIL")<<"\n"; ok=warning && exported && ok;
+    }
     app.frame.limiter=false; app.frame.time+=1; UpdateOverlays(); ok=!IsWindowVisible(First(3).window) && ok;
     app.frame.cars[app.frame.player].surface=2; app.frame.time+=1; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
     app.frame.cars[app.frame.player].surface=originalSurface;

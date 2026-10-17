@@ -378,6 +378,35 @@ void LivePositionAndPitVisibilityTests() {
  frame.replay=false; Require(!reminder.Update(session,frame),"return from replay does not retain stale grace timer");
  frame.pit=true; Require(reminder.Update(session,frame),"new pit entry rearms reminder"); frame.onTrack=false; Require(!reminder.Update(session,frame),"spotting clears own pit reminder");
  frame.onTrack=true; frame.pit=false; Require(!reminder.Update(session,frame),"return to own car does not carry spotting grace timer");
+ // Past pit exit with the limiter still on: a warning instead of the green reminder.
+ {
+  PitLimiterVisibility w; Frame g; g.connected=g.onTrack=true; g.player=1; g.time=1; g.cars[1].surface=2; g.limiterKnown=g.limiter=true;
+  Require(w.Update(session,g) && !w.Warning(),"limiter on during pit approach is right");
+  g.time=2; g.pit=true; Require(w.Update(session,g) && !w.Warning() && w.InPits(),"limiter on in the pit lane is right");
+  g.time=3; g.pit=false; g.cars[1].surface=3; Require(w.Update(session,g) && w.Warning() && !w.InPits(),"limiter on at pit exit warns");
+  g.time=4; Require(w.Update(session,g) && w.Warning(),"the warning stays while the limiter is on");
+  g.time=5; g.limiter=false; Require(!w.Update(session,g) && !w.Warning(),"limiter off ends the warning");
+ }
+ // In-car adjustments against the loaded setup.
+ {
+  const auto setup=ParseSession("CarSetup:\n UpdateCount: 3\n Chassis:\n  InCarDials:\n   BrakePressureBias: 52.5%\n   AbsSetting: 5 (ABS)\n   TractionControlSetting: 4 (TC)\n   ThrottleShapeSetting: Off\n",0);
+  Require(setup.setupUpdate==3 && setup.setup.size()==4,"car setup values parsed");
+  Frame g; g.dialsKnown=1u<<BrakeBiasDial|1u<<AbsDial|1u<<TractionDial|1u<<ThrottleDial;
+  g.dials[BrakeBiasDial]=52.5; g.dials[AbsDial]=5; g.dials[TractionDial]=4; g.dials[ThrottleDial]=2;
+  Require(SetupChanges(setup,g).empty(),"dials as in the setup; a setup value that is no number is skipped");
+  g.dials[AbsDial]=3; g.dials[BrakeBiasDial]=53.04;
+  const auto changes=SetupChanges(setup,g);
+  Require(changes.size()==2 && changes[0].dial==BrakeBiasDial && changes[0].percent && changes[0].decimals==1 && changes[1].dial==AbsDial && changes[1].setup==5 && changes[1].current==3,"changed brake bias and ABS");
+  g.dials[BrakeBiasDial]=52.53; Require(SetupChanges(setup,g).size()==1,"within the setup's rounding is unchanged");
+  g.dialsKnown&=~(1u<<AbsDial); Require(SetupChanges(setup,g).empty(),"a dial the car does not have is left out");
+  g.dialsKnown|=1u<<AbsDial;
+  // A dial that already differs on getting in is not comparable on this car; one changed later is.
+  SetupDials dials; g.connected=g.onTrack=true; g.player=0; g.session=0; g.time=10;
+  Require(dials.Update(setup,g).empty(),"a dial differing on entry is left out");
+  g.time=20; g.dials[TractionDial]=2;
+  Require(dials.Update(setup,g).size()==1 && dials.Changes()[0].dial==TractionDial,"a dial changed after getting in is reported");
+  g.onTrack=false; Require(dials.Update(setup,g).empty(),"nothing outside the car");
+ }
  frame.pit=true; reminder.Update(session,frame); frame.pit=false; session.key="new-session"; Require(!reminder.Update(session,frame),"new session clears old pit grace period");
  frame.pit=true; reminder.Update(session,frame); frame.pit=false; frame.time=1; Require(!reminder.Update(session,frame),"rewind clears future pit grace period");
  frame.inStall=true; Require(reminder.Update(session,frame),"pit stall remains visible without lane flag"); frame.connected=false; Require(!reminder.Update(session,frame),"disconnect clears limiter reminder");

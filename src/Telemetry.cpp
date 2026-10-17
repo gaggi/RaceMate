@@ -38,7 +38,8 @@ constexpr const char* VarNames[] = {
     "CarIdxPosition","CarIdxClassPosition","CarIdxLap","CarIdxTrackSurface","CarIdxSessionFlags","CarIdxTireCompound",
     "CarIdxLapCompleted","CarIdxLapDistPct","CarIdxEstTime","CarIdxF2Time","CarIdxBestLapTime","CarIdxLastLapTime","CarIdxOnPitRoad",
     "PlayerCarIsTowing","PlayerCarTowTime","Speed","PlayerTrackSurface","ReplayFrameNumEnd","dcBrakeBias","SessionTimeTotal","SessionLapsTotal",
-    "WeatherDeclaredWet","Precipitation","RelativeHumidity","FogLevel","Skies","PitSvFlags","PitSvFuel","PitRepairLeft"};
+    "WeatherDeclaredWet","Precipitation","RelativeHumidity","FogLevel","Skies","PitSvFlags","PitSvFuel","PitRepairLeft",
+    "dcABS","dcTractionControl","dcTractionControl2","dcThrottleShape","dcFuelMixture","dcEngineBraking"};
 static_assert(std::size(VarNames) == Telemetry::VarCount);
 }
 bool Telemetry::BuildVariables(const MemoryHeader& h) {
@@ -125,6 +126,10 @@ bool Telemetry::Read(Frame& f, Session& s) {
     next.precipitation=Value(Precipitation,std::numeric_limits<double>::quiet_NaN()); next.humidity=Value(RelativeHumidity,std::numeric_limits<double>::quiet_NaN());
     next.fog=Value(FogLevel,std::numeric_limits<double>::quiet_NaN());
     next.pitSvFlags=static_cast<unsigned>(Value(PitSvFlags,0)); next.pitSvFuel=Value(PitSvFuel,0); next.pitRepair=Value(PitRepairLeft,0);
+    // In-car adjustments, in Dial order; each car has only some.
+    constexpr Var dials[]={dcBrakeBias,dcABS,dcTractionControl,dcTractionControl2,dcThrottleShape,dcFuelMixture,dcEngineBraking};
+    static_assert(std::size(dials)==DialCount);
+    for(int d=0;d<DialCount;++d) if(Has(dials[d])) { next.dials[d]=Value(dials[d],0); next.dialsKnown|=1u<<d; }
     // Entries beyond the published array length keep the Car defaults, which equal the fallbacks below.
     int published=0; for(int id=CarIdxPosition;id<=CarIdxOnPitRoad;++id) published=std::max(published,vars_[id].count);
     for(int i=0;i<std::min(published,MaxCars);++i) {

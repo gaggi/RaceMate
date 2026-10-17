@@ -317,6 +317,10 @@ Session ParseSession(const std::string& yaml, int sessionNumber) {
                 if(key=="IsScenic" || key=="IsSenic") s.cameras.back().scenic=value=="true" || value=="1";
             }
         }
+        if (section == "CarSetup" && !value.empty()) {
+            if (key == "UpdateCount" && indent == 1) s.setupUpdate = Integer(value,-1);
+            else s.setup.emplace_back(key,value);
+        }
         if (section == "WeekendInfo") {
             if (key == "IncidentWarningInitialLimit" && value!="unlimited") { const double n=Number(value); if(std::isfinite(n) && n>0 && n<1000000) s.incidentWarning=static_cast<int>(n); }
             if (key == "IncidentLimit" && value!="unlimited") { const double n=Number(value); if(std::isfinite(n) && n>0 && n<1000000) s.incidentLimit=static_cast<int>(n); }
@@ -621,15 +625,83 @@ std::vector<StandingsGroup> SelectStandings(const Session& s, const Frame& f, co
 }
 bool PitLimiterVisibility::Update(const Session& s,const Frame& f) {
     if(key_!=s.key || session_!=f.session || player_!=f.player || f.time<time_) { Reset(); key_=s.key; session_=f.session; player_=f.player; }
-    time_=f.time;
+    time_=f.time; warning_=false;
     if(!f.connected || !f.onTrack || f.replay || !std::isfinite(f.time)) { inPit_=exited_=false; surface_=-1; return false; }
     const int surface=f.player>=0 && f.player<MaxCars?f.cars[f.player].surface:-1;
-    const bool inLane=f.pit || f.inStall || surface==1;
-    if(inPit_ && !inLane) { inPit_=false; exited_=true; surface_=surface; return f.limiterKnown && f.limiter; }
+    const bool inLane=f.pit || f.inStall || surface==1, on=f.limiterKnown && f.limiter;
+    if(inPit_ && !inLane) { inPit_=false; exited_=true; surface_=surface; warning_=on; return on; }
     inPit_=inLane;
     if(inLane || (surface==2 && surface_!=2)) exited_=false;
     surface_=surface;
-    return (f.limiterKnown && f.limiter) || (!exited_ && (inLane || surface==2));
+    // On the way in the limiter belongs on; anywhere else outside the pit lane it should be off.
+    warning_=on && !inLane && (exited_ || surface!=2);
+    return on || (!exited_ && (inLane || surface==2));
+}
+const wchar_t* DialName(int dial) {
+    constexpr const wchar_t* names[]={L"Brake bias",L"ABS",L"TC",L"TC 2",L"Throttle map",L"Fuel mixture",L"Engine braking"};
+    static_assert(std::size(names)==DialCount);
+    return dial>=0 && dial<DialCount?names[dial]:L"";
+}
+namespace {
+// A setup key in lower case without spaces or punctuation: "TC setting" and "TcSetting" alike.
+std::string SetupKey(std::string_view key) {
+    std::string out; for(char c:key) if(std::isalnum(static_cast<unsigned char>(c))) out+=static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return out;
+}
+}
+std::array<SetupValue,DialCount> SetupValues(const Session& s) {
+    // What iRacing calls each dial in the setups that list it (InCarDials and the like), varying with the car.
+    static const std::vector<std::string> keys[DialCount]={
+        {"brakepressurebias","brakebias","frontbrakebias","brakebalance","basebrakebias","brakebiassetting"},
+        {"abssetting","abs","abslevel","absmap"},
+        {"tractioncontrolsetting","tcsetting","tractioncontrol","tc1setting","tractioncontrol1","tractioncontrolgain","tcgain"},
+        {"tc2setting","tractioncontrol2","tractioncontrol2setting","tractioncontrolslip","tcslip"},
+        {"throttleshapesetting","throttleshape","throttlemap","throttlemapsetting"},
+        {"fuelmixture","fuelmixturesetting","fuelmap","fuelmapsetting"},
+        {"enginebraking","enginebrakingsetting"}};
+    std::array<SetupValue,DialCount> values{};
+    for(const auto& [name,text]:s.setup) {
+        const std::string key=SetupKey(name);
+        for(int dial=0;dial<DialCount;++dial) {
+            if(values[dial].found || std::find(keys[dial].begin(),keys[dial].end(),key)==keys[dial].end()) continue;
+            char* end=nullptr; const double value=std::strtod(text.c_str(),&end);
+            if(end==text.c_str() || !std::isfinite(value)) continue; // Not a number, such as "Off".
+            const auto point=std::string_view(text.c_str(),end-text.c_str()).find('.');
+            values[dial]={true,value,point==std::string_view::npos?0:static_cast<int>(end-text.c_str()-point-1),text.find('%')!=std::string::npos};
+        }
+    }
+    return values;
+}
+std::vector<DialChange> SetupChanges(const std::array<SetupValue,DialCount>& values,const Frame& f) {
+    std::vector<DialChange> changes;
+    for(int dial=0;dial<DialCount;++dial) {
+        const auto& setup=values[dial];
+        if(!setup.found || !(f.dialsKnown>>dial&1) || !std::isfinite(f.dials[dial])) continue;
+        // Within the setup's own rounding is the same.
+        const double current=f.dials[dial];
+        if(std::abs(current-setup.value)<=.5*std::pow(10.,-setup.decimals)+1e-6) continue;
+        // A brake bias this far off is on another scale, such as an offset, not a changed value.
+        if(dial==BrakeBiasDial && std::abs(current-setup.value)>25) continue;
+        changes.push_back({dial,setup.value,current,setup.decimals,setup.percent});
+    }
+    return changes;
+}
+const std::vector<DialChange>& SetupDials::Update(const Session& s,const Frame& f) {
+    if(key_!=s.key || session_!=f.session || player_!=f.player || setupUpdate_!=s.setupUpdate || setupSize_!=s.setup.size()) {
+        key_=s.key; session_=f.session; player_=f.player; setupUpdate_=s.setupUpdate; setupSize_=s.setup.size(); ignored_={};
+        values_=SetupValues(s);
+    }
+    const bool inCar=f.connected && f.onTrack && !f.replay;
+    if(inCar && !inCar_) entered_=f.time;
+    inCar_=inCar; changes_.clear();
+    if(!inCar) return changes_;
+    auto all=SetupChanges(values_,f);
+    const bool justIn=entered_>=0 && f.time>=entered_ && f.time-entered_<2;
+    for(const auto& change:all) {
+        if(justIn) ignored_[change.dial]=true;
+        if(!ignored_[change.dial]) changes_.push_back(change);
+    }
+    return changes_;
 }
 void FuelCalculator::Reset() { *this = {}; }
 void FuelCalculator::Update(const Session& s, const Frame& f, bool excludeYellowLaps) {
