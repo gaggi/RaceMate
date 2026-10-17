@@ -2,7 +2,7 @@ class TrackMapPage : public PageWindow {
 public:
     explicit TrackMapPage(Overlay& overlay) : PageWindow(ui.heading,ui.text), o_(overlay) {}
 private:
-    enum Key { Info, LayoutKey, Numbers, OwnClass, Pit, PitExitKey, Details, Rounded, Header, Footer, Retry, Cache, Background, PitLane, StartFinish, CornerNumbers, CornerNames, LabelSize, LabelContrast };
+    enum Key { Info, LayoutKey, WhiteTrackKey, Numbers, OwnClass, Pit, PitExitKey, Details, Rounded, Header, Footer, Retry, Cache, Background, PitLane, StartFinish, CornerNumbers, CornerNames, LabelSize, LabelContrast };
     static constexpr int ListId=100, SlotEditId=230, LabelSizeId=240;
     static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E';
     void OnCreate() override { list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont()); editors_.Attach(list_,Instance(),TextFont()); Refresh(); }
@@ -19,12 +19,18 @@ private:
             static constexpr const wchar_t* details[]={L"The official iRacing track drawing",L"Cars on a ring by lap position, 0 % at the top, clockwise; no download",L"Cars on a bar by lap position, for 21:9 and 32:9 monitors; no download"};
             RowList::Row layout; layout.title=names[o_.map.layout]; layout.detail=details[o_.map.layout]; layout.button=L"Choose..."; push(std::move(layout),LayoutKey);
         }
+        toggle(L"White track",L"White with a black edge, readable over any background. Off: grey, as the panel.",o_.map.whiteTrack,WhiteTrackKey);
         toggle(L"Background and frame",L"Off: transparent map and cars only. Hides the frame, captions, header and footer; their settings are kept.",o_.map.background,Background);
         toggle(L"Pit lane",L"Show the official pit-lane drawing, independently of cars in the pits.",o_.map.pitLane,PitLane);
         toggle(L"Start/finish marking",L"Show the line and direction arrow. Position mapping keeps using these data when hidden.",o_.map.startFinish,StartFinish);
-        toggle(L"Car numbers",L"Switch off for smaller dots. Cars use their class color; the car you drive or watch is yellow with a white ring.",o_.map.numbers,Numbers);
+        {
+            static constexpr const wchar_t* texts[]={L"Car numbers",L"Position in class",L"Overall position"};
+            RowList::Row row; row.title=L"Text in markers"; row.toggle=o_.map.numbers?1:0; row.button=L"Choose...";
+            row.detail=std::wstring(texts[o_.map.markerText])+L"  \u00B7  off for smaller dots. Cars use their class color; the car you drive or watch is yellow with a white ring.";
+            push(std::move(row),Numbers);
+        }
         toggle(L"Own class only",L"Uses the class of your car, or the car you are watching.",o_.map.ownClass,OwnClass);
-        toggle(L"Cars in the pits",L"Hollow markers at their lap percentage on the main circuit; not their exact pit-lane position.",o_.map.pit,Pit);
+        toggle(L"Cars in the pits",L"Hollow markers; on the drawn pit lane beside their lap position when Pit lane is on, else on the circuit.",o_.map.pit,Pit);
         toggle(L"Pit exit",L"A blue PIT ring where you would rejoin if you boxed now. Times under Settings, Pit stop estimate.",o_.map.pitExit,PitExitKey);
         toggle(L"Projection details",L"A line under the map with track ID, cache source, refresh rate and the projection notice. With background only.",o_.map.details,Details);
         rows.back().muted=MapOnly(o_); rows.back().toggleEnabled=!MapOnly(o_);
@@ -79,6 +85,7 @@ private:
             if(key==OwnClass) o_.map.ownClass=on;
             if(key==Pit) o_.map.pit=on;
             if(key==PitExitKey) o_.map.pitExit=on;
+            if(key==WhiteTrackKey) o_.map.whiteTrack=on;
             if(key==Details) o_.map.details=on;
             if(key==Background) { o_.map.background=on; expanded_=Info; editors_.Clear(); Fit(o_); }
             if(key==PitLane) o_.map.pitLane=on;
@@ -93,6 +100,10 @@ private:
         if(code==RowList::kButton || code==RowList::kActivated || code==RowList::kIconButton) {
             if(key==Header || key==Footer || key==LabelSize) { expanded_=expanded_==key?Info:key; Refresh(); BuildEditors(); if(key==LabelSize && expanded_==LabelSize) list_.ScrollIntoView(index); }
             if(key==Retry) { RetryTrackMap(true); UpdateOverlays(); }
+            if(key==Numbers) {
+                const int choice=ChooseFromMenu({L"Car numbers",L"Position in class",L"Overall position"},o_.map.markerText);
+                if(choice>=0 && choice!=o_.map.markerText) { o_.map.markerText=choice; SettingChanged(); Refresh(); }
+            }
             if(key==LayoutKey) {
                 const int choice=ChooseFromMenu({L"Map",L"Circle",L"Line"},o_.map.layout);
                 if(choice>=0 && choice!=o_.map.layout) { o_.map.layout=choice; Fit(o_); SettingChanged(); Refresh(); }

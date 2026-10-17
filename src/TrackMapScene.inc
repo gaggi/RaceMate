@@ -27,14 +27,19 @@
                     const auto& car=app.frame.cars[d.index];
                     if(!std::isfinite(car.pct) || car.pct<0 || car.pct>=1 || car.surface<0 || (!o.map.pit && car.pit)) return;
                     if(o.map.ownClass && own!=app.session.drivers.end() && d.classId!=own->classId) return;
-                    const auto p=place(app.preview?std::fmod(app.now/90000.+d.index*.091,1.):car.pct);
+                    // In the pits on the drawn pit lane, when it is shown; otherwise at its lap position on the track.
+                    const double lap=app.preview?std::fmod(app.now/90000.+d.index*.091,1.):car.pct;
+                    POINT p=place(lap);
+                    if(svg && o.map.pitLane && car.pit) { const auto q=transform.Apply(trackMap.geometry.PitAt(lap)); p={area.left+static_cast<int>(std::lround(q.x)),area.top+static_cast<int>(std::lround(q.y))}; }
                     const int x=p.x, y=p.y;
                     // A number wider than the usual marker, such as three digits, gets a marker that fits it.
-                    auto text=o.map.numbers?Wide(d.number):std::wstring();
+                    // Car number, or the position in class or overall; an unknown position leaves the marker empty.
+                    const int standing=o.map.markerText==1?car.classPosition:car.position;
+                    auto text=!o.map.numbers?std::wstring():(o.map.markerText==0?Wide(d.number):(standing>0?std::to_wstring(standing):std::wstring()));
                     const int radius=o.map.numbers?std::max(px(11),(measure(text,SmallBold)+px(7))/2):px(6), stroke=std::max(1,px(highlight?2:1));
                     const COLORREF color=highlight?Ink::Yellow:ColorOf(d.classColor);
                     const RECT bounds{x-radius,y-radius-titleOffset,x+radius+1,y+radius+1-titleOffset};
-                    if(number) { if(o.map.numbers) out.push_back({DrawCommand::MapLabel,SmallBold,DT_CENTER,bounds,car.pit?color:Ink::Panel,{},std::move(text)}); return; }
+                    if(number) { if(!text.empty()) out.push_back({DrawCommand::MapLabel,SmallBold,DT_CENTER,bounds,car.pit?color:Ink::Panel,{},std::move(text)}); return; }
                     if(highlight) {
                         RECT halo=bounds; InflateRect(&halo,px(3),px(3));
                         out.push_back({DrawCommand::MapCar,Regular,0,halo,Ink::White,{static_cast<float>(std::max(1,px(1))),1}});

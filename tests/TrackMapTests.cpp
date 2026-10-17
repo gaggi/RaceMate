@@ -85,8 +85,20 @@ void LabelTests() {
     for(int i=0;i<80;++i) deep+="</g>";
     Require(Prepare(Svg(Band),Svg(Stripe+Arrow),{},Svg(deep)).geometry.labels.empty(),"excessive nesting is rejected safely");
 }
+void PitLaneTests() {
+    // A pit lane drawn just inside the start straight: a car in the pits sits on it there, elsewhere on the track.
+    const auto map=Prepare(Svg(Band),Svg(Stripe+Arrow),Svg("<rect x=\"60\" y=\"24\" width=\"80\" height=\"2\"/>"));
+    Require(map && !map.geometry.pitPaths.empty(),"pit drawing kept as outlines");
+    const auto& g=map.geometry; const auto start=g.PitAt(0);
+    Require(std::abs(start.x-100)<12 && start.y>=23.5 && start.y<=26.5,"a car in the pits at 0 % sits on the pit lane beside the straight");
+    const auto far=g.PitAt(.5), track=g.At(.5);
+    Require(far.x==track.x && far.y==track.y,"far from the pit lane the car stays on the track");
+    const auto plain=Prepare(Svg(Band),Svg(Stripe+Arrow));
+    Require(plain && plain.geometry.PitAt(0).x==plain.geometry.At(0).x && plain.geometry.PitAt(0).y==plain.geometry.At(0).y,"without a pit drawing the track point");
+}
 void UnitTests() {
     LabelTests();
+    PitLaneTests();
     BridgeTests();
     const auto session=rm::ParseSession("WeekendInfo:\n TrackID: 353\n TrackName: limerock 2019 gp\n TrackConfigName: Grand Prix\n",0);
     Require(session.trackId==353 && session.trackName=="limerock 2019 gp" && session.trackConfig=="Grand Prix","layout identity parsed from WeekendInfo");

@@ -180,6 +180,8 @@ struct TrackMapSettings {
     bool cornerNumbers=false, cornerNames=false, labelContrast=true, pitExit=true;
     int labelScale=100;
     int layout=0; // The official map, a circle, or a line for wide monitors; circle and line need no SVG.
+    int markerText=0; // In the markers: car number, position in class, or overall position.
+    bool whiteTrack=true; // White with a black edge, readable over any background; off: the grey of the panel.
 };
 enum TrackMapLayout { MapLayout, CircleLayout, LineLayout };
 constexpr int TrackMapWidth=440, TrackMapBodyHeight=264;
@@ -538,6 +540,7 @@ void ReadInstance(Overlay& o) {
     o.weather.strip=o.fuel.strip;
     if(kind==TrackMapKind) {
         o.map.numbers=ReadBool(section.c_str(),L"ShowCarNumbers",true); o.map.ownClass=ReadBool(section.c_str(),L"OwnClass",false);
+        o.map.markerText=std::clamp(ReadInt(section.c_str(),L"MarkerText",0),0,2); o.map.whiteTrack=ReadBool(section.c_str(),L"WhiteTrack",true);
         o.map.pit=ReadBool(section.c_str(),L"ShowPitCars",true); o.map.details=ReadBool(section.c_str(),L"ShowMapDetails",false);
         o.map.background=ReadBool(section.c_str(),L"ShowBackground",true); o.map.pitLane=ReadBool(section.c_str(),L"ShowPitLane",true);
         o.map.startFinish=ReadBool(section.c_str(),L"ShowStartFinish",true);
@@ -627,7 +630,7 @@ void Save() {
             number(section,L"Layout",o.weather.strip); order(section,L"ModuleOrder",o.weather.order);
         }
         if(o.kind==TrackMapKind) {
-            number(section,L"ShowCarNumbers",o.map.numbers); number(section,L"OwnClass",o.map.ownClass);
+            number(section,L"ShowCarNumbers",o.map.numbers); number(section,L"OwnClass",o.map.ownClass); number(section,L"MarkerText",o.map.markerText); number(section,L"WhiteTrack",o.map.whiteTrack);
             number(section,L"ShowPitCars",o.map.pit); number(section,L"ShowMapDetails",o.map.details);
             number(section,L"ShowBackground",o.map.background); number(section,L"ShowPitLane",o.map.pitLane); number(section,L"ShowStartFinish",o.map.startFinish);
             number(section,L"ShowCornerNumbers",o.map.cornerNumbers); number(section,L"ShowCornerNames",o.map.cornerNames);

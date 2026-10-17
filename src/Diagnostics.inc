@@ -181,6 +181,15 @@ int RunDiagnostics() {
             }
             pitOk=previous!=nullptr && pitOk;
         }
+        // Positions instead of car numbers: in class and overall, as the cars stand.
+        for(int mode:{1,2}) {
+            map.map.markerText=mode; SettingChanged();
+            const auto sample=std::find_if(app.session.drivers.begin(),app.session.drivers.end(),[](const Driver& d){ return d.index!=ReferenceCar(app.frame) && app.frame.cars[d.index].position>0 && app.frame.cars[d.index].surface>=0; });
+            const int standing=sample==app.session.drivers.end()?-1:(mode==1?app.frame.cars[sample->index].classPosition:app.frame.cars[sample->index].position);
+            pitOk=standing>0 && std::any_of(map.scene.begin(),map.scene.end(),[&](const DrawCommand& c){ return c.type==DrawCommand::MapLabel && c.text==std::to_wstring(standing); }) && pitOk;
+            pitOk=std::none_of(map.scene.begin(),map.scene.end(),[&](const DrawCommand& c){ return c.type==DrawCommand::MapLabel && c.text==Wide(sample->number) && Wide(sample->number)!=std::to_wstring(standing); }) && pitOk;
+        }
+        map.map.markerText=0; SettingChanged();
         // Three-digit numbers keep all digits: the label is as wide as the text, centred on the marker.
         {
             const auto savedDrivers=app.session.drivers;
@@ -189,6 +198,20 @@ int RunDiagnostics() {
             const auto label=std::find_if(map.scene.begin(),map.scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::MapLabel && c.text.size()==3; });
             pitOk=label!=map.scene.end() && label->r.right-label->r.left>=[&]{ SIZE size{}; SelectObject(map.dc,map.fonts[SmallBold]); GetTextExtentPoint32W(map.dc,label->text.c_str(),3,&size); return static_cast<LONG>(size.cx); }() && Export(map.window,L"build\\qa\\trackmap-three-digits.bmp") && pitOk;
             app.session.drivers=savedDrivers;
+        }
+        // A car in the pits beside the start straight sits on the drawn pit lane, not on the track.
+        map.map.layout=MapLayout; Fit(map); SettingChanged();
+        // Circle and line released the SVG map; it loads again from the cache in the background.
+        for(int wait=0;wait<300 && !trackMap.ready && trackMap.task.Running();++wait) { Sleep(10); UpdateOverlays(); }
+        if(trackMap.ready && !trackMap.geometry.pitPaths.empty()) {
+            const auto savedNow=app.now; const auto pitting=std::find_if(app.session.drivers.begin(),app.session.drivers.end(),[](const Driver& d){ return app.frame.cars[d.index].pit; });
+            if(pitting!=app.session.drivers.end()) {
+                app.now=static_cast<ULONGLONG>((1-std::fmod(pitting->index*.091,1.))*90000); UpdateOverlays();
+                const double lap=std::fmod(app.now/90000.+pitting->index*.091,1.);
+                const auto onPit=trackMap.geometry.PitAt(lap), onTrack=trackMap.geometry.At(lap);
+                pitOk=(onPit.x!=onTrack.x || onPit.y!=onTrack.y) && Export(map.window,L"build\\qa\\trackmap-pit-lane.bmp") && pitOk;
+                app.now=savedNow; UpdateOverlays();
+            }
         }
         map.place=placement; map.map.layout=MapLayout; Fit(map); SettingChanged();
         // Standings: a faded row of its own at the predicted position, only when switched on.

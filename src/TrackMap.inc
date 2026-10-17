@@ -62,7 +62,7 @@ bool ShowMapLabel(const trackmap::Label& label,const TrackMapSettings& settings)
 }
 int MapStyle(const TrackMapSettings& settings) {
     return (settings.background?1:0)|(settings.pitLane?2:0)|(settings.startFinish?4:0)
-        |(settings.cornerNumbers?8:0)|(settings.cornerNames?16:0)|(settings.labelContrast?32:0)|(settings.labelScale<<6)|(settings.layout<<15);
+        |(settings.cornerNumbers?8:0)|(settings.cornerNames?16:0)|(settings.labelContrast?32:0)|(settings.labelScale<<6)|(settings.layout<<15)|(settings.whiteTrack?1<<17:0);
 }
 // Circle and line: where a lap fraction lies in an area of this physical size; the scene and the static drawing share it.
 struct MapShapeInfo {
@@ -96,23 +96,33 @@ MapTransform MapFit(const trackmap::Geometry& g,int width,int height,const Track
     const double scale=std::min((width-2*inset)/w,(height-2*inset)/h);
     return {scale,(width-w*scale)/2-low.x*scale,(height-h*scale)/2-low.y*scale};
 }
-void DrawMapLayer(Gdiplus::Graphics& graphics,const trackmap::Layer& layer,const MapTransform& transform,COLORREF color) {
-    const Gdiplus::Color ink(255,GetRValue(color),GetGValue(color),GetBValue(color));
+// A layer in one colour; with an edge, a black rim of that width goes around every shape first, so one shape's
+// rim never cuts into the next.
+void DrawMapLayer(Gdiplus::Graphics& graphics,const trackmap::Layer& layer,const MapTransform& transform,COLORREF color,float edge=0) {
+    const Gdiplus::Color ink(255,GetRValue(color),GetGValue(color),GetBValue(color)), black(255,0,0,0);
     Gdiplus::SolidBrush brush(ink);
+    std::vector<std::unique_ptr<Gdiplus::GraphicsPath>> paths;
     for(const auto& shape:layer.shapes) {
-        Gdiplus::GraphicsPath path(shape.evenOdd?Gdiplus::FillModeAlternate:Gdiplus::FillModeWinding);
+        auto path=std::make_unique<Gdiplus::GraphicsPath>(shape.evenOdd?Gdiplus::FillModeAlternate:Gdiplus::FillModeWinding);
         for(const auto& line:shape.paths) {
             std::vector<Gdiplus::PointF> points; points.reserve(line.points.size());
             for(const auto p:line.points) { const auto q=transform.Apply(p); points.emplace_back(static_cast<float>(q.x),static_cast<float>(q.y)); }
             if(points.size()<2) continue;
-            path.StartFigure(); path.AddLines(points.data(),static_cast<int>(points.size()));
-            if(line.closed) path.CloseFigure();
+            path->StartFigure(); path->AddLines(points.data(),static_cast<int>(points.size()));
+            if(line.closed) path->CloseFigure();
         }
-        if(shape.filled) graphics.FillPath(&brush,&path);
-        if(shape.strokeWidth>0) {
-            Gdiplus::Pen pen(ink,static_cast<float>(std::max(1.,shape.strokeWidth*transform.scale)));
-            graphics.DrawPath(&pen,&path);
-        }
+        paths.push_back(std::move(path));
+    }
+    auto width=[&](const trackmap::Shape& shape){ return static_cast<float>(std::max(1.,shape.strokeWidth*transform.scale)); };
+    if(edge>0) for(size_t i=0;i<paths.size();++i) {
+        const auto& shape=layer.shapes[i];
+        Gdiplus::Pen rim(black,(shape.strokeWidth>0?width(shape):0)+2*edge); rim.SetLineJoin(Gdiplus::LineJoinRound); rim.SetStartCap(Gdiplus::LineCapRound); rim.SetEndCap(Gdiplus::LineCapRound);
+        graphics.DrawPath(&rim,paths[i].get());
+    }
+    for(size_t i=0;i<paths.size();++i) {
+        const auto& shape=layer.shapes[i];
+        if(shape.filled) graphics.FillPath(&brush,paths[i].get());
+        if(shape.strokeWidth>0) { Gdiplus::Pen pen(ink,width(shape)); pen.SetLineJoin(Gdiplus::LineJoinRound); graphics.DrawPath(&pen,paths[i].get()); }
     }
 }
 void PaintMap(Overlay& o,const DrawCommand& c,HRGN dirty) {
@@ -134,21 +144,29 @@ void PaintMap(Overlay& o,const DrawCommand& c,HRGN dirty) {
             if(o.map.layout!=MapLayout) {
                 // The circuit as a ring or a bar in the map's color; start/finish as a white mark at 0 %.
                 const auto shape=MapShape(o,width,height); const float stroke=static_cast<float>(std::max(2,MulDiv(6,o.dpi*o.place.scale,9600)));
-                Gdiplus::Pen road(Gdiplus::Color(255,110,120,134),stroke); road.SetStartCap(Gdiplus::LineCapRound); road.SetEndCap(Gdiplus::LineCapRound);
+                const float edge=o.map.whiteTrack?std::max(1.f,static_cast<float>(MulDiv(15,o.dpi*o.place.scale,9600))/10):0;
+                Gdiplus::Pen rim(Gdiplus::Color(255,0,0,0),stroke+2*edge); rim.SetStartCap(Gdiplus::LineCapRound); rim.SetEndCap(Gdiplus::LineCapRound);
+                Gdiplus::Pen road(o.map.whiteTrack?Gdiplus::Color(255,255,255,255):Gdiplus::Color(255,110,120,134),stroke); road.SetStartCap(Gdiplus::LineCapRound); road.SetEndCap(Gdiplus::LineCapRound);
                 const float w=static_cast<float>(width),h=static_cast<float>(height),inset=static_cast<float>(shape.inset),r=static_cast<float>(shape.Radius());
-                if(o.map.layout==CircleLayout) graphics.DrawEllipse(&road,w/2-r,h/2-r,2*r,2*r);
-                else graphics.DrawLine(&road,inset,h/2,w-inset,h/2);
+                for(auto* pen:{&rim,&road}) {
+                    if(pen==&rim && edge<=0) continue;
+                    if(o.map.layout==CircleLayout) graphics.DrawEllipse(pen,w/2-r,h/2-r,2*r,2*r);
+                    else graphics.DrawLine(pen,inset,h/2,w-inset,h/2);
+                }
                 if(o.map.startFinish) {
-                    Gdiplus::Pen mark(Gdiplus::Color(255,255,255,255),std::max(2.f,stroke/2));
+                    // On a white track the mark is black.
+                    Gdiplus::Pen mark(o.map.whiteTrack?Gdiplus::Color(255,0,0,0):Gdiplus::Color(255,255,255,255),std::max(2.f,stroke/2));
                     if(o.map.layout==CircleLayout) graphics.DrawLine(&mark,w/2,h/2-r-stroke,w/2,h/2-r+stroke);
                     else for(float x:{inset,w-inset}) graphics.DrawLine(&mark,x,h/2-stroke*1.5f,x,h/2+stroke*1.5f);
                 }
             } else {
                 const auto transform=MapFit(trackMap.geometry,width,height,o.map);
                 if(o.map.pitLane) DrawMapLayer(graphics,trackMap.geometry.pit,transform,Ink::Muted);
-                DrawMapLayer(graphics,trackMap.geometry.active,transform,RGB(110,120,134));
+                // White with a black edge by default; start/finish keeps white and gets the same edge to stay visible on it.
+                const float edge=o.map.whiteTrack?std::max(1.f,static_cast<float>(MulDiv(15,o.dpi*o.place.scale,9600))/10):0;
+                DrawMapLayer(graphics,trackMap.geometry.active,transform,o.map.whiteTrack?Ink::White:RGB(110,120,134),edge);
                 // The stripe is clear on the map; the arrow may lie outside its tight bounds.
-                if(o.map.startFinish) DrawMapLayer(graphics,trackMap.geometry.finish,transform,Ink::White);
+                if(o.map.startFinish) DrawMapLayer(graphics,trackMap.geometry.finish,transform,Ink::White,edge);
                 Gdiplus::FontFamily family(L"Segoe UI");
                 Gdiplus::StringFormat format(Gdiplus::StringFormat::GenericTypographic());
                 format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);

@@ -26,6 +26,10 @@ struct Geometry {
     int direction=0;
     bool centered=false, bridged=false;
     Point At(double fraction, int directionOverride=0, double offset=0) const;
+    // The pit-lane drawing as outlines; a car in the pits is placed on the nearest of their edges to its lap position.
+    std::vector<std::vector<Point>> pitPaths;
+    // The nearest point of the drawn pit lane to the track at this lap fraction; the track point where the pit lane is far away.
+    Point PitAt(double fraction) const;
 };
 struct Result {
     Geometry geometry;

@@ -278,6 +278,14 @@ Point Geometry::At(double fraction,int overrideDirection,double offset) const {
     const int sign=overrideDirection?overrideDirection:direction;
     return Sample(route,distances,Wrap(start/length+sign*(fraction+offset))*length);
 }
+Point Geometry::PitAt(double fraction) const {
+    const Point track=At(fraction);
+    Point best=track; double minimum=std::numeric_limits<double>::max();
+    for(const auto& path:pitPaths) { double d=0; const auto p=Nearest(path,track,&d); if(d<minimum) { minimum=d; best=p; } }
+    // Farther than a twelfth of the map from the track: not the pit lane beside it (the pit road leaves the circuit elsewhere).
+    const double limit=std::max(high.x-low.x,high.y-low.y)/12;
+    return minimum<=limit?best:track;
+}
 Result Prepare(std::string active,std::string finish,std::string pit,std::string turns) {
     Result result;
     try {
@@ -285,6 +293,10 @@ Result Prepare(std::string active,std::string finish,std::string pit,std::string
         try { g.labels=ParseLabels(std::move(turns),g.active); } catch(const std::exception&) { g.labels.clear(); }
         if(!SameViewport(g.active,g.finish)) throw std::runtime_error("SVG layer viewports do not match");
         if(!pit.empty()) { try { g.pit=Parse(std::move(pit)); if(!SameViewport(g.active,g.pit)) g.pit={}; } catch(const std::exception&) { g.pit={}; } }
+        for(const auto& shape:g.pit.shapes) for(const auto& path:shape.paths) if(path.points.size()>=2) {
+            auto points=path.points; if(path.closed) points.push_back(points.front());
+            g.pitPaths.push_back(std::move(points));
+        }
         struct Ring { const Path* path; double length; bool filled; };
         std::vector<Ring> rings;
         for(const auto& shape:g.active.shapes) for(const auto& path:shape.paths)
