@@ -21,7 +21,7 @@
                 };
                 const int reference=ReferenceCar(app.frame);
                 const auto own=std::find_if(app.session.drivers.begin(),app.session.drivers.end(),[&](const Driver& d){return d.index==reference;});
-                // Markers first, numbers second: the cars share one canvas and no marker covers another car's number.
+                // A marker, or the number on it; the other cars get all markers first, then all numbers.
                 auto drawCar=[&](const Driver& d,bool highlight,bool number) {
                     if(d.index<0 || d.index>=MaxCars || d.paceCar || d.spectator) return;
                     const auto& car=app.frame.cars[d.index];
@@ -29,10 +29,12 @@
                     if(o.map.ownClass && own!=app.session.drivers.end() && d.classId!=own->classId) return;
                     const auto p=place(app.preview?std::fmod(app.now/90000.+d.index*.091,1.):car.pct);
                     const int x=p.x, y=p.y;
-                    const int radius=px(o.map.numbers?11:6), stroke=std::max(1,px(highlight?2:1));
+                    // A number wider than the usual marker, such as three digits, gets a marker that fits it.
+                    auto text=o.map.numbers?Wide(d.number):std::wstring();
+                    const int radius=o.map.numbers?std::max(px(11),(measure(text,SmallBold)+px(7))/2):px(6), stroke=std::max(1,px(highlight?2:1));
                     const COLORREF color=highlight?Ink::Yellow:ColorOf(d.classColor);
                     const RECT bounds{x-radius,y-radius-titleOffset,x+radius+1,y+radius+1-titleOffset};
-                    if(number) { if(o.map.numbers) out.push_back({DrawCommand::MapLabel,SmallBold,DT_CENTER,bounds,car.pit?color:Ink::Panel,{},Wide(d.number)}); return; }
+                    if(number) { if(o.map.numbers) out.push_back({DrawCommand::MapLabel,SmallBold,DT_CENTER,bounds,car.pit?color:Ink::Panel,{},std::move(text)}); return; }
                     if(highlight) {
                         RECT halo=bounds; InflateRect(&halo,px(3),px(3));
                         out.push_back({DrawCommand::MapCar,Regular,0,halo,Ink::White,{static_cast<float>(std::max(1,px(1))),1}});
@@ -48,12 +50,14 @@
                     if(number) { out.push_back({DrawCommand::MapLabel,SmallBold,DT_CENTER,{x-radius-px(4),y-radius-titleOffset,x+radius+px(5),y+radius+1-titleOffset},Ink::Accent,{},L"PIT"}); return; }
                     out.push_back({DrawCommand::MapCar,Regular,0,{x-radius,y-radius-titleOffset,x+radius+1,y+radius+1-titleOffset},Ink::Accent,{static_cast<float>(std::max(1,px(2))),1}});
                 };
+                // Bottom to top: the other cars (markers, then their numbers), the PIT ring, and the car you drive or
+                // watch last, with its number, so nothing ever covers it.
                 for(bool number:{false,true}) {
-                    if(number && !o.map.numbers && !(o.map.pitExit && rejoin.valid)) break;
+                    if(number && !o.map.numbers) break;
                     for(const auto& d:app.session.drivers) if(d.index!=reference) drawCar(d,false,number);
-                    drawGhost(number);
-                    if(own!=app.session.drivers.end()) drawCar(*own,true,number);
                 }
+                drawGhost(false); drawGhost(true);
+                if(own!=app.session.drivers.end()) { drawCar(*own,true,false); drawCar(*own,true,true); }
             }
         } else label(svg?trackMap.message:L"Waiting for iRacing",line?rect(20,40,W-40,40):rect(20,MapOnly(o)?100:120,W-40,80),Ink::Muted,Regular,DT_CENTER);
         if(note) {

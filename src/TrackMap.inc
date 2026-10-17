@@ -227,7 +227,8 @@ void PaintMapLabel(Overlay& o,const DrawCommand& c) {
             Gdiplus::Graphics graphics(&target); graphics.Clear(Gdiplus::Color(0,0,0,0));
             graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
             Gdiplus::Font font(o.dc,o.fonts[c.font]);
-            Gdiplus::StringFormat format; format.SetAlignment(Gdiplus::StringAlignmentCenter); format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+            // Typographic: no padding around the text, so three digits fit where two did.
+            Gdiplus::StringFormat format(Gdiplus::StringFormat::GenericTypographic()); format.SetAlignment(Gdiplus::StringAlignmentCenter); format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
             format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap|Gdiplus::StringFormatFlagsNoClip);
             Gdiplus::SolidBrush brush(Gdiplus::Color(255,GetRValue(c.color),GetGValue(c.color),GetBValue(c.color)));
             graphics.DrawString(c.text.c_str(),static_cast<int>(c.text.size()),&font,Gdiplus::RectF(0,0,static_cast<float>(width),static_cast<float>(height)),&format,&brush);

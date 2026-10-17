@@ -168,6 +168,18 @@ int RunDiagnostics() {
             const auto markers=std::count_if(map.scene.begin(),map.scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::MapCar; });
             pitOk=OverlayWidth(map)==TrackMapWidthOf(map.map) && markers>=static_cast<long long>(app.session.drivers.size()) && std::any_of(map.scene.begin(),map.scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::MapLabel && c.text==L"PIT"; }) && pitOk;
             pitOk=Export(map.window,layout==CircleLayout?L"build\\qa\\trackmap-circle.bmp":L"build\\qa\\trackmap-line.bmp") && pitOk;
+            // Your car is drawn last, marker then number, above every other car and number.
+            std::vector<const DrawCommand*> drawn; for(const auto& c:map.scene) if(c.type==DrawCommand::MapCar || c.type==DrawCommand::MapLabel) drawn.push_back(&c);
+            pitOk=drawn.size()>=2 && drawn.back()->type==DrawCommand::MapLabel && drawn[drawn.size()-2]->type==DrawCommand::MapCar && drawn[drawn.size()-2]->color==Ink::Yellow && pitOk;
+        }
+        // Three-digit numbers keep all digits: the label is as wide as the text, centred on the marker.
+        {
+            const auto savedDrivers=app.session.drivers;
+            for(auto& d:app.session.drivers) d.number=std::to_string(100+d.index*11);
+            map.map.layout=LineLayout; Fit(map); SettingChanged();
+            const auto label=std::find_if(map.scene.begin(),map.scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::MapLabel && c.text.size()==3; });
+            pitOk=label!=map.scene.end() && label->r.right-label->r.left>=[&]{ SIZE size{}; SelectObject(map.dc,map.fonts[SmallBold]); GetTextExtentPoint32W(map.dc,label->text.c_str(),3,&size); return static_cast<LONG>(size.cx); }() && Export(map.window,L"build\\qa\\trackmap-three-digits.bmp") && pitOk;
+            app.session.drivers=savedDrivers;
         }
         map.place=placement; map.map.layout=MapLayout; Fit(map); SettingChanged();
         // Standings: a faded row of its own at the predicted position, only when switched on.
