@@ -762,7 +762,9 @@ void LoadPitTimes() {
     auto& t=app.pitTimes; const auto track=std::to_wstring(app.session.trackId);
     if(app.session.trackId>=0 && app.pitLane.Track()!=app.session.trackId) { app.pitLane.Seed(app.session.trackId,ReadNumber(L"PitStop",L"Lane "+track)); t.samplesSaved=0; }
     if(t.track!=app.session.trackId) { t.track=app.session.trackId; t.fixedLane=t.track>=0?ReadNumber(L"PitStop",L"LaneFixed "+track):-1; }
-    const auto* own=PlayerDriver(); const std::wstring car=own?Wide(own->carPath):L"";
+    // Times depend on the car and on the server's rule set (DTM tires, NEC fuel rate), so they are kept per both.
+    const auto* own=PlayerDriver(); const bool rules=!app.session.ruleSet.empty() && app.session.ruleSet!="None";
+    const std::wstring car=own?Wide(own->carPath+(rules?" "+app.session.ruleSet:"")):L"";
     if(car!=t.car) { t.car=car; t.tires=car.empty()?-1:ReadNumber(L"PitStop",L"Tires "+car); t.rate=car.empty()?-1:ReadNumber(L"PitStop",L"FuelRate "+car); app.refuel.Reset(); }
 }
 // Learns from every frame; a new lane loss or a measured refuel rate is kept for the next session.
@@ -774,6 +776,11 @@ void UpdatePitStop() {
     if(app.refuel.Rate()>0 && std::abs(app.refuel.Rate()-t.rate)>.01 && !t.car.empty()) { t.rate=app.refuel.Rate(); WriteNumber(L"PitStop",L"FuelRate "+t.car,t.rate); }
 }
 double PitLaneSeconds() { return app.pitTimes.fixedLane>0?app.pitTimes.fixedLane:app.pitLane.Loss(); }
+// The user's four-tire time, else iRacing's value for the class.
+double TireChangeSeconds() {
+    if(app.pitTimes.tires>0) return app.pitTimes.tires;
+    const auto* own=PlayerDriver(); return own?DefaultTireChange(app.session,*own):-1;
+}
 // Where the own car rejoins if it boxes now. Service parts without a known time count as zero and mark it partial.
 const PitRejoin& PitExit() {
     if(app.pitExitVersion==app.modelVersion) return app.pitExit;
@@ -782,10 +789,10 @@ const PitRejoin& PitExit() {
     if(app.session.type!="Race" || f.pit || View(f)!=ViewMode::InCar) return app.pitExit;
     const double lane=app.preview?22:PitLaneSeconds();
     if(lane<=0) return app.pitExit;
-    auto service=PlannedService(app.session,f); const auto& t=app.pitTimes;
+    auto service=PlannedService(app.session,f); const auto& t=app.pitTimes; const double tires=TireChangeSeconds();
     if(service.fuel>0 && t.rate<=0) { service.fuel=0; app.pitExitPartial=true; }
-    if(service.tires>0 && t.tires<=0) { service.tires=0; app.pitExitPartial=true; }
-    const double stop=app.preview?20:std::max(0.0,ServiceTime(service,t.rate,t.tires));
+    if(service.tires>0 && tires<=0) { service.tires=0; app.pitExitPartial=true; }
+    const double stop=app.preview?20:std::max(0.0,ServiceTime(service,t.rate,tires,SimultaneousService(app.session)));
     double pace=Plan().prediction.ownPace; if(!(pace>0)) pace=f.lastLap>0?f.lastLap:f.bestLap;
     app.pitExit=PredictRejoin(app.session,f,lane+stop,pace);
     return app.pitExit;

@@ -45,17 +45,26 @@ void PitStopTests() {
         Session other=s; other.trackId=8; f=Base(2); lane.Update(other,f); Require(lane.Loss()<0,"another track starts unknown");
     }
     {
-        // The pit menu: tires and fuel at the same time, repairs on top, only what fits in the tank.
+        // The pit menu: only what fits in the tank; default rules in sequence, IMSA rules at once.
         Session s=TwoCars(); Frame f=Base(0); f.fuelKnown=true; f.fuel=70; f.pitSvFuel=50;
         f.pitSvFlags=PitServiceFlag::LeftFront|PitServiceFlag::RightFront|PitServiceFlag::LeftRear|PitServiceFlag::RightRear|PitServiceFlag::Fuel; f.pitRepair=5;
         const auto service=PlannedService(s,f);
         Require(service.tires==4 && service.repair==5,"four tires and the repair");
         Near(service.fuel,30,"fuel limited to the room in the tank");
-        Near(ServiceTime(service,2.5,20),25,"tires take longer than 12 s of fuel, plus 5 s repair");
-        Near(ServiceTime({60,2,0},2.5,20),24,"fuel takes longer than two tires");
-        Require(ServiceTime(service,2.5,-1)<0,"unknown tire time leaves the service unknown");
-        f.pitSvFlags=PitServiceFlag::Fuel; f.pitRepair=0; Require(ServiceTime(PlannedService(s,f),-1,-1)<0,"unknown fuel rate");
-        f.pitSvFlags=0; Near(ServiceTime(PlannedService(s,f),-1,-1),0,"a drive-through needs no service");
+        Near(ServiceTime(service,2.5,20,false),32,"default rules: 12 s fuel, then 20 s tires; the repair fits in the tire change");
+        Near(ServiceTime(service,2.5,20,true),20,"IMSA rules: everything at once");
+        Near(ServiceTime({60,2,0},2.5,20,true),24,"fuel takes longer than a pair of tires");
+        Near(ServiceTime({0,1,0},2.5,20,false),10,"one tire takes as long as a pair");
+        Near(ServiceTime({0,3,0},2.5,20,false),20,"three tires take as long as four");
+        Require(ServiceTime(service,2.5,-1,false)<0,"unknown tire time leaves the service unknown");
+        f.pitSvFlags=PitServiceFlag::Fuel; f.pitRepair=0; Require(ServiceTime(PlannedService(s,f),-1,-1,false)<0,"unknown fuel rate");
+        f.pitSvFlags=0; Near(ServiceTime(PlannedService(s,f),-1,-1,false),0,"a drive-through needs no service");
+        // Rule set from the session and the tire times of iRacing's notes.
+        Session rules=s; Driver gt3; gt3.className="GT3 Class"; Driver gt4; gt4.className="GT4"; Driver other; other.className="Mazda MX-5 Cup";
+        rules.ruleSet="None"; Require(!SimultaneousService(rules) && DefaultTireChange(rules,gt3)==20 && DefaultTireChange(rules,gt4)==35 && DefaultTireChange(rules,other)<0,"default rules");
+        rules.ruleSet="IMSA"; Require(SimultaneousService(rules),"IMSA rules service at once");
+        rules.ruleSet="DTM"; Require(!SimultaneousService(rules) && DefaultTireChange(rules,gt3)==7,"DTM tire change");
+        Require(ParseSession("WeekendInfo:\n TrackDisplayName: Spa\n DCRuleSet: IMSA\n",0).ruleSet=="IMSA","rule set read from the session");
     }
     {
         // Filling in the stall: 2.5 l/s from the first rise on.

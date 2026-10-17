@@ -52,8 +52,12 @@ private:
             lane.iconButtons={expanded_==LaneRow?CollapseGlyph:ExpandGlyph}; lane.expandHeight=expanded_==LaneRow?48:0;
             push(std::move(lane),Key::PitLane);
             RowList::Row service; service.title=L"Service times"+(t.car.empty()?std::wstring():L"  \u00B7  "+Wide(PlayerDriver()?PlayerDriver()->carName:std::string()));
-            if(t.car.empty()) service.detail=L"Per car: four tires and the refuel rate. Fuel and tires run at the same time; repairs add.";
-            else service.detail=L"Four tires "+(t.tires>0?Format(t.tires,1)+L" s":std::wstring(L"not set"))+L"  \u00B7  refuel "+(t.rate>0?Format(t.rate,2)+L" l/s":std::wstring(L"measured at your next stop"));
+            const double tires=TireChangeSeconds(); const bool together=SimultaneousService(app.session);
+            const std::wstring rules=app.session.ruleSet.empty() || app.session.ruleSet=="None"?L"default rules":Wide(app.session.ruleSet)+L" rules";
+            if(t.car.empty()) service.detail=L"Per car and rule set: four tires and the refuel rate. The server's rules decide whether tires follow the fuel.";
+            else service.detail=L"Four tires "+(tires>0?Format(tires,1)+L" s"+(t.tires>0?L"":L" (iRacing's value for the class)"):std::wstring(L"not set"))
+                +L"  \u00B7  refuel "+(t.rate>0?Format(t.rate,2)+L" l/s":std::wstring(L"measured at your next stop"))
+                +L"  \u00B7  "+rules+(together?L": fuel and tires together":L": tires after fuel");
             service.iconButtons={expanded_==ServiceRow?CollapseGlyph:ExpandGlyph}; service.expandHeight=expanded_==ServiceRow?48:0;
             push(std::move(service),Key::PitService);
         }

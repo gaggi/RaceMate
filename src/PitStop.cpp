@@ -1,5 +1,6 @@
 #include "Core.h"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 
 namespace rm {
@@ -12,6 +13,10 @@ double Wrap(double value,double lap) {
 }
 // Completed laps, from the current lap where the count is missing.
 int Completed(const Car& car) { return car.completed>=0?car.completed:(car.lap>0?car.lap-1:-1); }
+bool Has(std::string text,const char* part) {
+    for(char& c:text) c=static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return text.find(part)!=std::string::npos;
+}
 const Driver* Find(const Session& s,int index) {
     const auto it=std::find_if(s.drivers.begin(),s.drivers.end(),[&](const Driver& d){ return d.index==index; });
     return it==s.drivers.end()?nullptr:&*it;
@@ -77,12 +82,21 @@ PitService PlannedService(const Session& s,const Frame& f) {
     service.repair=std::isfinite(f.pitRepair) && f.pitRepair>0?f.pitRepair:0;
     return service;
 }
-double ServiceTime(const PitService& service,double fuelRate,double tireChange) {
+bool SimultaneousService(const Session& s) { return Has(s.ruleSet,"IMSA"); }
+double DefaultTireChange(const Session& s,const Driver& d) {
+    // Source: iRacing 2026 Season 4 release notes, per class; other classes are left to the user.
+    if(Has(d.className,"GT3")) return Has(s.ruleSet,"DTM")?7:20;
+    if(Has(d.className,"GT4")) return 35;
+    if(Has(d.className,"TCR")) return 40;
+    if(Has(d.className,"GTE") || Has(d.className,"GT1") || Has(d.className,"LMP1")) return 20;
+    return -1;
+}
+double ServiceTime(const PitService& service,double fuelRate,double tireChange,bool simultaneous) {
     const double fuel=service.fuel>0?(Valid(fuelRate)?service.fuel/fuelRate:-1):0;
-    const double tires=service.tires>0?(Valid(tireChange)?tireChange*service.tires/4:-1):0;
+    const double tires=service.tires>0?(Valid(tireChange)?tireChange*std::ceil(service.tires/2.0)/2:-1):0;
     if(fuel<0 || tires<0) return -1;
-    // The crew fuels and changes tires at the same time; repairs come on top.
-    return std::max(fuel,tires)+service.repair;
+    // Default rules: tires and repairs only after the fueling. IMSA rules: everything at once.
+    return simultaneous?std::max({fuel,tires,service.repair}):fuel+std::max(tires,service.repair);
 }
 PitRejoin PredictRejoin(const Session& s,const Frame& f,double loss,double pace) {
     PitRejoin r;

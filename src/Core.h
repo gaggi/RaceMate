@@ -42,6 +42,7 @@ struct CameraGroup { int number=-1; std::string name; bool scenic=false; };
 struct Session {
     std::string track, type, key, trackUsage;
     std::string trackName, trackConfig;
+    std::string ruleSet; // WeekendInfo DCRuleSet: "None" for iRacing's default car rules, else a rule set such as IMSA, NEC or DTM.
     int trackId = -1; // Exact layout identity for official track maps.
     int number = -1, player = -1, totalLaps = -1, incidentLimit = -1, incidentWarning = -1;
     double trackMeters = -1, fuelCapacity = -1;
@@ -268,8 +269,13 @@ private:
 // The next stop as set in the pit menu: litres to add (what fits), tires changed, mandatory repair seconds.
 struct PitService { double fuel=0; int tires=0; double repair=0; };
 PitService PlannedService(const Session&, const Frame&);
-// Fuel and tires at the same time, repairs on top; -1 when a needed time is unknown. tireChange is for four tires.
-double ServiceTime(const PitService&, double fuelRate, double tireChange);
+// iRacing's car rule sets (2026 Season 4 notes): by default tires and repairs follow the fueling; IMSA rules do it all at once.
+bool SimultaneousService(const Session&);
+// The four-tire time iRacing's release notes give for the car's class and rule set; -1 for classes they do not list.
+double DefaultTireChange(const Session&, const Driver&);
+// Seconds standing in the box, -1 when a needed time is unknown. tireChange is for four tires; two wheel guns change
+// any pair at once, so one or three tires take as long as two or four.
+double ServiceTime(const PitService&, double fuelRate, double tireChange, bool simultaneous);
 struct PitRejoin {
     bool valid = false;
     double loss = -1, pct = -1;            // Total seconds lost and the lap fraction where the own car rejoins.

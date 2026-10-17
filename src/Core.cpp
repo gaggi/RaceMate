@@ -322,6 +322,7 @@ Session ParseSession(const std::string& yaml, int sessionNumber) {
             if (key == "IncidentLimit" && value!="unlimited") { const double n=Number(value); if(std::isfinite(n) && n>0 && n<1000000) s.incidentLimit=static_cast<int>(n); }
             if (key == "TrackLength") s.trackMeters = Number(value)*(value.find("km")!=std::string::npos?1000:1);
             if (key == "TrackDisplayName") s.track = value;
+            if (key == "DCRuleSet") s.ruleSet = value;
             if (key == "TrackID") s.trackId = Integer(value,-1);
             if (key == "TrackName") s.trackName = value;
             if (key == "TrackConfigName") s.trackConfig = value;
