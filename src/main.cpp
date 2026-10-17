@@ -1089,15 +1089,12 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         const bool rowsEmpty=o.kind==RelativeKind?rows.empty():std::none_of(groups.begin(),groups.end(),[](const StandingsGroup& group){return !group.rows.empty();});
         auto drawRow=[&](const Row& r) {
             if(r.pitExit) {
-                // The own row's highlight, faded: position, then what the stop costs and who is ahead.
+                // The own row's highlight, faded: no position, as later stops can still change it; its place in the list says
+                // where you rejoin, the text what the stop costs and the gaps to the cars around it.
                 const auto& rejoin=PitExit(); int x=12;
                 fill({0,px(y),width,px(y+27)},Ink::PitExitRow);
                 if(o.table.classColors) fill(rect(0,y,3,27),ColorOf(r.driver.classColor));
-                if(std::find(columns.begin(),columns.end(),PositionColumn)!=columns.end()) {
-                    Cell cell{{},Ink::Accent}; CellRenderers[PositionColumn](r,o,cell);
-                    label(std::move(cell.text),rect(x,y,ColumnWidth(o,PositionColumn)-8,27),Ink::Accent,Regular,Columns[PositionColumn].align);
-                    x+=ColumnWidth(o,PositionColumn);
-                }
+                if(std::find(columns.begin(),columns.end(),PositionColumn)!=columns.end()) x+=ColumnWidth(o,PositionColumn);
                 // The cars above and below are the neighbours; the row gives the gaps to them.
                 const bool byClass=o.table.standings.separateClasses;
                 const double front=byClass?(rejoin.classAhead>=0?rejoin.classAheadGap:-1):(rejoin.overallAhead>=0?rejoin.overallAheadGap:-1);
@@ -1159,6 +1156,8 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             }
             int previous=0;
             for(const auto& row:group.rows) {
+                // The pit exit row is not a place: skipped places are counted between real cars only.
+                if(row.pitExit) { drawRow(row); continue; }
                 const int position=o.table.standings.separateClasses?row.car.classPosition:row.car.position;
                 const bool skipped=previous && position>previous+1;
                 drawRow(row);
