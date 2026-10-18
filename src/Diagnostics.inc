@@ -1021,6 +1021,20 @@ int RunDiagnostics() {
     ok=raceControl.events.size()==3 && std::all_of(raceControl.events.begin(),raceControl.events.end(),[](const RaceEvent& e){return EventCategory(e.type)==1;}) && ok;
     SetRaceEventFilter(3); ok=raceControl.events.size()==1 && raceControl.events.front().type==EventType::Overtake && ok;
     SetRaceEventFilter(0);
+    {
+        // Previous and Next walk the shown events in time order, whatever the sort, and replay each.
+        bool stepOk=raceControl.events.size()>=3 && IsWindowEnabled(RaceItem(RacePreviousId)) && IsWindowEnabled(RaceItem(RaceNextId));
+        std::vector<double> times; for(const auto& e:raceControl.events) times.push_back(e.time); std::sort(times.begin(),times.end());
+        auto selectedTime=[]{ const int i=SelectedEventIndex(); return i<0?-1.0:raceControl.events[i].time; };
+        ListView_SetItemState(raceControl.feed,-1,0,LVIS_SELECTED); raceControl.selectedEvent=0;
+        SendMessageW(raceControl.window,WM_COMMAND,MAKEWPARAM(RaceNextId,BN_CLICKED),0); stepOk=selectedTime()==times.front() && !raceControl.pendingNumber.empty() && stepOk;
+        SendMessageW(raceControl.window,WM_COMMAND,MAKEWPARAM(RaceNextId,BN_CLICKED),0); stepOk=selectedTime()==times[1] && stepOk;
+        SendMessageW(raceControl.window,WM_COMMAND,MAKEWPARAM(RacePreviousId,BN_CLICKED),0); stepOk=selectedTime()==times.front() && stepOk;
+        SendMessageW(raceControl.window,WM_COMMAND,MAKEWPARAM(RacePreviousId,BN_CLICKED),0); stepOk=selectedTime()==times.front() && raceControl.message.find(L"earliest")!=std::wstring::npos && stepOk;
+        // A jump waits for iRacing; in the preview it has arrived at once and plays.
+        SendMessageW(raceControl.window,WM_TIMER,1,0); stepOk=raceControl.pendingNumber.empty() && stepOk;
+        report<<"Race Control Previous / Next step through events in time order: "<<(stepOk?"PASS":"FAIL")<<"\n"; ok=stepOk && ok;
+    }
     SetRaceOnTop(true); ok=(GetWindowLongPtrW(raceControl.window,GWL_EXSTYLE)&WS_EX_TOPMOST) && ok;
     SetRaceOnTop(false); ok=!(GetWindowLongPtrW(raceControl.window,GWL_EXSTYLE)&WS_EX_TOPMOST) && ok;
     LoadRaceFields(); ok=!raceControl.onTop && ok;

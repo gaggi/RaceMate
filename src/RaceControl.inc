@@ -23,11 +23,14 @@ struct RaceControlWindow {
     std::vector<CameraGroup> cameras; std::wstring cameraName;
     std::wstring signature, message, feedKey; size_t total=0;
     ULONGLONG updated=0;
-    std::string pendingNumber; int pendingGroup=1;
+    // A jump under way: the car and camera to show once iRacing is there. Target session and time (-1 for the live
+    // end), and when to stop waiting.
+    std::string pendingNumber; int pendingGroup=1, pendingSession=-1; double pendingTime=-1; ULONGLONG pendingUntil=0;
 } raceControl;
 enum RaceControlId {
     RaceStandingsId=810, RaceFeedId=811, RaceMessageId=816, RaceGoLiveId=820, RaceFilterId=821, RaceCarPillId=822, RaceCountId=823,
-    RaceCameraId=824, RaceOnTopId=825, RaceReplayLabelId=829, RaceReplayId=830, RaceOnlyCarId=833, RaceSelectedId=834, RaceWatchId=840, RaceCarEventsId=841, RaceSplitterId=842, RaceInfoId=843
+    RaceCameraId=824, RaceOnTopId=825, RaceReplayLabelId=829, RaceReplayId=830, RaceOnlyCarId=833, RaceSelectedId=834, RaceWatchId=840, RaceCarEventsId=841, RaceSplitterId=842, RaceInfoId=843,
+    RacePreviousId=844, RaceNextId=845
 };
 constexpr int RaceReplayLeads[]={0,5,10};
 const wchar_t* EventName(EventType type) {
@@ -131,14 +134,32 @@ void FocusRaceCar(const std::string& number) {
     if(SendSimMessage(CameraMessage(number,group))) RaceControlStatus(app.preview || app.diagnostics?L"Preview: camera action simulated.":L"Camera requested for #"+Wide(number));
     else RaceControlStatus(L"Could not send the camera command to iRacing.");
 }
-// Pauses, sends the jump, then switches the camera once iRacing has moved there.
-void SendRaceJump(const std::string& number,const SimMessage& jump,const std::wstring& done) {
+// Pauses, sends the jump, then switches the camera and plays once iRacing has moved there. A search through a long
+// replay can take seconds; a camera and play sent before it ends are lost, and the replay stays on a still frame.
+// So the replay position is watched, and only after a while does it play from wherever it is.
+constexpr ULONGLONG RaceJumpWait=12000;
+void SendRaceJump(const std::string& number,const SimMessage& jump,const std::wstring& done,int session=-1,double time=-1) {
     if(CameraNumber(number)<0) { RaceControlStatus(L"This car has no usable camera number."); return; }
     const int group=RaceCameraGroup(); if(group<0) return;
     if(!SendSimMessage({3,0,0}) || !SendSimMessage(jump)) { RaceControlStatus(L"Could not send the replay command to iRacing."); return; }
-    raceControl.pendingNumber=number; raceControl.pendingGroup=group;
-    SetTimer(raceControl.window,1,250,nullptr);
+    raceControl.pendingNumber=number; raceControl.pendingGroup=group; raceControl.pendingSession=session; raceControl.pendingTime=time;
+    raceControl.pendingUntil=GetTickCount64()+RaceJumpWait;
+    SetTimer(raceControl.window,1,100,nullptr);
     RaceControlStatus(app.preview || app.diagnostics?L"Preview: replay action simulated.":done);
+}
+// Whether iRacing has reached the jump's target: within 2 s of its time, or near the live end for a live jump.
+bool RaceJumpArrived(const Frame& f) {
+    if(app.preview || app.diagnostics) return true;
+    if(raceControl.pendingTime<0) return !ReviewingReplay(f);
+    return f.replaySession==raceControl.pendingSession && f.replayTime>=0 && std::abs(f.replayTime-raceControl.pendingTime)<=2;
+}
+void FinishRaceJump(bool arrived) {
+    KillTimer(raceControl.window,1);
+    if(CanControlSim() && !raceControl.pendingNumber.empty()) {
+        SendSimMessage(CameraMessage(raceControl.pendingNumber,raceControl.pendingGroup)); SendSimMessage({3,1,0});
+        if(!arrived) RaceControlStatus(L"iRacing did not reach that moment within "+std::to_wstring(RaceJumpWait/1000)+L" s; it plays from where it is. The footage may be older than iRacing keeps in its replay buffer.");
+    }
+    raceControl.pendingNumber.clear();
 }
 // Live: camera on the car, leaving the replay first if needed.
 void WatchRaceCarLive(const std::string& number) {
@@ -154,7 +175,8 @@ void ReplayRaceEvent(int selected,int lead) {
     if(event.session<0) { RaceControlStatus(L"No replay target is available for this event."); return; }
     // Keep all 32 timestamp bits: the SDK packs them directly into LPARAM.
     SendRaceJump(event.number,ReplayMessage(event.session,event.time,lead),
-        L"Replay requested: #"+Wide(event.number)+L" at "+EventClock(std::max(0.0,event.time-lead))+L". Footage must be in iRacing's replay buffer.");
+        L"Replay requested: #"+Wide(event.number)+L" at "+EventClock(std::max(0.0,event.time-lead))+L". Footage must be in iRacing's replay buffer.",
+        event.session,std::max(0.0,event.time-lead));
 }
 // From the moment on screen: the replay position while reviewing, else the live session time.
 void ReplayRaceCar(const std::string& number,int lead) {
@@ -162,7 +184,7 @@ void ReplayRaceCar(const std::string& number,int lead) {
     if(!CanControlSim()) return;
     const auto& f=app.frame;
     const bool review=ReviewingReplay(f); const int session=review?f.replaySession:f.session; const double time=review?f.replayTime:f.time;
-    SendRaceJump(number,ReplayMessage(std::max(0,session),time,lead),L"Replay requested: #"+Wide(number)+L", "+std::to_wstring(lead)+L" s back.");
+    SendRaceJump(number,ReplayMessage(std::max(0,session),time,lead),L"Replay requested: #"+Wide(number)+L", "+std::to_wstring(lead)+L" s back.",std::max(0,session),std::max(0.0,time-lead));
 }
 int RaceReplayLead() { return RaceReplayLeads[std::clamp(raceControl.replayMode,0,2)]; }
 void SetRaceReplayMode(int mode) {
@@ -175,6 +197,25 @@ int SelectedEventIndex() {
 }
 int SelectedRowIndex() { return raceControl.standings?ListView_GetNextItem(raceControl.standings,-1,LVNI_SELECTED):-1; }
 void ActOnSelectedEvent() { ReplayRaceEvent(SelectedEventIndex(),RaceReplayLead()); }
+void UpdateRaceSelection();
+// Selects the event before (-1) or after (+1) the selected one in time, among those shown, and replays it.
+// Without a selection, Previous starts at the latest and Next at the earliest.
+void StepRaceEvent(int step) {
+    const int count=static_cast<int>(raceControl.events.size());
+    if(!count) { RaceControlStatus(L"No events to step through."); return; }
+    std::vector<int> order(count); for(int i=0;i<count;++i) order[i]=i;
+    std::stable_sort(order.begin(),order.end(),[](int a,int b){ const auto& x=raceControl.events[a]; const auto& y=raceControl.events[b]; return x.time!=y.time?x.time<y.time:x.id<y.id; });
+    const int selected=SelectedEventIndex();
+    const int at=selected<0?(step>0?-1:count):static_cast<int>(std::find(order.begin(),order.end(),selected)-order.begin());
+    const int target=at+step;
+    if(target<0 || target>=count) { RaceControlStatus(step<0?L"This is the earliest event shown.":L"This is the latest event shown."); return; }
+    const int index=order[target];
+    raceControl.selectedEvent=raceControl.events[index].id;
+    ListView_SetItemState(raceControl.feed,-1,0,LVIS_SELECTED|LVIS_FOCUSED);
+    ListView_SetItemState(raceControl.feed,index,LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED);
+    ListView_EnsureVisible(raceControl.feed,index,FALSE);
+    UpdateRaceSelection(); ReplayRaceEvent(index,RaceReplayLead());
+}
 void ActOnSelectedDriver() { if(const int row=SelectedRowIndex(); row>=0 && row<static_cast<int>(raceControl.rows.size())) ReplayRaceCar(raceControl.rows[row].driver.number,RaceReplayLead()); }
 void ApplyRaceOnTop() {
     if(!raceControl.window) return;
@@ -241,6 +282,8 @@ void LayoutRaceControl() {
     place(RaceItem(RaceReplayLabelId),bx,barY,d(76),d(28)); bx+=d(78);
     const int replay=raceControl.replay.IdealWidth();
     place(raceControl.replay.Handle(),bx,barY,replay,d(28)); bx+=replay+d(12);
+    place(RaceItem(RacePreviousId),bx,barY,d(88),d(28)); bx+=d(92);
+    place(RaceItem(RaceNextId),bx,barY,d(88),d(28)); bx+=d(100);
     const int watchX=width-margin-d(228);
     place(RaceItem(RaceSelectedId),bx,barY,watchX-d(8)-bx,d(28));
     place(RaceItem(RaceWatchId),watchX,barY,d(80),d(28));
@@ -400,6 +443,7 @@ void UpdateRaceSelection() {
     if(index>=0) { const auto& e=raceControl.events[index]; text=std::wstring(EventName(e.type))+L"  \u00B7  #"+Wide(e.number)+L" "+Wide(e.driver)+L"  \u00B7  "+EventClock(e.time); }
     SetRaceText(RaceItem(RaceSelectedId),text);
     EnableWindow(RaceItem(RaceOnlyCarId),index>=0);
+    EnableWindow(RaceItem(RacePreviousId),!raceControl.events.empty()); EnableWindow(RaceItem(RaceNextId),!raceControl.events.empty());
     const int row=SelectedRowIndex();
     EnableWindow(RaceItem(RaceWatchId),row>=0); EnableWindow(RaceItem(RaceCarEventsId),row>=0);
 }
@@ -589,6 +633,7 @@ LRESULT CALLBACK RaceControlProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
         else if(id==RaceReplayId && code==SegmentedControl::kChanged) SetRaceReplayMode(raceControl.replay.Selected());
         else if(id==RaceOnlyCarId) { if(const int index=SelectedEventIndex(); index>=0) SetRaceCarFilter(raceControl.events[index].car); }
         else if(id==RaceWatchId) ActOnSelectedDriver();
+        else if(id==RacePreviousId || id==RaceNextId) StepRaceEvent(id==RaceNextId?1:-1);
         else if(id==RaceCarEventsId) { if(const int row=SelectedRowIndex(); row>=0 && row<static_cast<int>(raceControl.rows.size())) SetRaceCarFilter(raceControl.rows[row].driver.index); }
         else if(id==RaceGoLiveId && CanControlSim()) {
             KillTimer(w,1); raceControl.pendingNumber.clear(); SendSimMessage({5,1,0}); SendSimMessage({3,1,0}); RaceControlStatus(app.preview?L"Preview: live action simulated.":L"Live replay view requested.");
@@ -596,7 +641,11 @@ LRESULT CALLBACK RaceControlProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
         return 0;
     }
     case WM_TIMER:
-        if(wp==1) { KillTimer(w,1); if(CanControlSim() && !raceControl.pendingNumber.empty()) { SendSimMessage(CameraMessage(raceControl.pendingNumber,raceControl.pendingGroup)); SendSimMessage({3,1,0}); } raceControl.pendingNumber.clear(); }
+        if(wp==1) {
+            // Telemetry keeps coming in between; arrived, or waited long enough, the camera and play follow.
+            const bool arrived=RaceJumpArrived(app.frame);
+            if(arrived || GetTickCount64()>=raceControl.pendingUntil || raceControl.pendingNumber.empty()) FinishRaceJump(arrived);
+        }
         return 0;
     case WM_NOTIFY: {
         const auto* header=reinterpret_cast<NMHDR*>(lp);
@@ -697,6 +746,8 @@ void OpenRaceControl() {
     create(L"STATIC",L"Replay from",RaceReplayLabelId,SS_CENTERIMAGE);
     raceControl.replay.Create(app.instance,raceControl.window,RaceReplayId,raceControl.font,{L"Live",L"5 s",L"10 s"});
     create(L"BUTTON",L"Only this car",RaceOnlyCarId,WS_TABSTOP);
+    create(L"BUTTON",L"\u2039 Previous",RacePreviousId,WS_TABSTOP);
+    create(L"BUTTON",L"Next \u203A",RaceNextId,WS_TABSTOP);
     create(L"STATIC",L"",RaceSelectedId,SS_CENTERIMAGE|SS_ENDELLIPSIS);
     create(L"BUTTON",L"Watch",RaceWatchId,WS_TABSTOP);
     create(L"BUTTON",L"Events of this car",RaceCarEventsId,WS_TABSTOP);

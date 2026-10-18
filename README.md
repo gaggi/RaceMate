@@ -140,6 +140,7 @@ The Race Control page independently switches **Fuel to finish** (the same green 
 - The banner at the top shows whether you are watching live or a replay (with the replay clock); **Go live** returns to live.
 - **All / Incidents / Pit / Passes** filters the event feed. **Events of this car** (or **F**) shows only the selected driver's events; the pill next to the filter clears it.
 - **Replay from** under the event feed sets what a double-click (or **Enter**) does: **Live** puts the camera on that car live; **5 s** (default) or **10 s** replays from that long before the event. On a driver in the standings (or **Watch**) it replays the last 5 / 10 s of that car from the moment on screen.
+- **‹ Previous** and **Next ›** step through the events shown, in time order whatever the sort, and replay each the same way. A replay jump waits until iRacing has reached that moment before it switches the camera and plays; if it does not get there within 12 s, it plays from where it is and says that the footage may be older than iRacing's replay buffer keeps.
 - **Only this car** above the event feed limits it to the selected event's car. The camera button chooses the camera group used for all of this.
 - The standings show a class stripe, a status pill (Pit, Out, Tow, Repair, Black, DQ, Inactive …) and your incident count.
 - **Keep on top** keeps the window above iRacing while you use the sim. This works only when iRacing runs in borderless windowed mode, not in exclusive fullscreen.
