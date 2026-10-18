@@ -662,6 +662,18 @@ int RunDiagnostics() {
         report<<"Layouts: own overlays, places and settings, switching, reload, conditions, manual choice and removal: "<<(layoutOk?"PASS":"FAIL")<<"\n"; ok=layoutOk && ok;
     }
     {
+        // The Safety and iRating badge beside License and iRating, over drivers of every license class.
+        auto& relative=First(RelativeKind); const auto savedTable=relative.table; const auto savedDrivers=app.session.drivers;
+        const char* licenses[]={"A 3.45","B 2.81","C 3.12","D 1.97","R 2.50","A 4.20","B 3.66","C 2.04"}; const int ratings[]={3120,2215,1640,1105,860,4870,2790,1390};
+        for(size_t i=0;i<app.session.drivers.size();++i) { app.session.drivers[i].license=licenses[i%8]; app.session.drivers[i].rating=ratings[i%8]; }
+        relative.table.driverColumns[0]=relative.table.driverColumns[1]=true; relative.table.extraColumns[CombinedRatingColumn-BrandColumn]=true;
+        relative.table.columnOrder={PositionColumn,NumberColumn,DriverColumn,LicenseColumn,IRatingColumn,CombinedRatingColumn,GapColumn};
+        InvalidateModel(); Fit(relative); UpdateOverlays();
+        const bool shot=Export(relative.window,L"build\\qa\\relative-ratings.bmp");
+        relative.table=savedTable; app.session.drivers=savedDrivers; InvalidateModel(); Fit(relative); UpdateOverlays();
+        report<<"Relative with License, iRating and Safety and iRating exported: "<<(shot?"PASS":"FAIL")<<"\n"; ok=shot && ok;
+    }
+    {
         // At the narrowest window every editor of an expanded row lies inside the visible list: the overlay's
         // size row, and header and footer of a table and of Fuel and Weather.
         bool fitOk=true; WINDOWPLACEMENT saved{sizeof(saved)}; GetWindowPlacement(app.main,&saved);
