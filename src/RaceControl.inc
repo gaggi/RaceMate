@@ -198,6 +198,13 @@ int SelectedEventIndex() {
 int SelectedRowIndex() { return raceControl.standings?ListView_GetNextItem(raceControl.standings,-1,LVNI_SELECTED):-1; }
 void ActOnSelectedEvent() { ReplayRaceEvent(SelectedEventIndex(),RaceReplayLead()); }
 void UpdateRaceSelection();
+void StepRaceEvent(int step);
+// From a shortcut, also while iRacing has the focus: Race Control opens first if it is closed, as the events
+// come from its feed.
+void StepRaceEventByHotkey(int step) {
+    if(!raceControl.window || !IsWindowVisible(raceControl.window)) OpenRaceControl();
+    UpdateRaceControl(true); StepRaceEvent(step);
+}
 // Selects the event before (-1) or after (+1) the selected one in time, among those shown, and replays it.
 // Without a selection, Previous starts at the latest and Next at the earliest.
 void StepRaceEvent(int step) {

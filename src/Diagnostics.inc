@@ -1033,7 +1033,12 @@ int RunDiagnostics() {
         SendMessageW(raceControl.window,WM_COMMAND,MAKEWPARAM(RacePreviousId,BN_CLICKED),0); stepOk=selectedTime()==times.front() && raceControl.message.find(L"earliest")!=std::wstring::npos && stepOk;
         // A jump waits for iRacing; in the preview it has arrived at once and plays.
         SendMessageW(raceControl.window,WM_TIMER,1,0); stepOk=raceControl.pendingNumber.empty() && stepOk;
-        report<<"Race Control Previous / Next step through events in time order: "<<(stepOk?"PASS":"FAIL")<<"\n"; ok=stepOk && ok;
+        // The shortcuts, Ctrl+Alt+Shift+Left / Right by default, do the same.
+        stepOk=DefaultHotkeys[3]==(HotkeyAllModifiers|(HOTKEYF_EXT<<8)|VK_LEFT) && HotkeyText(DefaultHotkeys[4]).find(L"Ctrl+Alt+Shift+")==0 && stepOk;
+        SendMessageW(app.main,WM_HOTKEY,5,0); stepOk=selectedTime()==times[1] && stepOk;
+        SendMessageW(app.main,WM_HOTKEY,4,0); stepOk=selectedTime()==times.front() && stepOk;
+        SendMessageW(raceControl.window,WM_TIMER,1,0);
+        report<<"Race Control Previous / Next and their shortcuts step through events in time order: "<<(stepOk?"PASS":"FAIL")<<"\n"; ok=stepOk && ok;
     }
     SetRaceOnTop(true); ok=(GetWindowLongPtrW(raceControl.window,GWL_EXSTYLE)&WS_EX_TOPMOST) && ok;
     SetRaceOnTop(false); ok=!(GetWindowLongPtrW(raceControl.window,GWL_EXSTYLE)&WS_EX_TOPMOST) && ok;

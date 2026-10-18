@@ -62,7 +62,8 @@ private:
             push(std::move(service),Key::PitService);
         }
         header(L"Shortcuts  \u00B7  work in every program");
-        const wchar_t* names[]={L"Move overlays",L"Hide all overlays",L"Open RaceMate"};
+        const wchar_t* names[]={L"Move overlays",L"Hide all overlays",L"Open RaceMate",L"Previous event in Race Control",L"Next event in Race Control"};
+        static_assert(std::size(names)==HotkeyCount);
         for(int i=0;i<HotkeyCount;++i) {
             RowList::Row row; row.title=names[i]; row.detail=HotkeyText(app.hotkeys[i]);
             if(app.hotkeyError.find(HotkeyKeys[i])!=std::wstring::npos) { row.pill=L"In use"; row.pillTone=RowList::Tone::Warning; }

@@ -18,6 +18,8 @@ The window has three pages in its sidebar: **Overlays** (switch each overlay on 
 | Ctrl + Alt + Shift + E | Toggle Move mode |
 | Ctrl + Alt + Shift + H | Hide/show all overlays |
 | Ctrl + Alt + Shift + S | Open Settings |
+| Ctrl + Alt + Shift + ← | Previous event in Race Control (opens it if closed) |
+| Ctrl + Alt + Shift + → | Next event in Race Control |
 
 Shortcuts are global and configurable on the **Settings** page: expand a shortcut, click the field and press a combination with Ctrl or Alt; **Reset** restores the default. The banner names shortcuts another program already owns.
 

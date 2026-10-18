@@ -247,10 +247,12 @@ struct Overlay {
     }
 };
 // Global shortcuts, packed like the hotkey control: low byte virtual key, high byte HOTKEYF_* modifiers; 0 disables.
-constexpr int HotkeyCount=3;
-const wchar_t* HotkeyKeys[]={L"Move",L"Hide",L"Settings"};
+constexpr int HotkeyCount=5;
+const wchar_t* HotkeyKeys[]={L"Move",L"Hide",L"Settings",L"PreviousEvent",L"NextEvent"};
 constexpr WORD HotkeyAllModifiers=(HOTKEYF_CONTROL|HOTKEYF_ALT|HOTKEYF_SHIFT)<<8;
-constexpr WORD DefaultHotkeys[]={HotkeyAllModifiers|'E',HotkeyAllModifiers|'H',HotkeyAllModifiers|'S'};
+// The arrows are extended keys; the hotkey control shows them only with that flag.
+constexpr WORD DefaultHotkeys[]={HotkeyAllModifiers|'E',HotkeyAllModifiers|'H',HotkeyAllModifiers|'S',HotkeyAllModifiers|(HOTKEYF_EXT<<8)|VK_LEFT,HotkeyAllModifiers|(HOTKEYF_EXT<<8)|VK_RIGHT};
+static_assert(std::size(HotkeyKeys)==HotkeyCount && std::size(DefaultHotkeys)==HotkeyCount);
 struct App {
     HINSTANCE instance=nullptr; HWND main=nullptr; HBRUSH brush=nullptr;
     RECT windowRect{}; bool windowMaximized=false;
@@ -2127,7 +2129,7 @@ LRESULT CALLBACK MainProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
         reinterpret_cast<MINMAXINFO*>(lp)->ptMinTrackSize={minimum.right-minimum.left,minimum.bottom-minimum.top}; return 0;
     }
     case TrayMessage: if(lp==WM_LBUTTONDBLCLK || lp==WM_LBUTTONUP) ShowSettings(); else if(lp==WM_RBUTTONUP || lp==WM_CONTEXTMENU) TrayMenu(); return 0;
-    case WM_HOTKEY: if(wp==1) ToggleEdit(); if(wp==2) ToggleHidden(); if(wp==3) ShowSettings(); return 0;
+    case WM_HOTKEY: if(wp==1) ToggleEdit(); if(wp==2) ToggleHidden(); if(wp==3) ShowSettings(); if(wp==4 || wp==5) StepRaceEventByHotkey(wp==5?1:-1); return 0;
     case RefreshUiMessage: UpdateStatus(); RefreshPage(); return 0;
     case WM_COMMAND:
         switch(LOWORD(wp)) {
