@@ -140,11 +140,13 @@ static_assert(std::size(WeatherModules)==WeatherModuleCount);
 const std::vector<int> FuelOrder{TankModule,FiguresModule,LeaderDistanceModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,WindowCard,TimelineModule,PitExitModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow};
 const std::vector<int> WeatherOrder{ConditionModule,RainModule,TemperatureModule,TemperatureHistoryModule,WindModule,DetailsModule,UsageModule};
 const wchar_t* WetnessNames[]={L"—",L"Dry",L"Mostly Dry",L"Very Lightly Wet",L"Lightly Wet",L"Moderately Wet",L"Very Wet",L"Extremely Wet"};
-struct Placement {
-    int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=true, growLeft=false, growUp=false, rounded=false;
-    std::array<bool,SituationCount> showIn{true,true,true,true}; // In car, spotting, replay, garage.
-};
-const wchar_t* SituationKeys[]={L"ShowInCar",L"ShowSpotting",L"ShowReplay",L"ShowInGarage"};
+struct Placement { int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=true, growLeft=false, growUp=false, rounded=false; };
+// Layouts: complete sets of overlays, each with its places and settings, and when it becomes active.
+// Layout 1 keeps the plain section names, so settings from before layouts are its own.
+enum LayoutCondition { AlwaysCondition, InCarCondition, OutOfCarCondition, GarageCondition, ConditionCount };
+const wchar_t* ConditionNames[]={L"Always",L"In car",L"Out of car",L"Garage"};
+const wchar_t* ConditionDetails[]={L"Whenever no layout above it applies",L"While you drive",L"Spotting and replays",L"With the garage screen open"};
+struct Layout { int id=1; std::wstring name=L"Default"; int condition=AlwaysCondition; };
 enum FontId : unsigned char { Regular, Bold, Large, Small, Hero, SmallBold, FontCount };
 struct DrawCommand {
     enum Type : unsigned char { Fill, Text, DottedLine, WindRing, Outline, RoundFill, Ring, Hatch, Sparkline, Logo, Map, MapCar, MapLabel };
@@ -253,6 +255,8 @@ struct App {
     HINSTANCE instance=nullptr; HWND main=nullptr; HBRUSH brush=nullptr;
     RECT windowRect{}; bool windowMaximized=false;
     std::list<Overlay> overlays; // Grouped by kind, in instance order; each stays at its address for its window.
+    // Layouts in priority order and the active one; automatic switching follows a situation once it held for a second.
+    std::vector<Layout> layouts{Layout{}}; int layout=1, layoutSituation=-1, pendingSituation=-1; ULONGLONG pendingSince=0;
     Frame frame; Session session; Telemetry telemetry; FuelCalculator fuel;
     EventRecorder events; PitHistory pitHistory; PitLimiterVisibility pitVisibility; SetupDials setupDials;
     RacePredictor predictor; FuelPlan fuelPlan;
@@ -300,7 +304,11 @@ ULONGLONG ProcessCpuMicroseconds() {
 }
 std::wstring Numbered(const wchar_t* name,int number) { return number>1?std::wstring(name)+L" "+std::to_wstring(number):std::wstring(name); }
 std::wstring Name(const Overlay& o) { return Numbered(Titles[o.kind],o.number); }
-std::wstring Section(const Overlay& o) { return Numbered(Sections[o.kind],o.number); }
+// Sections of the active layout: "Layout 3: Relative 2"; layout 1 keeps the plain names.
+std::wstring LayoutPrefix(int id) { return id==1?std::wstring():L"Layout "+std::to_wstring(id)+L": "; }
+std::wstring Section(const Overlay& o) { return LayoutPrefix(app.layout)+Numbered(Sections[o.kind],o.number); }
+std::wstring KindSection(int kind) { return LayoutPrefix(app.layout)+Sections[kind]; }
+const Layout* ActiveLayout() { for(const auto& l:app.layouts) if(l.id==app.layout) return &l; return nullptr; }
 // The first instance of every kind always exists; Race Control follows the first Standings.
 Overlay& First(int kind) { return *std::find_if(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return o.kind==kind && o.number==1;}); }
 int InstanceCount(int kind) { return static_cast<int>(std::count_if(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return o.kind==kind;})); }
@@ -559,7 +567,6 @@ void ReadInstance(Overlay& o) {
     p.rate=*std::find_if(std::begin(OverlayRates),std::end(OverlayRates)-1,[&](int choice){return choice>=rate;});
     p.enabled=ReadBool(section.c_str(),L"Enabled",kind!=TrackMapKind); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
     p.rounded=ReadBool(section.c_str(),L"RoundedCorners",false);
-    for(int i=0;i<SituationCount;++i) p.showIn[i]=ReadBool(section.c_str(),SituationKeys[i],true);
     const Bands defaults=DefaultBands(kind); auto& b=o.bands;
     b.header=ReadBool(section.c_str(),L"ShowHeader",kind==PitLimiterKind?ReadBool(L"General",L"ShowTitleBar",false):defaults.header); b.headerMetrics=ReadSlots(section.c_str(),HeaderKeys,defaults.headerMetrics);
     b.footer.enabled=ReadBool(section.c_str(),L"ShowFooter",defaults.footer.enabled); b.footer.metrics=ReadSlots(section.c_str(),FooterKeys,defaults.footer.metrics);
@@ -584,11 +591,27 @@ void ReadInstance(Overlay& o) {
         o.map.labelScale=((std::clamp(ReadInt(section.c_str(),L"CornerLabelScale",100),75,200)+12)/25)*25;
     }
 }
-void Load() {
-    app.savedSettings.clear(); // The next Save() writes everything once.
+void LoadLayouts() {
+    app.layouts.clear();
+    wchar_t order[512]{}; GetPrivateProfileStringW(L"Layouts",L"Order",L"1",order,512,app.config.c_str());
+    for(wchar_t* token=order;*token;) {
+        wchar_t* end=nullptr; const long id=wcstol(token,&end,10); if(end==token) break;
+        if(id>=1 && id<=999 && std::none_of(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==id;})) {
+            const auto section=L"Layout "+std::to_wstring(id); wchar_t name[128]{};
+            GetPrivateProfileStringW(section.c_str(),L"Name",id==1?L"Default":section.c_str(),name,128,app.config.c_str());
+            app.layouts.push_back({static_cast<int>(id),name,std::clamp(ReadInt(section.c_str(),L"Condition",AlwaysCondition),0,ConditionCount-1)});
+        }
+        token=end; if(*token==L',') ++token; else if(*token) break;
+    }
+    if(std::none_of(app.layouts.begin(),app.layouts.end(),[](const Layout& l){return l.id==1;})) app.layouts.push_back({});
+    app.layout=ReadInt(L"Layouts",L"Active",1);
+    if(!ActiveLayout()) app.layout=1;
+}
+// The active layout's overlays: instances added or dropped to its counts, then its settings.
+void LoadOverlays() {
     // Each kind's section counts its instances; the Pit Limiter has only one.
     for(int kind=0;kind<OverlayCount;++kind) {
-        const int count=kind==PitLimiterKind?1:std::clamp(ReadInt(Sections[kind],L"Instances",1),1,99);
+        const int count=kind==PitLimiterKind?1:std::clamp(ReadInt(KindSection(kind).c_str(),L"Instances",1),1,99);
         for(int number=1;number<=count;++number)
             if(std::none_of(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return o.kind==kind && o.number==number;})) AddInstance(kind,number);
         for(auto it=app.overlays.begin();it!=app.overlays.end();) {
@@ -596,6 +619,10 @@ void Load() {
         }
     }
     for(auto& o:app.overlays) { ReadInstance(o); if(!o.window && app.overlayClass) CreateOverlayWindow(o); }
+}
+void Load() {
+    app.savedSettings.clear(); // The next Save() writes everything once.
+    LoadLayouts(); LoadOverlays();
     app.showTitleBar=ReadBool(L"General",L"ShowTitleBar",false);
     app.checkUpdates=ReadBool(L"General",L"CheckForUpdates",true);
     app.rate=std::clamp(ReadInt(L"General",L"RefreshHz",10),5,20);
@@ -622,12 +649,16 @@ void Save() {
     auto order=[&](const wchar_t* section,const wchar_t* key,const std::vector<int>& ids) {
         std::wstring text; for(int id:ids) { if(!text.empty()) text+=L","; text+=std::to_wstring(id); } write(section,key,text);
     };
-    for(int kind=0;kind<OverlayCount;++kind) if(kind!=PitLimiterKind) number(Sections[kind],L"Instances",InstanceCount(kind));
+    {
+        std::wstring ids; for(const auto& l:app.layouts) ids+=(ids.empty()?L"":L",")+std::to_wstring(l.id);
+        write(L"Layouts",L"Order",ids); number(L"Layouts",L"Active",app.layout);
+        for(const auto& l:app.layouts) { const auto section=L"Layout "+std::to_wstring(l.id); write(section.c_str(),L"Name",l.name); number(section.c_str(),L"Condition",l.condition); }
+    }
+    for(int kind=0;kind<OverlayCount;++kind) if(kind!=PitLimiterKind) number(KindSection(kind).c_str(),L"Instances",InstanceCount(kind));
     for(const auto& o:app.overlays) {
         const auto name=Section(o); const auto* section=name.c_str(); const auto& p=o.place;
         number(section,L"X",p.x); number(section,L"Y",p.y); number(section,L"Scale",p.scale); number(section,L"Opacity",p.opacity);
         number(section,L"RefreshHz",p.rate); number(section,L"Enabled",p.enabled); number(section,L"GrowLeft",p.growLeft); number(section,L"GrowUp",p.growUp); number(section,L"RoundedCorners",p.rounded);
-        for(int i=0;i<SituationCount;++i) number(section,SituationKeys[i],p.showIn[i]);
         {
             const auto& b=o.bands; number(section,L"ShowHeader",b.header); number(section,L"ShowFooter",b.footer.enabled);
             for(int i=0;i<SlotCount;++i) { number(section,HeaderKeys[i],b.headerMetrics[i]); number(section,FooterKeys[i],b.footer.metrics[i]); }
@@ -1899,9 +1930,8 @@ void UpdateOverlays(bool force=true) {
     InvalidateModel();
     const bool pitVisible=app.pitVisibility.Update(app.session,app.frame);
     app.setupDials.Update(app.session,app.frame);
-    const int situation=CurrentSituation(app.frame);
     for(auto& o:app.overlays) {
-        bool visible=o.place.enabled && !app.hidden && (o.kind!=WeatherKind || std::any_of(o.weather.display.begin(),o.weather.display.begin()+WeatherPanelCount,[](bool value){return value;})) && (app.preview || (app.frame.connected && (o.kind!=PitLimiterKind || pitVisible) && (o.kind==PitLimiterKind || o.place.showIn[situation])));
+        bool visible=o.place.enabled && !app.hidden && (o.kind!=WeatherKind || std::any_of(o.weather.display.begin(),o.weather.display.begin()+WeatherPanelCount,[](bool value){return value;})) && (app.preview || (app.frame.connected && (o.kind!=PitLimiterKind || pitVisible)));
         auto style=GetWindowLongPtrW(o.window,GWL_EXSTYLE);
         const auto desired=app.edit?(style&~WS_EX_TRANSPARENT):(style|WS_EX_TRANSPARENT);
         if(style!=desired) SetWindowLongPtrW(o.window,GWL_EXSTYLE,desired);
@@ -1969,6 +1999,7 @@ void ProcessFrame(bool connected) {
     }
 }
 void WriteProfile();
+void AutoLayout();
 void Tick() {
     {
         ProfileScope total("tick (everything below)");
@@ -1978,6 +2009,7 @@ void Tick() {
             bool connected=false;
             { ProfileScope p("telemetry read (session YAML included)"); connected=app.telemetry.Read(app.frame,app.session); }
             ProcessFrame(connected);
+            AutoLayout();
         }
         { ProfileScope p("status"); UpdateStatus(); }
         { ProfileScope p("overlays (all, update and present)"); UpdateOverlays(false); }
@@ -2059,10 +2091,16 @@ void TrayMenu() {
     AppendMenuW(menu,MF_STRING,3,app.hidden?L"Show overlays":L"Hide overlays");
     AppendMenuW(menu,MF_STRING|(app.preview?MF_CHECKED:0),4,L"Preview");
     AppendMenuW(menu,MF_STRING,6,L"Race Control");
+    if(app.layouts.size()>1) {
+        HMENU layouts=CreatePopupMenu();
+        for(size_t i=0;i<app.layouts.size();++i) AppendMenuW(layouts,MF_STRING|(app.layouts[i].id==app.layout?MF_CHECKED:0),100+i,app.layouts[i].name.c_str());
+        AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(layouts),L"Layout");
+    }
     AppendMenuW(menu,MF_SEPARATOR,0,nullptr); AppendMenuW(menu,MF_STRING,5,L"Exit");
     POINT p{}; GetCursorPos(&p); SetForegroundWindow(app.main);
     int choice=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,p.x,p.y,0,app.main,nullptr);
     DestroyMenu(menu); PostMessageW(app.main,WM_NULL,0,0);
+    if(choice>=100 && choice<100+static_cast<int>(app.layouts.size())) SwitchLayout(app.layouts[choice-100].id);
     if(choice==6) OpenRaceControl(); if(choice==1) ShowSettings(); if(choice==2) ToggleEdit(); if(choice==3) ToggleHidden(); if(choice==4) TogglePreview(); if(choice==5) DestroyWindow(app.main);
 }
 LRESULT CALLBACK MainProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {

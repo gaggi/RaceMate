@@ -628,6 +628,40 @@ int RunDiagnostics() {
         report<<"Further instances: defaults, own size, persistence, removal of settings: "<<(instancesOk?"PASS":"FAIL")<<"\n"; ok=instancesOk && ok;
     }
     {
+        // Layouts: a copy starts with the same overlays and keeps its own places and settings; switching brings
+        // each back, also after a reload; conditions switch once a situation held for a second; a layout chosen
+        // by hand stays until the situation changes; removal takes its overlays' sections along.
+        bool layoutOk=true;
+        const auto savedFrame=app.frame; const auto savedSession=app.session; const bool savedPreview=app.preview; const ULONGLONG savedNow=app.now;
+        const Placement place=First(RelativeKind).place; const int rows=First(RelativeKind).table.rows;
+        AddLayout(true); const int second=app.layout;
+        layoutOk=app.layouts.size()==2 && second!=1 && First(RelativeKind).place.x==place.x && First(RelativeKind).table.rows==rows && layoutOk;
+        First(RelativeKind).place.x+=200; First(RelativeKind).table.rows=5; Fit(First(RelativeKind)); SettingChanged();
+        auto& extra=NewInstance(WeatherKind); (void)extra; layoutOk=InstanceCount(WeatherKind)==2 && layoutOk;
+        SwitchLayout(1);
+        layoutOk=app.layout==1 && First(RelativeKind).place.x==place.x && First(RelativeKind).table.rows==rows && InstanceCount(WeatherKind)==1 && layoutOk;
+        RECT window{}; GetWindowRect(First(RelativeKind).window,&window); layoutOk=window.left==place.x && layoutOk;
+        SwitchLayout(second);
+        layoutOk=First(RelativeKind).place.x==place.x+200 && First(RelativeKind).table.rows==5 && InstanceCount(WeatherKind)==2 && layoutOk;
+        Load(); layoutOk=app.layout==second && app.layouts.size()==2 && First(RelativeKind).place.x==place.x+200 && InstanceCount(WeatherKind)==2 && layoutOk;
+        // The second layout in the car, ahead of the default for everything else.
+        for(auto& l:app.layouts) if(l.id==second) l.condition=InCarCondition;
+        std::swap(app.layouts[0],app.layouts[1]); SwitchLayout(1);
+        app.preview=false; app.frame.connected=app.frame.onTrack=true; app.frame.replay=app.frame.garage=false; app.layoutSituation=app.pendingSituation=-1;
+        app.now=1000000; AutoLayout(); app.now+=500; AutoLayout(); layoutOk=app.layout==1 && layoutOk;
+        app.now+=600; AutoLayout(); layoutOk=app.layout==second && layoutOk;
+        app.frame.onTrack=false; app.now+=100; AutoLayout(); app.now+=1100; AutoLayout(); layoutOk=app.layout==1 && layoutOk;
+        SwitchLayout(second); app.now+=5000; AutoLayout(); layoutOk=app.layout==second && layoutOk;
+        app.frame.garage=true; app.now+=100; AutoLayout(); app.now+=1100; AutoLayout(); layoutOk=app.layout==1 && layoutOk;
+        ShowPage(Page::Overlays); layoutOk=Export(app.main,L"build\\qa\\main-layouts.bmp") && layoutOk;
+        RemoveLayout(second);
+        wchar_t left[8]{}; GetPrivateProfileStringW((L"Layout "+std::to_wstring(second)+L": Relative").c_str(),L"X",L"",left,8,app.config.c_str());
+        layoutOk=app.layouts.size()==1 && app.layout==1 && !left[0] && InstanceCount(WeatherKind)==1 && First(RelativeKind).place.x==place.x && layoutOk;
+        Load(); layoutOk=app.layouts.size()==1 && layoutOk;
+        app.frame=savedFrame; app.session=savedSession; app.preview=savedPreview; app.now=savedNow; app.layoutSituation=app.pendingSituation=-1; UpdateOverlays();
+        report<<"Layouts: own overlays, places and settings, switching, reload, conditions, manual choice and removal: "<<(layoutOk?"PASS":"FAIL")<<"\n"; ok=layoutOk && ok;
+    }
+    {
         // At the narrowest window every editor of an expanded row lies inside the visible list: the overlay's
         // size row, and header and footer of a table and of Fuel and Weather.
         bool fitOk=true; WINDOWPLACEMENT saved{sizeof(saved)}; GetWindowPlacement(app.main,&saved);
@@ -649,8 +683,9 @@ int RunDiagnostics() {
             if(editors!=expected) { fitOk=false; report<<"  "<<Ascii(title)<<": "<<editors<<" editors\n"; }
             rows->PressIconButton(index,0); // And collapsed again.
         };
-        // Overlays other than the Pit Limiter add where they show: a label and four switches.
-        ShowPage(Page::Overlays); for(auto& o:app.overlays) if(o.number==1) check(Name(o),o.kind==PitLimiterKind?8:13);
+        // The overlays, and a layout with its name and condition.
+        ShowPage(Page::Overlays); for(auto& o:app.overlays) if(o.number==1) check(Name(o));
+        check(ActiveLayout()->name,4);
         for(int kind:{RelativeKind,FuelKind,WeatherKind}) { OpenOverlay(First(kind)); check(L"Header"); check(L"Footer"); }
         SetWindowPlacement(app.main,&saved); ShowPage(Page::Overlays);
         report<<"Expanded editors fit the narrowest window: "<<(fitOk?"PASS":"FAIL")<<"\n"; ok=fitOk && ok;
@@ -1276,15 +1311,6 @@ int RunDiagnostics() {
         report<<"Pit Limiter lists in-car adjustments that differ from the setup, in the pit lane: "<<(setupOk?"PASS":"FAIL")<<"\n"; ok=setupOk && ok;
     }
     app.frame.pit=false; app.frame.limiter=true; app.frame.time+=1; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
-    {
-        // Each overlay shows only where it is set to: Relative off in the car hides it there, not while spotting.
-        auto& relative=First(RelativeKind); bool whereOk=IsWindowVisible(relative.window)!=0;
-        relative.place.showIn[InCarSituation]=false; UpdateOverlays(); whereOk=!IsWindowVisible(relative.window) && IsWindowVisible(First(3).window) && whereOk;
-        app.frame.onTrack=false; UpdateOverlays(); whereOk=IsWindowVisible(relative.window) && whereOk;
-        app.frame.garage=true; relative.place.showIn[GarageSituation]=false; UpdateOverlays(); whereOk=!IsWindowVisible(relative.window) && whereOk;
-        app.frame.garage=false; app.frame.onTrack=true; relative.place.showIn.fill(true); UpdateOverlays(); whereOk=IsWindowVisible(relative.window) && whereOk;
-        report<<"Overlays show in car, spotting, replay and garage as set: "<<(whereOk?"PASS":"FAIL")<<"\n"; ok=whereOk && ok;
-    }
     {
         // Past pit exit with the limiter on: the flashing warning instead of the green bar.
         const bool warning=app.pitVisibility.Warning() && std::any_of(First(3).scene.begin(),First(3).scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::Text && c.text==L"TURN OFF PIT LIMITER"; });

@@ -147,6 +147,67 @@ Overlay& NewInstance(int kind) {
     o.place.enabled=true;
     CreateOverlayWindow(o); SettingChanged(); return o;
 }
+// Makes another layout the active one: the current one stays saved as it is, the other's overlays take
+// their places and settings. Instances the other layout lacks go, ones it has more of are created.
+void SwitchLayout(int id) {
+    if(id==app.layout || std::none_of(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==id;})) return;
+    Save(); app.layout=id;
+    LoadOverlays();
+    for(auto& o:app.overlays) if(o.window) { Fit(o); o.due=0; }
+    SettingChanged();
+    // An open overlay page is rebuilt for the new settings, or closed when its overlay is gone.
+    if(ui.page==Page::Overlay) {
+        const bool kept=std::any_of(app.overlays.begin(),app.overlays.end(),[](const Overlay& o){return &o==ui.overlay;});
+        if(kept) ShowPage(Page::Overlay,ui.overlay); else ShowPage(Page::Overlays);
+    } else RefreshPage();
+}
+// Every section of a layout's overlays, and what Save() remembers of them.
+void DeleteLayoutSections(int id) {
+    const auto prefix=LayoutPrefix(id); if(prefix.empty()) return;
+    std::vector<wchar_t> buffer(65536); GetPrivateProfileSectionNamesW(buffer.data(),static_cast<DWORD>(buffer.size()),app.config.c_str());
+    std::vector<std::wstring> names;
+    for(const wchar_t* name=buffer.data();*name;name+=wcslen(name)+1) if(std::wstring_view(name).starts_with(prefix)) names.emplace_back(name);
+    for(const auto& name:names) WritePrivateProfileStringW(name.c_str(),nullptr,nullptr,app.config.c_str());
+    std::erase_if(app.savedSettings,[&](const auto& item){ return item.first.starts_with(prefix); });
+}
+// A new layout at the end of the list: a copy of the active one, or default overlays.
+void AddLayout(bool copy) {
+    int id=1; for(const auto& l:app.layouts) id=std::max(id,l.id+1);
+    DeleteLayoutSections(id); // Nothing of an earlier layout with this number may come back.
+    app.layouts.push_back({id,L"Layout "+std::to_wstring(app.layouts.size()+1),AlwaysCondition});
+    if(copy) { Save(); app.layout=id; SettingChanged(); RefreshPage(); } // Save() writes the overlays as they are under the new names.
+    else SwitchLayout(id);
+}
+// Removes a layout with all its overlays' settings; the first layout stays.
+void RemoveLayout(int id) {
+    if(id==1) return;
+    const auto at=std::find_if(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==id;}); if(at==app.layouts.end()) return;
+    if(app.layout==id) SwitchLayout(1);
+    DeleteLayoutSections(id);
+    const auto section=L"Layout "+std::to_wstring(id);
+    WritePrivateProfileStringW(section.c_str(),nullptr,nullptr,app.config.c_str());
+    std::erase_if(app.savedSettings,[&](const auto& item){ return item.first.starts_with(section+L"\n"); });
+    app.layouts.erase(std::find_if(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==id;}));
+    Save();
+}
+bool LayoutApplies(int condition,int situation) {
+    switch(condition) {
+    case InCarCondition: return situation==InCarSituation;
+    case OutOfCarCondition: return situation==SpottingSituation || situation==ReplaySituation;
+    case GarageCondition: return situation==GarageSituation;
+    default: return true;
+    }
+}
+// When the situation changes and holds for a second, the first layout in the list whose condition applies
+// becomes active. A layout chosen by hand stays until the situation changes again.
+void AutoLayout() {
+    if(app.preview || !app.frame.connected || app.layouts.size()<2) { app.pendingSituation=-1; return; }
+    const int situation=CurrentSituation(app.frame);
+    if(situation!=app.pendingSituation) { app.pendingSituation=situation; app.pendingSince=app.now; return; }
+    if(situation==app.layoutSituation || app.now-app.pendingSince<1000) return;
+    app.layoutSituation=situation;
+    for(const auto& l:app.layouts) if(LayoutApplies(l.condition,situation)) { SwitchLayout(l.id); return; }
+}
 // Moves an ID one place up (-1) or down (+1); false at either end.
 bool MoveInOrder(std::vector<int>& order,int id,int step) {
     const auto at=std::find(order.begin(),order.end(),id); if(at==order.end()) return false;
