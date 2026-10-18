@@ -60,6 +60,67 @@ double PitLaneLoss::Loss() const {
     const size_t n=sorted.size();
     return n%2?sorted[n/2]:(sorted[n/2-1]+sorted[n/2])/2;
 }
+namespace {
+// A lap fraction from a reference, wrapped to -0.5 to 0.5.
+double Around(double pct,double reference) { double d=pct-reference; return d-std::round(d); }
+// The median of lap fractions near each other, also across start/finish.
+double CircularMedian(std::vector<double> values) {
+    if(values.empty()) return -1;
+    const double reference=values.front();
+    for(double& v:values) v=Around(v,reference);
+    std::nth_element(values.begin(),values.begin()+values.size()/2,values.end());
+    const double m=reference+values[values.size()/2];
+    return m-std::floor(m);
+}
+}
+void PitLaneEnds::Update(const Session& s,const Frame& f) {
+    if(!f.connected || View(f)==ViewMode::Replay) { cars_={}; time_=-1; return; }
+    if(track_!=s.trackId) { *this={}; track_=s.trackId; }
+    if(session_!=f.session || f.time<time_) { cars_={}; session_=f.session; }
+    const double dt=f.time-time_; const bool continuous=time_>=0 && dt>0 && dt<=1;
+    time_=f.time;
+    for(const auto& d:s.drivers) {
+        if(d.index<0 || d.index>=MaxCars || d.paceCar || d.spectator) continue;
+        const auto& car=f.cars[d.index]; auto& seen=cars_[d.index];
+        if(!continuous || car.surface<0 || car.pct<0 || car.pct>=1) { seen={}; if(car.surface>=0 && car.pct>=0 && car.pct<1) seen={true,car.pit,car.pct}; continue; }
+        if(seen.seen && car.pit!=seen.pit) {
+            // Driven over the line, not towed or reset into the box: a short, plausible move.
+            const double moved=Around(car.pct,seen.pct);
+            const bool driven=car.surface!=1 && moved>=0 && (s.trackMeters<=0 || moved*s.trackMeters<=90*dt+10);
+            if(driven) {
+                const double at=seen.pct+moved/2-std::floor(seen.pct+moved/2);
+                auto& samples=car.pit?entries_:exits_;
+                samples.push_back(at); if(samples.size()>15) samples.erase(samples.begin());
+            }
+        }
+        seen={true,car.pit,car.pct};
+    }
+}
+double PitLaneEnds::Entry() const { return entries_.empty()?seedEntry_:CircularMedian(entries_); }
+double PitLaneEnds::Exit() const { return exits_.empty()?seedExit_:CircularMedian(exits_); }
+void BrakingRate::Update(const Frame& f) {
+    const bool driving=f.connected && f.onTrack && View(f)==ViewMode::InCar && f.player>=0 && f.player<MaxCars && f.brake>=0;
+    const double speed=driving?f.cars[f.player].speed:-1;
+    const bool gap=lastTime_<0 || f.time<=lastTime_ || f.time-lastTime_>.5;
+    const bool braking=driving && f.brake>=.6 && speed>12 && f.cars[f.player].surface==3 && !f.pit;
+    if(startTime_>=0 && (!braking || gap)) {
+        // A braking zone ends: its average, if it was long and hard enough to tell.
+        const double span=lastTime_-startTime_, drop=startSpeed_-lastSpeed_;
+        if(!gap && span>=.6 && drop>=8) { samples_.push_back(std::clamp(drop/span,3.0,40.0)); if(samples_.size()>15) samples_.erase(samples_.begin()); }
+        startTime_=-1;
+    }
+    if(braking && startTime_<0) { startTime_=f.time; startSpeed_=speed; }
+    lastTime_=driving?f.time:-1; lastSpeed_=speed;
+}
+double BrakingRate::Rate() const {
+    if(samples_.empty()) return seed_;
+    auto values=samples_; std::nth_element(values.begin(),values.begin()+values.size()/2,values.end());
+    return values[values.size()/2];
+}
+double BrakingDistance(double speed,double target,double deceleration) {
+    if(!(speed>target) || !(deceleration>0)) return 0;
+    return (speed*speed-target*target)/(2*deceleration)+.3*speed;
+}
 void RefuelRate::Update(const Frame& f) {
     if(!f.connected || !f.inStall || !f.fuelKnown || View(f)==ViewMode::Replay) { lastTime_=lastFuel_=-1; startTime_=-1; return; }
     if(lastTime_>=0 && f.time>lastTime_ && f.fuel>lastFuel_+.005) {

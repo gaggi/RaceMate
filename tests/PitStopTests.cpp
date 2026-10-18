@@ -21,7 +21,47 @@ Frame Base(double time) {
 }
 void Place(Car& c,int completed,double pct) { c.completed=completed; c.pct=pct; c.estTime=Reference(pct); }
 }
+namespace {
+// Where the pit lane begins and ends, learned from cars driving in and out; and braking from the own car.
+void PitLaneEndsTests() {
+    Session s; s.key="ends"; s.trackId=353; s.trackMeters=2470;
+    for(int i=0;i<2;++i) s.drivers.push_back({i,1,2000,0xffffff,false,false,"Driver","1","GT3"});
+    Frame f; f.connected=f.onTrack=true; f.player=0; f.session=0; f.time=10;
+    PitLaneEnds ends; ends.Seed(353,.9,.1);
+    Require(std::abs(ends.Entry()-.9)<1e-9 && std::abs(ends.Exit()-.1)<1e-9,"saved pit lane ends are used until learned");
+    auto drive=[&](int car,double pct,bool pit,int surface=3) { f.cars[car].pct=pct; f.cars[car].pit=pit; f.cars[car].surface=surface; };
+    drive(0,.935,false); drive(1,.5,false); ends.Update(s,f);
+    f.time+=.1; drive(0,.937,true); ends.Update(s,f);
+    Require(std::abs(ends.Entry()-.936)<1e-9,"an entry is learned between the two frames");
+    // Across start/finish to the exit; a car towed into its box teaches nothing.
+    f.time+=.1; drive(0,.999,true); ends.Update(s,f); f.time+=.1; drive(0,.001,true); ends.Update(s,f);
+    f.time+=.1; drive(0,.071,true); ends.Update(s,f); f.time+=.1; drive(0,.073,false); ends.Update(s,f);
+    Require(std::abs(ends.Exit()-.072)<1e-9,"an exit is learned after start/finish");
+    f.time+=.1; drive(1,.03,true,1); ends.Update(s,f);
+    Require(std::abs(ends.Entry()-.936)<1e-9 && ends.Samples()==2,"a tow into the box is not an entry");
+    // The median holds across start/finish too.
+    PitLaneEnds wrap; Frame g=f; g.time=20;
+    for(double at:{.998,.002,.0}) { g.cars[0].pct=at-.001+(at<.001?1:0); g.cars[0].pct-=std::floor(g.cars[0].pct); g.cars[0].pit=false; g.cars[0].surface=3; wrap.Update(s,g); g.time+=.1; g.cars[0].pct=at+.001-std::floor(at+.001); g.cars[0].pit=true; wrap.Update(s,g); g.time+=.1; g.cars[0].pit=false; g.cars[0].pct=.5; wrap.Update(s,g); g.time+=5; wrap.Update(s,g); g.time+=.1; }
+    Require(wrap.Entry()<.003 || wrap.Entry()>.997,"the entry's median wraps around start/finish");
+}
+void BrakingTests() {
+    Frame f; f.connected=f.onTrack=true; f.player=0; f.time=1; f.cars[0].surface=3; f.brake=0; f.cars[0].speed=60;
+    BrakingRate rate; rate.Seed(9); rate.Update(f);
+    Require(rate.Rate()==9,"the saved deceleration counts until a braking zone is seen");
+    // Two seconds from 60 to 30 m/s with the pedal down: 15 m/s².
+    for(int i=1;i<=20;++i) { f.time+=.1; f.brake=.9; f.cars[0].speed=60-1.5*i; rate.Update(f); }
+    f.time+=.1; f.brake=0; rate.Update(f);
+    Require(rate.Samples()==1 && std::abs(rate.Rate()-15)<.8,"a braking zone gives its average deceleration");
+    // A light lift or a short tap is not a braking zone.
+    for(int i=1;i<=3;++i) { f.time+=.1; f.brake=.9; f.cars[0].speed=40-i; rate.Update(f); }
+    f.time+=.1; f.brake=0; rate.Update(f); Require(rate.Samples()==1,"a short tap is not counted");
+    Require(std::abs(BrakingDistance(50,15.65,8)-(50*50-15.65*15.65)/16-15)<1e-9 && BrakingDistance(10,15,8)==0,"braking distance with reaction time, none below the target");
+    const auto session=ParseSession("WeekendInfo:\n TrackLength: 2.3360 km\n TrackPitSpeedLimit: 56.33 kph\nDriverInfo:\n DriverCarIdx: 0\n DriverPitTrkPct: 0.032358\n Drivers:\n - CarIdx: 0\n   UserName: You\n",0);
+    Require(std::abs(session.pitStallPct-.032358)<1e-9 && std::abs(session.pitSpeedLimit-56.33/3.6)<1e-9,"own pit box and pit speed limit from the session info");
+}
+}
 void PitStopTests() {
+    PitLaneEndsTests(); BrakingTests();
     {
         // Car 1 enters at 90 %, stands 25 s, leaves at 5 % of the next lap; the lane itself costs 22 s.
         const auto s=TwoCars(); PitLaneLoss lane; double t=0;

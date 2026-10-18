@@ -210,6 +210,7 @@ struct Overlay {
     HWND window=nullptr; int kind=0, number=1; Placement place;
     Bands bands; TableSettings table; FuelSettings fuel; WeatherSettings weather; TrackMapSettings map;
     bool setupChanges=true; // Pit Limiter: in the pit lane, list in-car adjustments that differ from the setup.
+    bool pitStrip=true;     // Pit Limiter: the pit lane with your car, your box, where to brake and where the limiter can go off.
     HDC dc=nullptr; HBITMAP bitmap=nullptr; HGDIOBJ original=nullptr, originalFont=nullptr;
     HWND frame=nullptr; int frameState=-1; RECT frameRect{}; // The ring around it while edited or movable.
     std::array<HFONT,FontCount> fonts{}; int width=0,height=0,dpi=0;
@@ -275,8 +276,8 @@ struct App {
     int rate=10,timerMs=0; ULONGLONG now=0;
     int opponentFuelExtraLaps=3;
     // Pit stop estimate: lane loss learned per track or fixed by the user, service times per car (CarPath).
-    PitLaneLoss pitLane; RefuelRate refuel;
-    struct { int track=-1; std::wstring car; double fixedLane=-1, tires=-1, rate=-1; int samplesSaved=0; } pitTimes;
+    PitLaneLoss pitLane; RefuelRate refuel; PitLaneEnds pitEnds; BrakingRate braking;
+    struct { int track=-1; std::wstring car; double fixedLane=-1, tires=-1, rate=-1; int samplesSaved=0, endsSaved=0, brakingSaved=0; } pitTimes;
     unsigned pitExitVersion=~0u; PitRejoin pitExit; bool pitExitPartial=false;
     unsigned modelVersion=0,planVersion=~0u,ratingVersion=~0u;
     std::array<int,MaxCars> ratingChanges{};
@@ -583,7 +584,7 @@ void ReadInstance(Overlay& o) {
     if(kind==WeatherKind) o.weather.order=ReadOrder(section.c_str(),L"ModuleOrder",WeatherOrder);
     for(int i=0;i<WeatherModuleCount;++i) o.weather.display[i]=ReadBool(section.c_str(),WeatherModules[i].key,WeatherModules[i].on);
     o.weather.strip=o.fuel.strip;
-    if(kind==PitLimiterKind) o.setupChanges=ReadBool(section.c_str(),L"ShowSetupChanges",true);
+    if(kind==PitLimiterKind) { o.setupChanges=ReadBool(section.c_str(),L"ShowSetupChanges",true); o.pitStrip=ReadBool(section.c_str(),L"ShowPitLaneProgress",true); }
     if(kind==TrackMapKind) {
         o.map.numbers=ReadBool(section.c_str(),L"ShowCarNumbers",true); o.map.ownClass=ReadBool(section.c_str(),L"OwnClass",false);
         o.map.markerText=std::clamp(ReadInt(section.c_str(),L"MarkerText",0),0,2); o.map.whiteTrack=ReadBool(section.c_str(),L"WhiteTrack",true);
@@ -701,7 +702,7 @@ void Save() {
             for(int i=0;i<WeatherModuleCount;++i) number(section,WeatherModules[i].key,o.weather.display[i]);
             number(section,L"Layout",o.weather.strip); order(section,L"ModuleOrder",o.weather.order);
         }
-        if(o.kind==PitLimiterKind) number(section,L"ShowSetupChanges",o.setupChanges);
+        if(o.kind==PitLimiterKind) { number(section,L"ShowSetupChanges",o.setupChanges); number(section,L"ShowPitLaneProgress",o.pitStrip); }
         if(o.kind==TrackMapKind) {
             number(section,L"ShowCarNumbers",o.map.numbers); number(section,L"OwnClass",o.map.ownClass); number(section,L"MarkerText",o.map.markerText); number(section,L"WhiteTrack",o.map.whiteTrack);
             number(section,L"ShowMapBackground",o.map.surroundings); number(section,L"ShowAllConfigs",o.map.allConfigs);
@@ -878,19 +879,27 @@ const Driver* PlayerDriver() {
 void LoadPitTimes() {
     auto& t=app.pitTimes; const auto track=std::to_wstring(app.session.trackId);
     if(app.session.trackId>=0 && app.pitLane.Track()!=app.session.trackId) { app.pitLane.Seed(app.session.trackId,ReadNumber(L"PitStop",L"Lane "+track)); t.samplesSaved=0; }
+    if(app.session.trackId>=0 && app.pitEnds.Track()!=app.session.trackId) { app.pitEnds.Seed(app.session.trackId,ReadNumber(L"PitStop",L"PitEntry "+track),ReadNumber(L"PitStop",L"PitExit "+track)); t.endsSaved=0; }
     if(t.track!=app.session.trackId) { t.track=app.session.trackId; t.fixedLane=t.track>=0?ReadNumber(L"PitStop",L"LaneFixed "+track):-1; }
     // Times depend on the car and on the server's rule set (DTM tires, NEC fuel rate), so they are kept per both.
     const auto* own=PlayerDriver(); const bool rules=!app.session.ruleSet.empty() && app.session.ruleSet!="None";
     const std::wstring car=own?Wide(own->carPath+(rules?" "+app.session.ruleSet:"")):L"";
-    if(car!=t.car) { t.car=car; t.tires=car.empty()?-1:ReadNumber(L"PitStop",L"Tires "+car); t.rate=car.empty()?-1:ReadNumber(L"PitStop",L"FuelRate "+car); app.refuel.Reset(); }
+    if(car!=t.car) { t.car=car; t.tires=car.empty()?-1:ReadNumber(L"PitStop",L"Tires "+car); t.rate=car.empty()?-1:ReadNumber(L"PitStop",L"FuelRate "+car); app.refuel.Reset();
+        app.braking.Reset(); app.braking.Seed(car.empty()?-1:ReadNumber(L"PitStop",L"Braking "+car)); t.brakingSaved=0; }
 }
 // Learns from every frame; a new lane loss or a measured refuel rate is kept for the next session.
 void UpdatePitStop() {
     LoadPitTimes();
-    app.pitLane.Update(app.session,app.frame); app.refuel.Update(app.frame);
+    app.pitLane.Update(app.session,app.frame); app.refuel.Update(app.frame); app.pitEnds.Update(app.session,app.frame); app.braking.Update(app.frame);
     auto& t=app.pitTimes;
     if(app.pitLane.Samples()!=t.samplesSaved && app.pitLane.Samples()>0 && t.track>=0) { t.samplesSaved=app.pitLane.Samples(); WriteNumber(L"PitStop",L"Lane "+std::to_wstring(t.track),app.pitLane.Loss()); }
     if(app.refuel.Rate()>0 && std::abs(app.refuel.Rate()-t.rate)>.01 && !t.car.empty()) { t.rate=app.refuel.Rate(); WriteNumber(L"PitStop",L"FuelRate "+t.car,t.rate); }
+    if(app.pitEnds.Samples()!=t.endsSaved && t.track>=0) {
+        t.endsSaved=app.pitEnds.Samples(); const auto track=std::to_wstring(t.track);
+        if(app.pitEnds.Entry()>=0) WriteNumber(L"PitStop",L"PitEntry "+track,app.pitEnds.Entry());
+        if(app.pitEnds.Exit()>=0) WriteNumber(L"PitStop",L"PitExit "+track,app.pitEnds.Exit());
+    }
+    if(app.braking.Samples()!=t.brakingSaved && app.braking.Rate()>0 && !t.car.empty()) { t.brakingSaved=app.braking.Samples(); WriteNumber(L"PitStop",L"Braking "+t.car,app.braking.Rate()); }
 }
 double PitLaneSeconds() { return app.pitTimes.fixedLane>0?app.pitTimes.fixedLane:app.pitLane.Loss(); }
 // The measured or typed refuel rate; until then 3 l/s, half under the NEC rules, which fuel at 50 % of the usual rate.
@@ -943,6 +952,55 @@ std::vector<DialChange> ShownSetupChanges(const Overlay& o) {
     return app.pitVisibility.InPits()?app.setupDials.Changes():std::vector<DialChange>{};
 }
 constexpr int SetupChangeRow=28;
+// The Pit Limiter's pit lane strip: entry, your box and exit in metres from your box, your car on the way, where to
+// brake for the entry's speed limit and for the box, and what comes next.
+struct PitStripModel {
+    bool shown=false, brakeNow=false, inLane=false;
+    double car=0, entry=std::numeric_limits<double>::quiet_NaN(), exit=std::numeric_limits<double>::quiet_NaN(), brake=std::numeric_limits<double>::quiet_NaN();
+    double left=-210, right=130;
+    std::wstring text, speed; COLORREF speedInk=Ink::Value;
+};
+constexpr int PitStripHeight=64;
+// Slowing into the box is gentle; for the entry, the car's learned braking with a margin, else a careful 8 m/s².
+constexpr double StallDeceleration=7, AssumedDeceleration=8;
+PitStripModel PitStrip(const Overlay& o) {
+    PitStripModel m; const auto& s=app.session; const auto& f=app.frame;
+    if(o.kind!=PitLimiterKind || !o.pitStrip || s.pitStallPct<0 || !(s.trackMeters>0) || f.player<0 || f.player>=MaxCars) return m;
+    auto metres=[&](double pct){ double d=pct-s.pitStallPct; d-=std::round(d); return d*s.trackMeters; };
+    const double entryPct=app.preview?.94:app.pitEnds.Entry(), exitPct=app.preview?.075:app.pitEnds.Exit();
+    m.shown=true; m.car=metres(f.lapPct);
+    if(entryPct>=0) m.entry=metres(entryPct);
+    if(exitPct>=0) m.exit=metres(exitPct);
+    const double v=f.cars[f.player].speed, limit=s.pitSpeedLimit, learned=app.braking.Rate();
+    // A learned deceleration counts with a margin; without one the distances are marked as estimates.
+    const std::wstring about=learned>0?L"":L"~";
+    auto distance=[&](double d){ return about+std::to_wstring(static_cast<long long>(std::lround(std::max(0.0,d))))+L" m"; };
+    m.inLane=f.pit || (std::isfinite(m.entry) && std::isfinite(m.exit) && m.car>=m.entry && m.car<=m.exit);
+    if(std::isfinite(m.entry) && m.car<m.entry) {
+        const double brake=limit>0 && v>=0?BrakingDistance(v,limit,learned>0?.85*learned:AssumedDeceleration):0;
+        if(brake>0) {
+            m.brake=m.entry-brake;
+            if(m.brake>m.car) m.text=L"Brake for pit entry in "+distance(m.brake-m.car); else { m.text=L"BRAKE NOW"; m.brakeNow=true; }
+        } else m.text=L"Pit entry in "+distance(m.entry-m.car);
+    } else if(f.inStall || (std::abs(m.car)<=4 && v>=0 && v<1)) m.text=L"In your box";
+    else if(m.car<0) {
+        m.text=L"Box in "+distance(-m.car);
+        if(v>1) {
+            m.brake=-BrakingDistance(v,0,StallDeceleration);
+            if(m.brake>m.car) m.text+=L"  \u00B7  brake in "+distance(m.brake-m.car); else { m.text+=L"  \u00B7  BRAKE NOW"; m.brakeNow=true; }
+        }
+    } else if(std::isfinite(m.exit) && m.car<m.exit) m.text=L"Limiter off in "+distance(m.exit-m.car);
+    else m.text=std::isfinite(m.exit)?L"Past pit exit":L"Pit exit ahead";
+    if(limit>0 && v>=0) {
+        m.speed=std::to_wstring(std::lround(v*3.6))+L" / "+std::to_wstring(std::lround(limit*3.6))+L" km/h";
+        m.speedInk=v>limit+.3?Ink::Orange:(m.inLane?Ink::Green:Ink::Value);
+    }
+    // From before the entry to past the exit; on the way in far enough back for your car and the brake point.
+    const double start=std::isfinite(m.entry)?m.entry:-150;
+    m.left=std::max(start-450,std::min({start-60,std::isfinite(m.brake)?m.brake-30:start,m.car-15}));
+    m.right=(std::isfinite(m.exit)?m.exit:100)+30;
+    return m;
+}
 int HeightWithTitle(const Overlay& o) {
     if(o.kind==TrackMapKind) return 32+TrackMapBody(o.map,MapOnly(o),o.map.details)+FooterHeight(o);
     const auto& t=o.table;
@@ -955,7 +1013,7 @@ int HeightWithTitle(const Overlay& o) {
         return height+(count==0?54:0);
     }
     if(o.kind==FuelKind) return 32+FuelHeight(o)+FooterHeight(o);
-    if(o.kind==PitLimiterKind) { const int rows=static_cast<int>(ShownSetupChanges(o).size()); return 90+(rows?rows*SetupChangeRow+8:0)+FooterHeight(o); }
+    if(o.kind==PitLimiterKind) { const int rows=static_cast<int>(ShownSetupChanges(o).size()); return 90+(PitStrip(o).shown?PitStripHeight:0)+(rows?rows*SetupChangeRow+8:0)+FooterHeight(o); }
     return o.kind==WeatherKind?32+WeatherHeight(o)+FooterHeight(o):90+FooterHeight(o);
 }
 int BaseHeight(const Overlay& o) { return HeightWithTitle(o)-(ShowOverlayHeader(o)?0:32); }
@@ -1618,8 +1676,31 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             fill({0,px(32),width,px(90)},!known?RGB(95,100,110):(app.frame.limiter?RGB(27,135,68):RGB(182,41,44)));
             label(!known?L"PIT LIMITER STATUS UNKNOWN":(app.frame.limiter?L"PIT LIMITER ACTIVE":L"PIT LIMITER NOT ACTIVE"),{px(12),px(38),width-px(12),px(84)},RGB(255,255,255),Bold,DT_CENTER);
         }
-        // Adjustments made in the car since the setup was loaded: the dial, now in yellow, then the setup's value.
         int y=90;
+        if(const auto strip=PitStrip(o); strip.shown) {
+            // The lap from before the entry to past the exit; your car, your box in yellow, where to brake in orange.
+            const int W=OverlayWidth(o), left=16, span=W-32;
+            auto x=[&](double metres){ return left+static_cast<int>(std::lround(span*std::clamp((metres-strip.left)/(strip.right-strip.left),0.0,1.0))); };
+            fill(rect(left,y+14,span,6),Ink::BarBack);
+            if(std::isfinite(strip.entry) && std::isfinite(strip.exit)) fill(rect(x(strip.entry),y+14,x(strip.exit)-x(strip.entry),6),RGB(45,53,64));
+            const double from=std::isfinite(strip.entry)?strip.entry:strip.left;
+            if(strip.inLane && strip.car>from) fill(rect(x(from),y+14,x(strip.car)-x(from),6),Ink::Accent);
+            auto mark=[&](double metres,COLORREF ink,const wchar_t* name) {
+                fill(rect(x(metres)-1,y+8,2,18),ink);
+                if(name) label(name,rect(x(metres)-30,y+27,60,14),ink==RGB(255,255,255)?muted:ink,Small,DT_CENTER);
+            };
+            if(std::isfinite(strip.entry)) mark(strip.entry,RGB(255,255,255),L"entry");
+            if(std::isfinite(strip.exit)) mark(strip.exit,strip.car>0?Ink::Green:RGB(255,255,255),L"exit");
+            if(std::isfinite(strip.brake)) mark(strip.brake,Ink::Orange,nullptr);
+            fill(rect(x(0)-1,y+6,3,20),Ink::Yellow); fill(rect(x(0)-4,y+4,9,5),Ink::Yellow);
+            label(L"box",rect(x(0)-30,y+27,60,14),Ink::Yellow,Small,DT_CENTER);
+            shape(DrawCommand::RoundFill,rect(x(strip.car)-6,y+11,12,12),RGB(255,255,255),6);
+            shape(DrawCommand::RoundFill,rect(x(strip.car)-5,y+12,10,10),Ink::Yellow,5);
+            label(strip.text,rect(16,y+42,W-140,18),strip.brakeNow?Ink::Orange:white,strip.brakeNow?Bold:Regular);
+            if(!strip.speed.empty()) label(strip.speed,rect(W-136,y+42,120,18),strip.speedInk,Regular,DT_RIGHT);
+            y+=PitStripHeight;
+        }
+        // Adjustments made in the car since the setup was loaded: the dial, now in yellow, then the setup's value.
         const auto changes=ShownSetupChanges(o);
         for(const auto& change:changes) {
             auto value=[&](double v){ wchar_t b[32]; swprintf_s(b,L"%.*f%s",change.decimals,v,change.percent?L" %":L""); return std::wstring(b); };
@@ -1630,7 +1711,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             label(std::move(setup),{right-setupWidth,px(y+4),right+1,px(y+4+SetupChangeRow)},muted,Regular);
             y+=SetupChangeRow;
         }
-        footer(changes.empty()?90:y+8);
+        footer(changes.empty()?y:y+8);
     }
     // The 1 px border, last so it stays on top; the window region rounds the same corners. The Pit Limiter's color needs none.
     if(o.kind!=PitLimiterKind && !MapOnly(o)) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{static_cast<float>(o.place.rounded?px(CornerRadius):0)}});
@@ -2014,6 +2095,7 @@ void PreviewData(double time) {
     app.session=DemoSession(); app.frame=DemoFrame(time); app.frame.pit=false;
     auto& s=app.session; auto& f=app.frame;
     s.track="Lime Rock Park"; s.trackName="limerock 2019 gp"; s.trackConfig="Grand Prix"; s.trackId=353; s.trackMeters=2470;
+    s.pitStallPct=.032; s.pitSpeedLimit=56.33/3.6;
     const double run=std::fmod(std::max(0.0,time),300.), laps=run/PreviewLeaderPace;
     f.timeTotal=1080; f.timeLeft=630-run; f.bestLap=52.9+3*.07; f.lastLap=PreviewOwnPace;
     const char* licenses[]={"A 4.21","A 3.45","B 3.88","B 2.94","A 2.67","C 3.12","B 4.05","C 2.38","D 2.71","B 1.96"};
@@ -2022,7 +2104,7 @@ void PreviewData(double time) {
         // 2.6 s apart on track as in the gaps, the last car a lap down behind you; laps of about 53 s.
         const double progress=(i==9?6.57:7.45+(3-i)*2.6/PreviewLeaderPace)+laps;
         c.completed=static_cast<int>(progress); c.lap=c.completed+1; c.pct=progress-c.completed; c.estTime=c.pct*PreviewLeaderPace;
-        c.best=52.9+i*.07; c.last=53.4+i*.09; c.tireCompound=i%2; c.lastPitDuration=42.3; c.lastPitStationary=21.6;
+        c.best=52.9+i*.07; c.last=53.4+i*.09; c.speed=s.trackMeters/PreviewLeaderPace; c.tireCompound=i%2; c.lastPitDuration=42.3; c.lastPitStationary=21.6;
         // A stop each one to six laps before lap 8, the third car in the pits now; one car joined late.
         const int stint=i==2?0:(i==6?-1:1+(i*3)%6);
         c.lastPitLap=stint>=0?8-stint:-1; c.stintLaps=stint>=0?c.lap-c.lastPitLap:-1; c.stops=i==6?-1:1;

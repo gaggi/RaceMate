@@ -45,6 +45,8 @@ struct Session {
     int trackId = -1; // Exact layout identity for official track maps.
     int number = -1, player = -1, totalLaps = -1, incidentLimit = -1, incidentWarning = -1;
     double trackMeters = -1, fuelCapacity = -1;
+    // DriverPitTrkPct: where the own pit box lies, as a lap fraction; TrackPitSpeedLimit in m/s. -1 while unknown.
+    double pitStallPct = -1, pitSpeedLimit = -1;
     std::vector<Driver> drivers;
     std::vector<CameraGroup> cameras;
     std::array<SessionResult, MaxCars> results{};
@@ -90,6 +92,7 @@ struct Frame {
     double time = 0, timeLeft = -1, lapsLeft = -1, fuel = 0, lapPct = 0, lastLap = -1, bestLap = -1;
     // The pit menu: PitSvFlags, PitSvFuel (litres to add) and PitRepairLeft (mandatory repair seconds).
     unsigned pitSvFlags = 0; double pitSvFuel = 0, pitRepair = 0;
+    double brake = -1; // Brake pedal, 0 to 1; -1 when not reported.
     // The in-car adjustments this car has: bit d of dialsKnown marks dials[d].
     std::array<double, DialCount> dials{}; unsigned dialsKnown = 0;
     std::array<Car, MaxCars> cars{};
@@ -291,6 +294,39 @@ private:
     std::vector<double> samples_; double seed_=-1, time_=-1;
     int track_=-1, session_=-1;
 };
+// Where the pit lane begins and ends on this track, as lap fractions. Learned from every car that drives in or out
+// between two frames close together (not one towed into its box), as the median of the last visits; until then the
+// values saved for the track.
+class PitLaneEnds {
+public:
+    void Reset() { *this={}; }
+    void Seed(int track,double entry,double exit) { if(track!=track_) { *this={}; track_=track; } seedEntry_=entry; seedExit_=exit; }
+    void Update(const Session&, const Frame&);
+    double Entry() const; // -1 while unknown.
+    double Exit() const;
+    int Samples() const { return static_cast<int>(entries_.size()+exits_.size()); }
+    int Track() const { return track_; }
+private:
+    struct Seen { bool seen=false, pit=false; double pct=-1; };
+    std::array<Seen,MaxCars> cars_{};
+    std::vector<double> entries_, exits_; double seedEntry_=-1, seedExit_=-1, time_=-1;
+    int track_=-1, session_=-1;
+};
+// How hard the own car slows under braking, in m/s²: each braking zone with the pedal well down at speed gives its
+// average, and the median of the last ones counts; until then the value saved for the car. -1 while unknown.
+class BrakingRate {
+public:
+    void Reset() { *this={}; }
+    void Seed(double rate) { seed_=rate; }
+    void Update(const Frame&);
+    double Rate() const;
+    int Samples() const { return static_cast<int>(samples_.size()); }
+private:
+    double startTime_=-1, startSpeed_=-1, lastTime_=-1, lastSpeed_=-1, seed_=-1;
+    std::vector<double> samples_;
+};
+// Distance in metres to slow from speed to target at this deceleration, both in m/s, with 0.3 s to react.
+double BrakingDistance(double speed,double target,double deceleration);
 // Litres per second, measured while the own car is filled in its stall.
 class RefuelRate {
 public:

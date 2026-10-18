@@ -303,6 +303,9 @@ Session ParseSession(const std::string& yaml, int sessionNumber) {
             if(section=="QualifyResultsInfo") saveGrid();
             section = Trim(line.substr(0, line.find(':'))); currentSession = -1;
         }
+        if (section == "DriverInfo" && !inDrivers && line.substr(0,16) == "DriverPitTrkPct:") {
+            const double pct=Number(Trim(line.substr(16))); if(std::isfinite(pct) && pct>=0 && pct<1) s.pitStallPct=pct;
+        }
         if (section == "DriverInfo" && line.substr(0,8) == "Drivers:") {
             inDrivers = true; listIndent = indent; continue;
         }
@@ -332,6 +335,7 @@ Session ParseSession(const std::string& yaml, int sessionNumber) {
             if (key == "IncidentWarningInitialLimit" && value!="unlimited") { const double n=Number(value); if(std::isfinite(n) && n>0 && n<1000000) s.incidentWarning=static_cast<int>(n); }
             if (key == "IncidentLimit" && value!="unlimited") { const double n=Number(value); if(std::isfinite(n) && n>0 && n<1000000) s.incidentLimit=static_cast<int>(n); }
             if (key == "TrackLength") s.trackMeters = Number(value)*(value.find("km")!=std::string::npos?1000:1);
+            if (key == "TrackPitSpeedLimit") { const double limit=Number(value); if(std::isfinite(limit) && limit>0) s.pitSpeedLimit=limit/(value.find("mph")!=std::string::npos?2.2369:3.6); }
             if (key == "TrackDisplayName") s.track = value;
             if (key == "DCRuleSet") s.ruleSet = value;
             if (key == "TrackID") s.trackId = Integer(value,-1);

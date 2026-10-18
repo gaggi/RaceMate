@@ -1388,6 +1388,33 @@ int RunDiagnostics() {
     }
     app.frame.pit=false; app.frame.limiter=true; app.frame.time+=1; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
     {
+        // The pit lane strip through a stop at Lime Rock: box 76 m past start/finish, entry 227 m before it, exit
+        // 106 m after it, 56 km/h. Without a learned deceleration the distances are estimates.
+        const auto savedFrame=app.frame; const auto savedSession=app.session; auto& limiter=First(PitLimiterKind);
+        auto& s=app.session; auto& f=app.frame;
+        s.trackId=353; s.trackMeters=2470; s.pitStallPct=.032; s.pitSpeedLimit=56.33/3.6;
+        app.pitEnds.Reset(); app.pitEnds.Seed(353,.94,.075); app.braking.Reset();
+        auto phase=[&](double pct,double speed,bool pit,bool stall,int surface) {
+            f.lapPct=pct; f.cars[f.player].pct=pct; f.cars[f.player].speed=speed; f.pit=f.cars[f.player].pit=pit; f.inStall=stall;
+            f.cars[f.player].surface=surface; f.limiter=pit; f.time+=.1; InvalidateModel(); UpdateOverlays(); return PitStrip(limiter);
+        };
+        auto strip=phase(.85,50,false,false,2);
+        bool stripOk=strip.shown && strip.text==L"Brake for pit entry in ~66 m" && strip.speedInk==Ink::Orange && strip.speed==L"180 / 56 km/h";
+        stripOk=Export(limiter.window,L"build\\qa\\pit-strip-approach.bmp") && stripOk;
+        strip=phase(.90,50,false,false,2); stripOk=strip.text==L"BRAKE NOW" && strip.brakeNow && stripOk;
+        strip=phase(.99,15.6,true,false,3); stripOk=strip.text==L"Box in ~104 m  \u00B7  brake in ~82 m" && strip.speedInk==Ink::Green && stripOk;
+        stripOk=Export(limiter.window,L"build\\qa\\pit-strip-lane.bmp") && stripOk;
+        strip=phase(.032,0,true,true,1); stripOk=strip.text==L"In your box" && stripOk;
+        strip=phase(.05,15,true,false,3); stripOk=strip.text==L"Limiter off in ~62 m" && stripOk;
+        stripOk=Export(limiter.window,L"build\\qa\\pit-strip-exit.bmp") && stripOk;
+        // A learned deceleration drops the estimate mark; switched off, the strip and its height go.
+        app.braking.Seed(10); strip=phase(.85,50,false,false,2); stripOk=strip.text.find(L"~")==std::wstring::npos && stripOk;
+        const int withStrip=HeightWithTitle(limiter); limiter.pitStrip=false; stripOk=!PitStrip(limiter).shown && HeightWithTitle(limiter)==withStrip-PitStripHeight && stripOk;
+        limiter.pitStrip=true; app.braking.Reset(); app.pitEnds.Reset();
+        app.frame=savedFrame; app.session=savedSession; InvalidateModel(); UpdateOverlays();
+        report<<"Pit Limiter pit lane strip: approach, brake point, lane, box, exit and estimates: "<<(stripOk?"PASS":"FAIL")<<"\n"; ok=stripOk && ok;
+    }
+    {
         // Past pit exit with the limiter on: the flashing warning instead of the green bar.
         const bool warning=app.pitVisibility.Warning() && std::any_of(First(3).scene.begin(),First(3).scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::Text && c.text==L"TURN OFF PIT LIMITER"; });
         const bool exported=Export(First(3).window,L"build\\qa\\pit-turn-off-limiter.bmp");

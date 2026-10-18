@@ -31,7 +31,7 @@ public:
         CarIdxLapCompleted, CarIdxLapDistPct, CarIdxEstTime, CarIdxF2Time, CarIdxBestLapTime, CarIdxLastLapTime, CarIdxOnPitRoad,
         PlayerCarIsTowing, PlayerCarTowTime, Speed, PlayerTrackSurface, ReplayFrameNumEnd, dcBrakeBias, SessionTimeTotal, SessionLapsTotal,
         WeatherDeclaredWet, Precipitation, RelativeHumidity, FogLevel, Skies, PitSvFlags, PitSvFuel, PitRepairLeft,
-        dcABS, dcTractionControl, dcTractionControl2, dcThrottleShape, dcFuelMixture, dcEngineBraking, IsGarageVisible, VarCount
+        dcABS, dcTractionControl, dcTractionControl2, dcThrottleShape, dcFuelMixture, dcEngineBraking, IsGarageVisible, Brake, VarCount
     };
     explicit Telemetry(const wchar_t* mappingName = L"Local\\IRSDKMemMapFileName") : name_(mappingName) {}
     ~Telemetry() { Close(); }
