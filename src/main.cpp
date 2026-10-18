@@ -95,7 +95,7 @@ constexpr ModuleInfo FuelModules[]={
     {L"ShowHistory",L"Last 10 laps",L"Fuel of each lap against the 10-lap average",true},
     // Switched in the expanded "Last 10 laps" row. A new key, so it starts off for earlier installs too.
     {L"MarkCautionLaps",L"Mark caution laps",L"In yellow; they never count toward consumption",false},
-    {L"ShowRefuel",L"Refuel to finish",L"Without a safety margin; green when it fits in the tank",true},
+    {L"ShowRefuel",L"Refuel to finish",L"Without a safety margin; orange when it fits in the tank, red beyond it",true},
     {L"ShowPitWindow",L"Pit window",L"Earliest and latest lap to stop",true},
     {L"ShowTimeline",L"Pit window timeline",L"One block per lap of a full tank: window green, current lap yellow",true},
     {L"ShowOneShorter",L"One lap shorter",L"Most fuel per lap for one lap less",true},
@@ -1276,6 +1276,8 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         const double capacity=app.session.fuelCapacity; const bool capacityKnown=std::isfinite(capacity) && capacity>0;
         const double range=tankKnown && burn>0?f.fuel/burn:-1, refuel=burn>0?basis.add:-1, needed=burn>0 && p.lapsToFinish>=0?burn*p.lapsToFinish:-1;
         const bool refuelFits=refuel>=0 && (!capacityKnown || refuel<=capacity);
+        // Fuel still to add is a stop to make: orange while it fits in the tank, red beyond it, green with nothing to add.
+        const COLORREF refuelInk=refuel<0?Ink::Muted:(refuel==0?Ink::Green:(refuelFits?Ink::Orange:Ink::Red));
         // At the finish at the current consumption: spare when no stop is needed any more, else missing; a small
         // shortfall can be saved instead, up to a tenth of the average.
         const double atFinish=tankKnown && burn>0?window.fuelAtEnd:std::numeric_limits<double>::quiet_NaN();
@@ -1302,7 +1304,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             case FiguresModule: item(L"AVG 10",burn>0?Format(burn,2):L"—",white); break;
             case RefuelCard:
                 if(spare) item(L"AT FINISH",SignedLitres(atFinish),Ink::Green);
-                else item(L"REFUEL",litres(refuel,true),refuel<0?Ink::Muted:(refuelFits?Ink::Green:Ink::Red));
+                else item(L"REFUEL",litres(refuel,true),refuelInk);
                 break;
             case WindowCard: item(L"BOX BY",open?lap(window.lastLap):L"—",white); break;
             case TargetRow: item(L"TARGET",target(0)>=0?Format(target(0),2):L"—",targetInk(target(0))); break;
@@ -1420,7 +1422,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                         label(std::move(note),rect(x+12,y+56,cardWidth-24,16),Ink::Muted,Small); x+=cardWidth+10;
                     };
                     for(int which:{id,pair?next:-1}) if(which==RefuelCard && spare) card(L"AT FINISH",SignedLitres(atFinish),Ink::Green,L"\u2248"+Format(atFinish/burn,1)+L" laps spare");
-                    else if(which==RefuelCard) card(L"REFUEL TO FINISH",litres(refuel,true),refuel<0?Ink::Muted:(refuelFits?Ink::Green:Ink::Red),
+                    else if(which==RefuelCard) card(L"REFUEL TO FINISH",litres(refuel,true),refuelInk,
                         refuel<0?L"waiting for laps":(saveable?L"or save "+Format(save,2)+L" L/lap":(refuel==0?L"enough fuel to finish":(refuelFits?L"fits in the tank":L"more than one tank"))));
                     else if(which==WindowCard) card(L"PIT WINDOW",open?lap(window.firstLap)+L"–"+std::to_wstring(window.lastLap):L"—",white,
                         open?(window.openNow?std::wstring(L"open now"):L"opens "+lap(window.firstLap))+L" · latest "+lap(window.lastLap)
