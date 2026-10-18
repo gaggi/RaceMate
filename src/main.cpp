@@ -1354,10 +1354,20 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                     if(scale>0 && spare && needed>=0) fill(rect(at(needed),top,at(f.fuel)-at(needed),12),Ink::Green);
                     if(scale>0 && tankKnown && needed>f.fuel) out.push_back({DrawCommand::Hatch,Regular,0,{px(at(f.fuel)),px(top)-titleOffset,px(at(needed)),px(top+12)-titleOffset},Ink::HatchFore,{static_cast<float>(Ink::HatchBack)}});
                     if(scale>0 && needed>=0) fill(rect(at(needed)-1,top-4,2,20),RGB(255,255,255));
-                    fill(rect(16,y+97,8,8),Ink::Accent); label(L"In tank",rect(29,y+92,70,18),Ink::Muted,Small);
-                    if(tankKnown && needed>f.fuel) { fill(rect(100,y+97,8,8),Ink::Missing); label(L"Missing "+litres(needed-f.fuel),rect(113,y+92,130,18),Ink::Muted,Small); }
-                    if(spare) { fill(rect(100,y+97,8,8),Ink::Green); label(L"Spare "+litres(atFinish),rect(113,y+92,130,18),Ink::Muted,Small); }
-                    if(needed>=0) { fill(rect(246,y+96,2,10),RGB(255,255,255)); label(L"Needed "+litres(needed)+L" · "+Format(p.lapsToFinish,1)+L" laps",rect(253,y+92,W-269,18),Ink::Muted,Small); }
+                    // Legend: in tank on the left, missing or spare in the middle, needed on the right, like the bar reads.
+                    auto key=[&](int x,COLORREF ink,bool mark,std::wstring text,int width) {
+                        if(mark) fill({x,px(y+96),x+px(2),px(y+106)},ink); else fill({x,px(y+97),x+px(8),px(y+105)},ink);
+                        const int left=x+px(mark?7:13); label(std::move(text),{left,px(y+92),left+width+1,px(y+110)},Ink::Muted,Small);
+                    };
+                    key(px(16),Ink::Accent,false,L"In tank",measure(L"In tank",Small));
+                    std::wstring middle; COLORREF middleInk=Ink::Missing;
+                    if(tankKnown && needed>f.fuel) middle=L"Missing "+litres(needed-f.fuel);
+                    if(spare) { middle=L"Spare "+litres(atFinish); middleInk=Ink::Green; }
+                    if(!middle.empty()) { const int size=measure(middle,Small); key((px(W)-size-px(13))/2,middleInk,false,std::move(middle),size); }
+                    if(needed>=0) {
+                        std::wstring text=L"Needed "+litres(needed)+L" · "+Format(p.lapsToFinish,1)+L" laps"; const int size=measure(text,Small);
+                        key(px(W-16)-size-px(7),RGB(255,255,255),true,std::move(text),size);
+                    }
                     y+=112;
                 }
                 if(id==FiguresModule) {
