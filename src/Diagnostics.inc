@@ -930,6 +930,10 @@ int RunDiagnostics() {
         const auto spare=SignedLitres(window.fuelAtEnd);
         bool finishOk=window.status==PitWindowStatus::NoStopNeeded && spare.rfind(L"+",0)==0 && shows(L"AT FINISH") && shows(L"laps spare") && shows(L"Spare ") && !shows(L"REFUEL TO FINISH");
         finishOk=FooterValue(StopsNeededMetric)==L"NO STOP \u00B7 "+spare && FooterValue(FuelAtFinishMetric)==L"At finish "+spare && finishOk;
+        // 1.2 L short over 12.6 laps: saving 0.09 L a lap instead of a stop is shown under the refuel.
+        app.frame.fuel=38; UpdateOverlays();
+        finishOk=shows(L"REFUEL TO FINISH") && shows(L"or save 0.09 L/lap") && Export(fuel.window,L"build\\qa\\fuel-save.bmp") && finishOk;
+        app.frame.fuel=50; UpdateOverlays();
         report<<"Fuel at the finish: card, tank bar, header pill and metric: "<<(finishOk?"PASS":"FAIL")<<"\n"; ok=finishOk && ok;
     }
     app.session.fuelCapacity=14; app.frame.fuel=12; UpdateOverlays();
