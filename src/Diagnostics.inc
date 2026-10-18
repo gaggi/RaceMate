@@ -225,6 +225,12 @@ int RunDiagnostics() {
                 pitOk=(onPit.x!=onTrack.x || onPit.y!=onTrack.y) && Export(map.window,L"build\\qa\\trackmap-pit-lane.bmp") && pitOk;
                 app.now=savedNow; UpdateOverlays();
             }
+            // iRacing's background and the other configurations under the track, where the layout has them.
+            const int style=MapStyle(map.map);
+            map.map.surroundings=map.map.allConfigs=true; SettingChanged();
+            pitOk=MapStyle(map.map)!=style && map.mapStyle==MapStyle(map.map) && Export(map.window,L"build\\qa\\trackmap-layers.bmp") && pitOk;
+            report<<"  track map layers: background "<<trackMap.geometry.background.shapes.size()<<" shapes, other configurations "<<trackMap.geometry.inactive.shapes.size()<<" shapes\n";
+            map.map.surroundings=map.map.allConfigs=false; SettingChanged();
         }
         map.place=placement; map.map.layout=MapLayout; Fit(map); SettingChanged();
         // Standings: a faded row of its own at the predicted position, only when switched on.

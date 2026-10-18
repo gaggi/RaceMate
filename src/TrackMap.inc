@@ -62,7 +62,8 @@ bool ShowMapLabel(const trackmap::Label& label,const TrackMapSettings& settings)
 }
 int MapStyle(const TrackMapSettings& settings) {
     return (settings.background?1:0)|(settings.pitLane?2:0)|(settings.startFinish?4:0)
-        |(settings.cornerNumbers?8:0)|(settings.cornerNames?16:0)|(settings.labelContrast?32:0)|(settings.labelScale<<6)|(settings.layout<<15)|(settings.whiteTrack?1<<17:0);
+        |(settings.cornerNumbers?8:0)|(settings.cornerNames?16:0)|(settings.labelContrast?32:0)|(settings.labelScale<<6)|(settings.layout<<15)|(settings.whiteTrack?1<<17:0)
+        |(settings.surroundings?1<<18:0)|(settings.allConfigs?1<<19:0);
 }
 // Circle and line: where a lap fraction lies in an area of this physical size; the scene and the static drawing share it.
 struct MapShapeInfo {
@@ -79,6 +80,10 @@ MapShapeInfo MapShape(const Overlay& o,int width,int height) {
 }
 MapTransform MapFit(const trackmap::Geometry& g,int width,int height,const TrackMapSettings& settings) {
     auto low=g.low,high=g.high;
+    // The other configurations shown whole; the surroundings may run off the edges.
+    if(settings.allConfigs) for(const auto& shape:g.inactive.shapes) for(const auto& path:shape.paths) for(const auto p:path.points) {
+        low.x=std::min(low.x,p.x); low.y=std::min(low.y,p.y); high.x=std::max(high.x,p.x); high.y=std::max(high.y,p.y);
+    }
     for(const auto& label:g.labels) if(ShowMapLabel(label,settings)) {
         // Conservative text bounds also reserve room for names outside the road.
         const double size=label.size*settings.labelScale/100.,w=label.text.size()*size*.75;
@@ -161,6 +166,9 @@ void PaintMap(Overlay& o,const DrawCommand& c,HRGN dirty) {
                 }
             } else {
                 const auto transform=MapFit(trackMap.geometry,width,height,o.map);
+                // Underneath: the surroundings, then the other configurations in a dim grey.
+                if(o.map.surroundings) DrawMapLayer(graphics,trackMap.geometry.background,transform,RGB(34,40,48));
+                if(o.map.allConfigs) DrawMapLayer(graphics,trackMap.geometry.inactive,transform,RGB(74,82,94));
                 if(o.map.pitLane) DrawMapLayer(graphics,trackMap.geometry.pit,transform,Ink::Muted);
                 // White with a black edge by default; start/finish keeps white and gets the same edge to stay visible on it.
                 const float edge=o.map.whiteTrack?std::max(1.f,static_cast<float>(MulDiv(15,o.dpi*o.place.scale,9600))/10):0;

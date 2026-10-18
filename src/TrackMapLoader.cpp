@@ -48,14 +48,22 @@ Loaded Load(const Source& source,const std::filesystem::path& cache,const std::a
     Loaded loaded;
     const bool sameSource=Read(directory/L"source.txt")==identity;
     const auto turns=sameSource && labels?Read(directory/L"turns.svg"):std::string{};
+    // An attempt for optional files within six hours is not repeated.
+    auto recentAttempt=[&](const wchar_t* name) {
+        std::error_code error; const auto attempt=std::filesystem::last_write_time(directory/name,error);
+        return !error && Read(directory/name)==identity && std::filesystem::file_time_type::clock::now()-attempt<std::chrono::hours(6);
+    };
+    auto prepareCached=[&](const std::string& labelsText) {
+        return Prepare(Read(directory/L"active.svg"),Read(directory/L"start-finish.svg"),Read(directory/L"pitroad.svg"),labelsText,Read(directory/L"background.svg"),Read(directory/L"inactive.svg"));
+    };
+    // Caches from before the background and other-configuration layers get them once; not every track has them.
+    const bool layersMissing=Read(directory/L"layers-attempt.txt")!=identity;
     if(sameSource) {
-        loaded.map=Prepare(Read(directory/L"active.svg"),Read(directory/L"start-finish.svg"),Read(directory/L"pitroad.svg"),turns);
+        loaded.map=prepareCached(turns);
         if(loaded.map) {
             loaded.fromCache=loaded.cached=true;
-            std::error_code error;
-            const auto attempt=std::filesystem::last_write_time(directory/L"turns-attempt.txt",error);
-            const bool recent=!error && Read(directory/L"turns-attempt.txt")==identity && std::filesystem::file_time_type::clock::now()-attempt<std::chrono::hours(6);
-            if(!labels || !loaded.map.geometry.labels.empty() || recent) return loaded;
+            const bool labelsDone=!labels || !loaded.map.geometry.labels.empty() || recentAttempt(L"turns-attempt.txt");
+            if(labelsDone && !layersMissing) return loaded;
         }
     }
     Handle session(WinHttpOpen(L"RaceMate/TrackMapPrototype",WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0));
@@ -68,14 +76,23 @@ Loaded Load(const Source& source,const std::filesystem::path& cache,const std::a
     const std::string folder=source.folder; const std::wstring prefix(folder.begin(),folder.end());
     const auto deadline=GetTickCount64()+20000;
     if(loaded.fromCache) {
-        // Upgrade old caches on the worker. Optional labels never discard a valid map.
-        const auto text=Download(connection.get(),prefix+L"/turns.svg",cancelled,deadline);
-        if(cancelled) return loaded;
-        if(!text.empty()) {
-            auto map=Prepare(Read(directory/L"active.svg"),Read(directory/L"start-finish.svg"),Read(directory/L"pitroad.svg"),text);
-            if(map && !map.geometry.labels.empty()) { loaded.map=std::move(map); Write(directory/L"turns.svg",text); }
+        // Upgrade old caches on the worker. Optional files never discard a valid map.
+        if(layersMissing) {
+            for(const wchar_t* name:{L"background.svg",L"inactive.svg"}) {
+                const auto text=Download(connection.get(),prefix+L"/"+name,cancelled,deadline);
+                if(cancelled) return loaded;
+                if(!text.empty()) Write(directory/name,text);
+            }
+            Write(directory/L"layers-attempt.txt",identity);
         }
-        Write(directory/L"turns-attempt.txt",identity);
+        std::string labelsText=turns;
+        if(labels && loaded.map.geometry.labels.empty() && !recentAttempt(L"turns-attempt.txt")) {
+            const auto text=Download(connection.get(),prefix+L"/turns.svg",cancelled,deadline);
+            if(cancelled) return loaded;
+            if(!text.empty()) { labelsText=text; Write(directory/L"turns.svg",text); }
+            Write(directory/L"turns-attempt.txt",identity);
+        }
+        if(auto map=prepareCached(labelsText)) loaded.map=std::move(map);
         return loaded;
     }
     auto active=Download(connection.get(),prefix+L"/active.svg",cancelled,deadline);
@@ -83,13 +100,17 @@ Loaded Load(const Source& source,const std::filesystem::path& cache,const std::a
     if(active.empty() || finish.empty()) { loaded.map.error="Official SVGs unavailable; check connection and retry"; return loaded; }
     auto pit=Download(connection.get(),prefix+L"/pitroad.svg",cancelled,deadline);
     const auto text=labels?Download(connection.get(),prefix+L"/turns.svg",cancelled,deadline):std::string{};
+    const auto background=Download(connection.get(),prefix+L"/background.svg",cancelled,deadline);
+    const auto inactive=Download(connection.get(),prefix+L"/inactive.svg",cancelled,deadline);
     if(cancelled) { loaded.map.error="Cancelled"; return loaded; }
-    loaded.map=Prepare(active,finish,pit,text);
+    loaded.map=Prepare(active,finish,pit,text,background,inactive);
     if(loaded.map) {
         std::error_code error; std::filesystem::create_directories(directory,error);
         if(!error) {
             loaded.cached=Write(directory/L"active.svg",active) && Write(directory/L"start-finish.svg",finish) && Write(directory/L"pitroad.svg",pit)
-                && Write(directory/L"turns.svg",text) && Write(directory/L"turns-attempt.txt",labels?identity:std::string{}) && Write(directory/L"source.txt",identity);
+                && Write(directory/L"turns.svg",text) && Write(directory/L"turns-attempt.txt",labels?identity:std::string{})
+                && Write(directory/L"background.svg",background) && Write(directory/L"inactive.svg",inactive) && Write(directory/L"layers-attempt.txt",identity)
+                && Write(directory/L"source.txt",identity);
         }
     }
     return loaded;

@@ -190,6 +190,8 @@ struct TrackMapSettings {
     int layout=0; // The official map, a circle, or a line for wide monitors; circle and line need no SVG.
     int markerText=0; // In the markers: car number, position in class, or overall position.
     bool whiteTrack=true; // White with a black edge, readable over any background; off: the grey of the panel.
+    // iRacing's optional layers: the drawing around the track, and the track's other configurations.
+    bool surroundings=false, allConfigs=false;
 };
 enum TrackMapLayout { MapLayout, CircleLayout, LineLayout };
 constexpr int TrackMapWidth=440, TrackMapBodyHeight=264;
@@ -585,6 +587,7 @@ void ReadInstance(Overlay& o) {
     if(kind==TrackMapKind) {
         o.map.numbers=ReadBool(section.c_str(),L"ShowCarNumbers",true); o.map.ownClass=ReadBool(section.c_str(),L"OwnClass",false);
         o.map.markerText=std::clamp(ReadInt(section.c_str(),L"MarkerText",0),0,2); o.map.whiteTrack=ReadBool(section.c_str(),L"WhiteTrack",true);
+        o.map.surroundings=ReadBool(section.c_str(),L"ShowMapBackground",false); o.map.allConfigs=ReadBool(section.c_str(),L"ShowAllConfigs",false);
         o.map.pit=ReadBool(section.c_str(),L"ShowPitCars",true); o.map.details=ReadBool(section.c_str(),L"ShowMapDetails",false);
         o.map.background=ReadBool(section.c_str(),L"ShowBackground",true); o.map.pitLane=ReadBool(section.c_str(),L"ShowPitLane",true);
         o.map.startFinish=ReadBool(section.c_str(),L"ShowStartFinish",true);
@@ -701,6 +704,7 @@ void Save() {
         if(o.kind==PitLimiterKind) number(section,L"ShowSetupChanges",o.setupChanges);
         if(o.kind==TrackMapKind) {
             number(section,L"ShowCarNumbers",o.map.numbers); number(section,L"OwnClass",o.map.ownClass); number(section,L"MarkerText",o.map.markerText); number(section,L"WhiteTrack",o.map.whiteTrack);
+            number(section,L"ShowMapBackground",o.map.surroundings); number(section,L"ShowAllConfigs",o.map.allConfigs);
             number(section,L"ShowPitCars",o.map.pit); number(section,L"ShowMapDetails",o.map.details);
             number(section,L"ShowBackground",o.map.background); number(section,L"ShowPitLane",o.map.pitLane); number(section,L"ShowStartFinish",o.map.startFinish);
             number(section,L"ShowCornerNumbers",o.map.cornerNumbers); number(section,L"ShowCornerNames",o.map.cornerNames);

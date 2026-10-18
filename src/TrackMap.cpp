@@ -286,13 +286,18 @@ Point Geometry::PitAt(double fraction) const {
     const double limit=std::max(high.x-low.x,high.y-low.y)/12;
     return minimum<=limit?best:track;
 }
-Result Prepare(std::string active,std::string finish,std::string pit,std::string turns) {
+Result Prepare(std::string active,std::string finish,std::string pit,std::string turns,std::string background,std::string inactive) {
     Result result;
     try {
         auto& g=result.geometry; g.active=Parse(std::move(active)); g.finish=Parse(std::move(finish));
         try { g.labels=ParseLabels(std::move(turns),g.active); } catch(const std::exception&) { g.labels.clear(); }
         if(!SameViewport(g.active,g.finish)) throw std::runtime_error("SVG layer viewports do not match");
-        if(!pit.empty()) { try { g.pit=Parse(std::move(pit)); if(!SameViewport(g.active,g.pit)) g.pit={}; } catch(const std::exception&) { g.pit={}; } }
+        // Optional layers: one that fails or does not fit the map is left out, never the map.
+        auto optional=[&](std::string text,Layer& layer) {
+            if(text.empty()) return;
+            try { layer=Parse(std::move(text)); if(!SameViewport(g.active,layer)) layer={}; } catch(const std::exception&) { layer={}; }
+        };
+        optional(std::move(pit),g.pit); optional(std::move(background),g.background); optional(std::move(inactive),g.inactive);
         for(const auto& shape:g.pit.shapes) for(const auto& path:shape.paths) if(path.points.size()>=2) {
             auto points=path.points; if(path.closed) points.push_back(points.front());
             g.pitPaths.push_back(std::move(points));

@@ -2,7 +2,7 @@ class TrackMapPage : public PageWindow {
 public:
     explicit TrackMapPage(Overlay& overlay) : PageWindow(ui.heading,ui.text), o_(overlay) {}
 private:
-    enum Key { Info, LayoutKey, WhiteTrackKey, Numbers, OwnClass, Pit, PitExitKey, Details, Rounded, Header, Footer, Retry, Cache, Background, PitLane, StartFinish, CornerNumbers, CornerNames, LabelSize, LabelContrast };
+    enum Key { Info, LayoutKey, WhiteTrackKey, SurroundingsKey, AllConfigsKey, Numbers, OwnClass, Pit, PitExitKey, Details, Rounded, Header, Footer, Retry, Cache, Background, PitLane, StartFinish, CornerNumbers, CornerNames, LabelSize, LabelContrast };
     static constexpr int ListId=100, SlotEditId=230, LabelSizeId=240;
     void OnCreate() override { list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont()); editors_.Attach(list_,Instance(),TextFont()); Refresh(); }
     void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
@@ -21,6 +21,9 @@ private:
         toggle(L"White track",L"White with a black edge, readable over any background. Off: grey, as the panel.",o_.map.whiteTrack,WhiteTrackKey);
         toggle(L"Background and frame",L"Off: transparent map and cars only. Hides the frame, captions, header and footer; their settings are kept.",o_.map.background,Background);
         toggle(L"Pit lane",L"Show the official pit-lane drawing, independently of cars in the pits.",o_.map.pitLane,PitLane);
+        toggle(L"Background",L"iRacing's drawing around the track, under it.",o_.map.surroundings,SurroundingsKey);
+        toggle(L"All configurations",L"The track's other layouts in grey under this one; the map makes room for them.",o_.map.allConfigs,AllConfigsKey);
+        for(size_t i=rows.size()-2;i<rows.size();++i) { rows[i].muted=o_.map.layout!=MapLayout; rows[i].toggleEnabled=o_.map.layout==MapLayout; }
         toggle(L"Start/finish marking",L"Show the line and direction arrow. Position mapping keeps using these data when hidden.",o_.map.startFinish,StartFinish);
         {
             static constexpr const wchar_t* texts[]={L"Car numbers",L"Position in class",L"Overall position"};
@@ -88,6 +91,8 @@ private:
             if(key==Details) o_.map.details=on;
             if(key==Background) { o_.map.background=on; expanded_=Info; editors_.Clear(); Fit(o_); }
             if(key==PitLane) o_.map.pitLane=on;
+            if(key==SurroundingsKey) o_.map.surroundings=on;
+            if(key==AllConfigsKey) o_.map.allConfigs=on;
             if(key==StartFinish) o_.map.startFinish=on;
             if(key==CornerNumbers) o_.map.cornerNumbers=on;
             if(key==CornerNames) o_.map.cornerNames=on;

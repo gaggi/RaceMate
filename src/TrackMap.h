@@ -18,6 +18,8 @@ struct Label {
 };
 struct Geometry {
     Layer active, finish, pit;
+    // Optional official layers: the drawing around the track, and the track's other configurations.
+    Layer background, inactive;
     std::vector<Label> labels;
     std::vector<Point> route;
     std::vector<double> distances;
@@ -37,7 +39,7 @@ struct Result {
     explicit operator bool() const { return error.empty() && geometry.length>0; }
 };
 // SVGs are parsed once on a worker. No telemetry learning or track-specific corrections.
-Result Prepare(std::string active, std::string finish, std::string pit={}, std::string turns={});
+Result Prepare(std::string active, std::string finish, std::string pit={}, std::string turns={}, std::string background={}, std::string inactive={});
 struct Source { int id; const char* slug; const char* folder; };
 const Source* FindSource(int trackId, std::string_view trackName={});
 std::string NormalizeName(std::string_view name);

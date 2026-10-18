@@ -76,6 +76,14 @@ void LabelTests() {
     const auto wrong=Prepare(Svg(Band),Svg(Stripe+Arrow),{},mismatch);
     Require(wrong && wrong.geometry.labels.empty(),"different turns viewport is ignored without losing map");
     Require(Prepare(Svg(Band),Svg(Stripe+Arrow),{},"<html>missing</html>").geometry.labels.empty(),"missing optional labels do not remove map");
+    {
+        // The background and other-configuration layers: parsed when present, left out when broken, never the map.
+        const auto layers=Prepare(Svg(Band),Svg(Stripe+Arrow),{},{},Svg("<rect x=\"0\" y=\"0\" width=\"240\" height=\"180\"/>"),Svg("<rect x=\"30\" y=\"30\" width=\"60\" height=\"20\"/>"));
+        Require(layers && !layers.geometry.background.shapes.empty() && !layers.geometry.inactive.shapes.empty(),"background and other configurations are parsed");
+        Require(layers.geometry.length==plain.geometry.length && layers.geometry.At(.37).x==plain.geometry.At(.37).x,"extra layers do not affect the route");
+        const auto broken=Prepare(Svg(Band),Svg(Stripe+Arrow),{},{},"<html>missing</html>",mismatch);
+        Require(broken && broken.geometry.background.shapes.empty() && broken.geometry.inactive.shapes.empty(),"broken or misfitting extra layers are left out without losing the map");
+    }
     Require(Prepare(Svg(Band),Svg(Stripe+Arrow),{},std::string(1024*1024+1,'x')).geometry.labels.empty(),"oversized labels rejected independently");
     std::string many,deep;
     for(int i=0;i<300;++i) many+="<text x=\"10\" y=\"20\">1</text>";
@@ -139,7 +147,9 @@ void UnitTests() {
     const auto cache=std::filesystem::temp_directory_path()/("racemate-map-test-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     const auto directory=cache/"353";
     std::filesystem::create_directories(directory);
-    { std::ofstream(directory/"source.txt",std::ios::binary)<<source->folder<<"\n"; std::ofstream(directory/"active.svg",std::ios::binary)<<Svg(Band); std::ofstream(directory/"start-finish.svg",std::ios::binary)<<Svg(Stripe+Arrow); }
+    { std::ofstream(directory/"source.txt",std::ios::binary)<<source->folder<<"\n"; std::ofstream(directory/"active.svg",std::ios::binary)<<Svg(Band); std::ofstream(directory/"start-finish.svg",std::ios::binary)<<Svg(Stripe+Arrow);
+      // Already asked once for the background and other configurations, which this layout does not have.
+      std::ofstream(directory/"layers-attempt.txt",std::ios::binary)<<source->folder<<"\n"; }
     const std::atomic_bool running=false;
     const auto cached=Load(*source,cache,running);
     Require(cached.map && cached.fromCache && cached.cached,"valid identity-tagged cache loads without a network call");
@@ -151,8 +161,7 @@ void UnitTests() {
     { std::ofstream(directory/"turns-attempt.txt",std::ios::binary)<<source->folder<<"\n"; }
     const auto missingLabels=Load(*source,cache,running,true);
     Require(missingLabels.fromCache && missingLabels.map && missingLabels.map.geometry.labels.empty(),"negative cache keeps geometry available without repeated failed downloads");
-    for(const char* file:{"source.txt","active.svg","start-finish.svg","turns-attempt.txt"}) std::filesystem::remove(directory/file);
-    std::filesystem::remove(directory); std::filesystem::remove(cache);
+    std::error_code error; std::filesystem::remove_all(cache,error);
 }
 int AssetCheck(const std::filesystem::path& directory) {
     const auto result=Prepare(Read(directory/L"active.svg"),Read(directory/L"start-finish.svg"),Read(directory/L"pitroad.svg"),Read(directory/L"turns.svg"));
