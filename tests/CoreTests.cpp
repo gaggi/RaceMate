@@ -10,7 +10,6 @@ using namespace rm;
 void PredictionTests();
 void RaceControlTests();
 void PitStopTests();
-void PreviewRaceTests();
 void ReviewRegressionTests();
 void Require(bool c,const char* m) { if(!c) throw std::runtime_error(m); }
 void Near(double a,double b,const char* m) { Require(std::abs(a-b)<0.001,m); }
@@ -783,6 +782,6 @@ int main(int argc,char** argv) {
    <<"; SessionNum: "<<frame.session<<"; ReplaySessionNum: "<<frame.replaySession<<'\n';
   return 0;
  }
- try { ReviewRegressionTests(); WindTests(); WeatherHistoryTests(); ParserTests(); ResultsTests(); RowTests(); RelativeCenterTests(); StandingsSelectionTests(); EarlyAndLiveGapTests(); UntimedPracticeTests(); MissingDriverDataTests(); LivePositionAndPitVisibilityTests(); FuelMetricsTests(); FirstRaceLapFuelTests(); FuelTests(); PredictionTests(); RaceControlTests(); PitStopTests(); PreviewRaceTests(); TelemetryTests(); std::cout<<"PASS: review regressions, parser, historical results, relative, standings, fuel metrics, finish projection, leader changes, pit learning, confidence, replay and shared memory\n"; }
+ try { ReviewRegressionTests(); WindTests(); WeatherHistoryTests(); ParserTests(); ResultsTests(); RowTests(); RelativeCenterTests(); StandingsSelectionTests(); EarlyAndLiveGapTests(); UntimedPracticeTests(); MissingDriverDataTests(); LivePositionAndPitVisibilityTests(); FuelMetricsTests(); FirstRaceLapFuelTests(); FuelTests(); PredictionTests(); RaceControlTests(); PitStopTests(); TelemetryTests(); std::cout<<"PASS: review regressions, parser, historical results, relative, standings, fuel metrics, finish projection, leader changes, pit learning, confidence, replay and shared memory\n"; }
  catch(const std::exception& e) { std::cerr<<"FAIL: "<<e.what()<<'\n'; return 1; }
 }

@@ -28,7 +28,7 @@
                     if(!std::isfinite(car.pct) || car.pct<0 || car.pct>=1 || car.surface<0 || (!o.map.pit && car.pit)) return;
                     if(o.map.ownClass && own!=app.session.drivers.end() && d.classId!=own->classId) return;
                     // In the pits on the drawn pit lane, when it is shown; otherwise at its lap position on the track.
-                    const double lap=PreviewFixture()?std::fmod(app.now/90000.+d.index*.091,1.):car.pct;
+                    const double lap=app.preview?std::fmod(app.now/90000.+d.index*.091,1.):car.pct;
                     POINT p=place(lap);
                     if(svg && o.map.pitLane && car.pit) { const auto q=transform.Apply(trackMap.geometry.PitAt(lap)); p={area.left+static_cast<int>(std::lround(q.x)),area.top+static_cast<int>(std::lround(q.y))}; }
                     const int x=p.x, y=p.y;
@@ -50,7 +50,7 @@
                 const auto& rejoin=PitExit();
                 auto drawGhost=[&](bool number) {
                     if(!o.map.pitExit || !rejoin.valid) return;
-                    const auto p=place(PreviewFixture()?std::fmod(app.now/90000.+reference*.091+.7,1.):rejoin.pct);
+                    const auto p=place(app.preview?std::fmod(app.now/90000.+reference*.091+.7,1.):rejoin.pct);
                     const int x=p.x, y=p.y, radius=px(11);
                     if(number) { out.push_back({DrawCommand::MapLabel,SmallBold,DT_CENTER,{x-radius-px(4),y-radius-titleOffset,x+radius+px(5),y+radius+1-titleOffset},Ink::Accent,{},L"PIT"}); return; }
                     out.push_back({DrawCommand::MapCar,Regular,0,{x-radius,y-radius-titleOffset,x+radius+1,y+radius+1-titleOffset},Ink::Accent,{static_cast<float>(std::max(1,px(2))),1}});

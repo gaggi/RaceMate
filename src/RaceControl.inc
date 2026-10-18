@@ -388,7 +388,7 @@ bool RaceIncidentsHigh(int incidents) {
 double RaceStintSeconds(const Row& row) {
     const double missing=std::numeric_limits<double>::quiet_NaN();
     if(!app.frame.connected || app.session.type!="Race" || View(app.frame)==ViewMode::Replay || row.car.pit || row.car.towing || row.car.surface<0) return missing;
-    if(PreviewFixture()) return row.car.stintLaps>=0?row.car.stintLaps*139.4:missing;
+    if(app.preview) return row.car.stintLaps>=0?row.car.stintLaps*139.4:missing;
     const double start=row.car.stintStartTime;
     return std::isfinite(start) && start>=0 && std::isfinite(app.frame.time) && app.frame.time>=start?app.frame.time-start:missing;
 }
@@ -470,10 +470,10 @@ void UpdateRaceControl(bool force) {
     }
     SortRaceRows(rows);
     // The feed is filtered and sorted again only when the events, the filter or the sort change.
-    const std::wstring feedKey=std::to_wstring(PreviewFixture()?0:app.events.Revision()+1)+L":"+std::to_wstring(raceControl.category)+L":"+std::to_wstring(raceControl.car)+L":"+std::to_wstring(raceControl.eventSortColumn)+std::to_wstring(raceControl.eventSortDescending);
+    const std::wstring feedKey=std::to_wstring(app.preview?0:app.events.Revision()+1)+L":"+std::to_wstring(raceControl.category)+L":"+std::to_wstring(raceControl.car)+L":"+std::to_wstring(raceControl.eventSortColumn)+std::to_wstring(raceControl.eventSortDescending);
     if(force || feedKey!=raceControl.feedKey) {
         std::vector<RaceEvent> all;
-        if(PreviewFixture()) {
+        if(app.preview) {
             const EventType types[]={EventType::Offtrack,EventType::Incident,EventType::Crash,EventType::PitEntry,EventType::PitStop,EventType::Overtake};
             for(int i=5;i>=0;--i) {
                 const auto& driver=app.session.drivers[i]; RaceEvent e;
