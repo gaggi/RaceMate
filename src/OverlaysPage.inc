@@ -7,7 +7,7 @@ public:
 private:
     enum class Key { None, Instance, Add, Preview, Move, Hide, Reset };
     static constexpr int ListId=100, ScaleId=200, OpacityId=201, CornerId=202, RateId=203, ShowInId=210;
-    static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E', CopyGlyph=L'\uE8C8', RemoveGlyph=L'\uE74D';
+    static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E', RemoveGlyph=L'\uE74D';
     static constexpr const wchar_t* Corners[]={L"Top left",L"Top right",L"Bottom left",L"Bottom right"};
 
     void OnCreate() override {
@@ -45,8 +45,8 @@ private:
         for(auto& o:app.overlays) {
             RowList::Row row; row.title=Name(o); row.detail=Summary(o);
             row.toggle=o.place.enabled?1:0; row.button=L"Settings";
-            // Right to left: expand, duplicate (not the Pit Limiter), remove (added instances only); empty slots keep them in line.
-            row.iconButtons={&o==expanded_?CollapseGlyph:ExpandGlyph,o.kind==PitLimiterKind?wchar_t{0}:CopyGlyph,o.number>1?RemoveGlyph:wchar_t{0}};
+            // Right to left: expand, remove (added instances only); an empty slot keeps them in line.
+            row.iconButtons={&o==expanded_?CollapseGlyph:ExpandGlyph,o.number>1?RemoveGlyph:wchar_t{0}};
             row.expandHeight=&o==expanded_?(o.kind==PitLimiterKind?84:118):0;
             push(std::move(row),Key::Instance,&o);
         }
@@ -129,7 +129,6 @@ private:
         case Key::Instance:
             if(code==RowList::kToggled) { o->place.enabled=on; SettingChanged(); Refresh(); }
             else if(code==RowList::kButton) OpenOverlay(*o);
-            else if(glyph==CopyGlyph) { NewInstance(o->kind,o); Refresh(); }
             else if(glyph==RemoveGlyph) Remove(*o);
             else if(glyph==ExpandGlyph || glyph==CollapseGlyph || code==RowList::kActivated) Expand(o);
             break;

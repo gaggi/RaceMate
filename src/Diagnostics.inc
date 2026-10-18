@@ -608,10 +608,10 @@ int RunDiagnostics() {
         report<<"Weather modules, strip layout, persistence and all-hidden visibility: "<<(weatherOk?"PASS":"FAIL")<<"\n"; ok=weatherOk && ok;
     }
     {
-        // A second Weather as a copy reduced to the wind rose, a second Relative with defaults; both survive a reload and go again.
+        // A second Weather reduced to the wind rose, a second Relative with defaults; both survive a reload and go again.
         bool instancesOk=true;
-        auto& wind=NewInstance(WeatherKind,&First(WeatherKind));
-        instancesOk=InstanceCount(WeatherKind)==2 && wind.number==2 && Name(wind)==L"Weather 2" && wind.window && wind.weather.display==First(WeatherKind).weather.display && instancesOk;
+        auto& wind=NewInstance(WeatherKind);
+        instancesOk=InstanceCount(WeatherKind)==2 && wind.number==2 && Name(wind)==L"Weather 2" && wind.window && wind.place.enabled && instancesOk;
         wind.weather.display.fill(false); wind.weather.display[WindModule]=wind.weather.display[WindRose]=true; wind.bands.header=false; SettingChanged();
         instancesOk=OverlayWidth(wind)==WindRoseWidth && OverlayWidth(First(WeatherKind))==WeatherPanelWidth && instancesOk;
         auto& second=NewInstance(RelativeKind);
@@ -625,18 +625,7 @@ int RunDiagnostics() {
         wchar_t left[8]{}; GetPrivateProfileStringW(L"Weather 2",L"X",L"",left,8,app.config.c_str());
         instancesOk=InstanceCount(WeatherKind)==1 && InstanceCount(RelativeKind)==1 && !left[0] && instancesOk;
         Load(); instancesOk=InstanceCount(WeatherKind)==1 && InstanceCount(RelativeKind)==1 && instancesOk;
-        // A copy takes header and footer along for every kind that can be copied, through a reload; name, window and place stay its own.
-        for(int kind:{RelativeKind,StandingsKind,FuelKind,WeatherKind}) {
-            auto& source=First(kind); const Bands saved=source.bands;
-            source.bands.header=false; source.bands.footer.enabled=true; source.bands.headerMetrics[0]=TrackMetric; source.bands.footer.metrics[1]=SofMetric; SettingChanged();
-            auto& copy=NewInstance(kind,&source);
-            instancesOk=copy.bands.header==source.bands.header && copy.bands.footer.enabled && copy.bands.headerMetrics==source.bands.headerMetrics && copy.bands.footer.metrics==source.bands.footer.metrics && instancesOk;
-            instancesOk=Name(copy)!=Name(source) && copy.window && copy.window!=source.window && copy.place.x==source.place.x+30 && copy.place.y==source.place.y+30 && instancesOk;
-            Load(); auto& reloaded=*std::find_if(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){ return o.kind==kind && o.number==2; });
-            instancesOk=!reloaded.bands.header && reloaded.bands.footer.enabled && reloaded.bands.headerMetrics[0]==TrackMetric && reloaded.bands.footer.metrics[1]==SofMetric && instancesOk;
-            RemoveInstance(reloaded); First(kind).bands=saved; SettingChanged();
-        }
-        report<<"Further instances: copy with header and footer, defaults, own size, persistence, removal of settings: "<<(instancesOk?"PASS":"FAIL")<<"\n"; ok=instancesOk && ok;
+        report<<"Further instances: defaults, own size, persistence, removal of settings: "<<(instancesOk?"PASS":"FAIL")<<"\n"; ok=instancesOk && ok;
     }
     {
         // At the narrowest window every editor of an expanded row lies inside the visible list: the overlay's
@@ -667,19 +656,34 @@ int RunDiagnostics() {
         report<<"Expanded editors fit the narrowest window: "<<(fitOk?"PASS":"FAIL")<<"\n"; ok=fitOk && ok;
     }
     {
-        // Design rule: in each group of a settings list the toggles stand in one column, with or without a button beside them.
+        // Design rule: from the right expand, sort arrows, toggle, then a text button, each in one column per group;
+        // a row with only a text button (Add, Reset) has it at the far right.
         bool alignOk=true; int toggles=0;
         auto aligned=[&](const char* page) {
             const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr);
             auto* rows=list?reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA)):nullptr;
             if(!rows) { alignOk=false; report<<"  no list on "<<page<<"\n"; return; }
-            LONG column=-1;
-            for(int i=0;i<static_cast<int>(rows->Rows().size());++i) {
-                if(rows->Rows()[i].header) { column=-1; continue; }
-                const RECT r=rows->ToggleRect(i); if(r.right<=r.left) continue;
-                ++toggles;
-                if(column<0) column=r.right;
-                else if(r.right!=column) { alignOk=false; report<<"  "<<page<<": toggle in row "<<i<<" ends at "<<r.right<<", others at "<<column<<"\n"; }
+            LONG column=-1,buttons=-1,rightmost=0;
+            const int count=static_cast<int>(rows->Rows().size());
+            for(int i=0;i<count;++i) { const RECT toggle=rows->ToggleRect(i); rightmost=std::max(rightmost,toggle.right); }
+            for(int i=0;i<count;++i) {
+                const auto& row=rows->Rows()[i];
+                if(row.header) { column=buttons=-1; continue; }
+                const RECT toggle=rows->ToggleRect(i), button=rows->ButtonRect(i);
+                if(toggle.right>toggle.left) {
+                    ++toggles;
+                    if(column<0) column=toggle.right;
+                    else if(toggle.right!=column) { alignOk=false; report<<"  "<<page<<": toggle in row "<<i<<" ends at "<<toggle.right<<", others at "<<column<<"\n"; }
+                    if(button.right>button.left && button.right>toggle.left) { alignOk=false; report<<"  "<<page<<": button in row "<<i<<" is not left of its toggle\n"; }
+                }
+                if(button.right<=button.left) continue;
+                if(row.toggle<0 && row.iconButtons.empty()) {
+                    // Only a button: at the far right, past every toggle.
+                    if(button.right<rightmost) { alignOk=false; report<<"  "<<page<<": button-only row "<<i<<" is not at the far right\n"; }
+                    continue;
+                }
+                if(buttons<0) buttons=button.right;
+                else if(button.right!=buttons) { alignOk=false; report<<"  "<<page<<": button in row "<<i<<" ends at "<<button.right<<", others at "<<buttons<<"\n"; }
             }
         };
         ShowPage(Page::Overlays); aligned("Overlays");
@@ -687,7 +691,7 @@ int RunDiagnostics() {
         constexpr const char* pages[]={"Relative","Standings","Fuel Calculator","Pit Limiter","Weather","Track Map"};
         for(int kind=0;kind<OverlayCount;++kind) { OpenOverlay(First(kind)); aligned(pages[kind]); }
         ShowPage(Page::Overlays);
-        report<<"Toggles line up in each group of every settings list: "<<(alignOk && toggles>40?"PASS":"FAIL")<<"\n"; ok=alignOk && toggles>40 && ok;
+        report<<"Expand, sort arrows, toggle and button in order and in columns in every settings list: "<<(alignOk && toggles>40?"PASS":"FAIL")<<"\n"; ok=alignOk && toggles>40 && ok;
     }
     {
         // Every telemetry and overlay rate combination keeps its rate over a minute of jittered ticks, and a pause restarts without a burst.

@@ -140,12 +140,11 @@ void RememberWindowPlacement() {
 }
 // Setting changes shared by the pages and the diagnostics.
 void SettingChanged() { Save(); UpdateOverlays(); }
-// A further instance of a kind with default settings, or a copy of another instance placed a little lower right.
-Overlay& NewInstance(int kind,const Overlay* copy=nullptr) {
+// A further instance of a kind with default settings.
+Overlay& NewInstance(int kind) {
     auto& o=AddInstance(kind,InstanceCount(kind)+1);
     ReadInstance(o); // A removed instance's section is gone, so this gives the defaults.
-    if(copy) { o.bands=copy->bands; o.table=copy->table; o.fuel=copy->fuel; o.weather=copy->weather; o.map=copy->map; o.place=copy->place; o.place.x+=30; o.place.y+=30; }
-    else o.place.enabled=true;
+    o.place.enabled=true;
     CreateOverlayWindow(o); SettingChanged(); return o;
 }
 // Moves an ID one place up (-1) or down (+1); false at either end.

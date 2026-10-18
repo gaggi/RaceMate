@@ -12,7 +12,12 @@
 
 // Settings-style list: rows grouped into white cards under small section headers.
 // A row can carry a file icon, a title with an optional detail line, a status pill,
-// a toggle switch, one text button and icon buttons. Clicks arrive at the parent as
+// a toggle switch, one text button and icon buttons.
+//
+// Design rule, the same on every page: from the right, the expand button, the sort
+// arrows (both icon buttons), the toggle, then a text button such as Choose... or
+// Settings. Each of them stands in one column per card. A row with only a text button,
+// such as Add or Reset, has it at the far right. Clicks arrive at the parent as
 // WM_COMMAND(MAKEWPARAM(id, notification), hwnd); NotifiedRow() and
 // NotifiedIconButton() say which row and icon button were used.
 //
@@ -58,9 +63,10 @@ public:
         bool toggleEnabled{true};
         std::wstring button;
         bool buttonEnabled{true};
-        // Glyphs from Segoe Fluent Icons / Segoe MDL2 Assets; [0] is the rightmost.
-        // Every row of a card reserves as many slots as the row with the most, so
-        // toggles and buttons line up. A 0 glyph leaves its slot empty, which keeps
+        // Glyphs from Segoe Fluent Icons / Segoe MDL2 Assets; [0] is the rightmost:
+        // expand first, then sort arrows. Every row of a card with a toggle or icon
+        // buttons reserves as many slots as the row with the most, so toggles and
+        // buttons line up. A 0 glyph leaves its slot empty, which keeps
         // the same button in the same column when only some rows have, say, an arrow.
         std::vector<wchar_t> iconButtons;
         bool muted{};
@@ -144,6 +150,16 @@ public:
         const auto layouts = Compute();
         if (index < 0 || index >= static_cast<int>(layouts.size()) || rows_[static_cast<size_t>(index)].toggle < 0) return {};
         RECT rect = layouts[static_cast<size_t>(index)].toggle;
+        OffsetRect(&rect, 0, -scroll_);
+        return rect;
+    }
+
+    // Client rectangle of a row's text button; empty without one.
+    RECT ButtonRect(int index) const
+    {
+        const auto layouts = Compute();
+        if (index < 0 || index >= static_cast<int>(layouts.size()) || rows_[static_cast<size_t>(index)].button.empty()) return {};
+        RECT rect = layouts[static_cast<size_t>(index)].button;
         OffsetRect(&rect, 0, -scroll_);
         return rect;
     }
@@ -239,26 +255,22 @@ private:
         const int right = client.right - Scale(1);
         std::vector<Layout> layouts(rows_.size());
         const HDC dc = GetDC(window_);
-        // Icon button slots per card: rows between two headers share one column layout.
-        // Toggles line up in a card too: when a row has a toggle and a button, every toggle
-        // leaves room for the widest button, so all of them stand in one column.
+        // Columns per card: rows between two headers share the icon button slots and,
+        // when any of them has one, the toggle's column.
         std::vector<size_t> slots(rows_.size());
-        std::vector<int> buttonColumn(rows_.size());
+        std::vector<bool> toggleColumn(rows_.size());
         for (size_t first = 0; first < rows_.size();)
         {
             size_t last = first;
             size_t most = 0;
-            int widest = 0;
-            bool both = false;
+            bool toggles = false;
             for (; last < rows_.size() && !(rows_[last].header && last != first); ++last)
             {
-                const auto& row = rows_[last];
-                if (row.header) continue;
-                most = std::max(most, row.iconButtons.size());
-                if (!row.button.empty()) widest = std::max(widest, TextWidth(dc, textFont_, row.button) + Scale(28));
-                both = both || (row.toggle >= 0 && !row.button.empty());
+                if (rows_[last].header) continue;
+                most = std::max(most, rows_[last].iconButtons.size());
+                toggles = toggles || rows_[last].toggle >= 0;
             }
-            for (size_t index = first; index < last; ++index) { slots[index] = most; buttonColumn[index] = both ? widest : 0; }
+            for (size_t index = first; index < last; ++index) { slots[index] = most; toggleColumn[index] = toggles; }
             first = last;
         }
         int y = 0;
@@ -285,23 +297,20 @@ private:
                 layout.expansion = {Scale(14), y + lineHeight, right - Scale(14), y + height - Scale(10)};
             int x = right - Scale(12);
             const int middle = y + lineHeight / 2;
-            for (size_t button = 0; button < slots[index]; ++button)
+            // A row with only a text button (Add, Reset) has it at the far right.
+            const bool controls = row.toggle >= 0 || !row.iconButtons.empty();
+            if (controls)
             {
-                // Empty slots (0 glyphs, or slots only other rows use) get an empty rectangle.
-                const bool used = button < row.iconButtons.size() && row.iconButtons[button] != 0;
-                if (button < row.iconButtons.size())
-                    layout.iconButtons.push_back(used ? RECT{x - Scale(30), middle - Scale(15), x, middle + Scale(15)} : RECT{});
-                x -= Scale(32);
+                for (size_t button = 0; button < slots[index]; ++button)
+                {
+                    // Empty slots (0 glyphs, or slots only other rows use) get an empty rectangle.
+                    const bool used = button < row.iconButtons.size() && row.iconButtons[button] != 0;
+                    if (button < row.iconButtons.size())
+                        layout.iconButtons.push_back(used ? RECT{x - Scale(30), middle - Scale(15), x, middle + Scale(15)} : RECT{});
+                    x -= Scale(32);
+                }
+                if (slots[index] != 0) x -= Scale(4);
             }
-            if (slots[index] != 0) x -= Scale(4);
-            if (!row.button.empty())
-            {
-                const int width = TextWidth(dc, textFont_, row.button) + Scale(28);
-                layout.button = {x - width, middle - Scale(15), x, middle + Scale(15)};
-                x -= (row.toggle >= 0 && buttonColumn[index] ? buttonColumn[index] : width) + Scale(10);
-            }
-            else if (row.toggle >= 0 && buttonColumn[index])
-                x -= buttonColumn[index] + Scale(10);
             if (row.toggle >= 0)
             {
                 layout.toggle = {x - Scale(40), middle - Scale(10), x, middle + Scale(10)};
@@ -312,6 +321,14 @@ private:
                     x -= width + Scale(10);
                 }
                 x -= Scale(12);
+            }
+            else if (controls && toggleColumn[index] && !row.button.empty())
+                x -= Scale(52); // The toggle's place, so this button stands with the others.
+            if (!row.button.empty())
+            {
+                const int width = TextWidth(dc, textFont_, row.button) + Scale(28);
+                layout.button = {x - width, middle - Scale(15), x, middle + Scale(15)};
+                x -= width + Scale(10);
             }
             if (!row.pill.empty())
             {
