@@ -7,7 +7,6 @@ public:
 private:
     enum class Key { None, Layout, Rounded, Module, Band, Info, SetupChanges };
     static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210, CautionEditId=220, SlotEditId=230, HeaderRow=1000, FooterRow=1001;
-    static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E', UpGlyph=L'\uE74A', DownGlyph=L'\uE74B';
 
     void OnCreate() override {
         list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont());
@@ -41,7 +40,7 @@ private:
             header(L"Header and footer");
             for(int id:{HeaderRow,FooterRow}) {
                 RowList::Row row=BandRow(o_,id==FooterRow); const bool open=expanded_==id;
-                row.iconButtons={open?CollapseGlyph:ExpandGlyph}; row.expandHeight=open?BandEditorHeight:0;
+                row.iconButtons={open?Glyph::Collapse:Glyph::Expand}; row.expandHeight=open?BandEditorHeight:0;
                 push(std::move(row),Key::Band,id);
             }
         };
@@ -78,8 +77,8 @@ private:
             else if(Strip() && Fuel() && id==FiguresModule) row.pill=L"Strip: AVG 10";
             // Same column for every row's button: the expand arrow or an empty slot.
             const bool open=expanded_==id;
-            row.iconButtons={Expandable(id)?(open?CollapseGlyph:ExpandGlyph):wchar_t{0}}; row.expandHeight=Expandable(id) && open?(id==FiguresModule?120:48):0;
-            if(movable) row.iconButtons.insert(row.iconButtons.end(),{id!=Order().back()?DownGlyph:wchar_t{0},id!=Order().front()?UpGlyph:wchar_t{0}});
+            row.iconButtons={Expandable(id)?(open?Glyph::Collapse:Glyph::Expand):wchar_t{0}}; row.expandHeight=Expandable(id) && open?(id==FiguresModule?120:48):0;
+            if(movable) row.iconButtons.insert(row.iconButtons.end(),{id!=Order().back()?Glyph::Down:wchar_t{0},id!=Order().front()?Glyph::Up:wchar_t{0}});
             push(std::move(row),Key::Module,id);
         };
         // Refuel and pit window share a row while they stand next to each other here.
@@ -143,12 +142,12 @@ private:
         switch(keys_[row]) {
         case Key::Module:
             if(code==RowList::kToggled) { Shown(element)=on; Changed(); }
-            else if(glyph==UpGlyph || glyph==DownGlyph) { if(MoveInOrder(Order(),element,glyph==UpGlyph?-1:1)) { Refresh(); BuildEditors(); } }
-            else if(Expandable(element) && (glyph==ExpandGlyph || glyph==CollapseGlyph || code==RowList::kActivated)) Expand(element);
+            else if(glyph==Glyph::Up || glyph==Glyph::Down) { if(MoveInOrder(Order(),element,glyph==Glyph::Up?-1:1)) { Refresh(); BuildEditors(); } }
+            else if(Expandable(element) && (glyph==Glyph::Expand || glyph==Glyph::Collapse || code==RowList::kActivated)) Expand(element);
             break;
         case Key::Band:
             if(code==RowList::kToggled) { SetBand(o_,element==FooterRow,on); Changed(); }
-            else if(glyph==ExpandGlyph || glyph==CollapseGlyph || code==RowList::kActivated) Expand(element);
+            else if(glyph==Glyph::Expand || glyph==Glyph::Collapse || code==RowList::kActivated) Expand(element);
             break;
         case Key::Rounded: if(code==RowList::kToggled) { SetRounded(o_,on); Changed(); } break;
         case Key::SetupChanges: if(code==RowList::kToggled) { o_.setupChanges=on; Fit(o_); Changed(); } break;

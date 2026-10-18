@@ -32,7 +32,6 @@ struct Driver {
 std::string TireLabel(const Driver&, int compound);
 // Manufacturer from CarPath, else the first word of CarScreenName; empty without either.
 std::string CarBrand(const std::string& carPath, const std::string& carName);
-bool HasMultipleDryCompounds(const Driver&);
 struct SessionResult {
     int position = 0, classPosition = 0;
     double best = -1, last = -1;
@@ -77,7 +76,6 @@ struct Frame {
     double airTemperature = std::numeric_limits<double>::quiet_NaN(), trackTemperature = std::numeric_limits<double>::quiet_NaN();
     double windDirection = std::numeric_limits<double>::quiet_NaN(), yawNorth = std::numeric_limits<double>::quiet_NaN();
     double timeOfDay = -1, windSpeed = -1; int trackWetness = -1;
-    double brakeBias = std::numeric_limits<double>::quiet_NaN(); // dcBrakeBias, own car only; missing on some cars.
     double timeTotal = -1; int lapsTotal = -1; // SessionTimeTotal / SessionLapsTotal; unlimited sessions report 604800 s and 32767 laps.
     // Precipitation, RelativeHumidity and FogLevel are fractions 0..1; Skies 0 clear to 3 overcast; WeatherDeclaredWet allows rain tires.
     bool declaredWet = false; int skies = -1;

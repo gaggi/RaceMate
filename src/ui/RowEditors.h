@@ -63,14 +63,6 @@ public:
         return Add(L"EDIT", text.c_str(), WS_TABSTOP | ES_AUTOHSCROLL, id, x, y, width);
     }
 
-    // A small edit for a duration in seconds, followed by "s".
-    HWND Seconds(int id, int milliseconds, int x, int y)
-    {
-        const HWND edit = Edit(id, SecondsText(milliseconds), x, y, 64);
-        Label(L"s", x + 70, y, 20);
-        return edit;
-    }
-
     HWND Check(int id, const wchar_t* text, bool checked, int x, int y, int width)
     {
         const HWND box = Add(L"BUTTON", text, WS_TABSTOP | BS_AUTOCHECKBOX, id, x, y, width);
@@ -125,27 +117,6 @@ public:
                 scale(editor.height), TRUE);
             ShowWindow(editor.control, SW_SHOW);
         }
-    }
-
-    static std::wstring SecondsText(int milliseconds)
-    {
-        wchar_t text[32]{};
-        swprintf_s(text, L"%g", std::max(0, milliseconds) / 1000.0);
-        return text;
-    }
-
-    // Accepts "0.5" and "0,5"; empty means 0.
-    static bool ParseSeconds(std::wstring text, int& milliseconds)
-    {
-        std::replace(text.begin(), text.end(), L',', L'.');
-        const auto first = text.find_first_not_of(L" \t");
-        if (first == std::wstring::npos) { milliseconds = 0; return true; }
-        text = text.substr(first, text.find_last_not_of(L" \t") - first + 1);
-        wchar_t* end = nullptr;
-        const double value = std::wcstod(text.c_str(), &end);
-        if (end != text.c_str() + text.size() || value < 0 || value > 3600) return false;
-        milliseconds = static_cast<int>(value * 1000 + 0.5);
-        return true;
     }
 
 private:

@@ -7,7 +7,6 @@ private:
     enum class Key { None, Rounded, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, ClassView, OwnClass, LiveGaps, UntimedOrder, ClassColors, LapColors, Progress, PitExit, Column, Header, Footer, ColumnHeadings };
     static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, PitAheadEditId=215, PitBehindEditId=216, NameFormatEditId=201, FlagEditId=202, ShortViewEditId=205, SlotEditId=206, BrandLogoEditId=213, BrandNameEditId=214;
     static constexpr UINT_PTR TypingTimer=1;
-    static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E', UpGlyph=L'\uE74A', DownGlyph=L'\uE74B';
     struct ColumnText { const wchar_t* name; const wchar_t* detail; };
     static constexpr ColumnText ColumnTexts[]={
         {L"Position",L"Overall or class position"},{L"Car number",L"On the class color"},{L"Driver",L""},
@@ -64,7 +63,7 @@ private:
         // Icon buttons are laid out right to left: the expand arrow stays rightmost.
         auto expandable=[&](RowList::Row& row,Key key,int id,int height) {
             const bool open=expandedKey_==key && expandedId_==id;
-            row.iconButtons.insert(row.iconButtons.begin(),open?CollapseGlyph:ExpandGlyph); row.expandHeight=open?height:0;
+            row.iconButtons.insert(row.iconButtons.begin(),open?Glyph::Collapse:Glyph::Expand); row.expandHeight=open?height:0;
         };
         header(L"Layout");
         push(RoundedRow(o_),Key::Rounded);
@@ -125,7 +124,7 @@ private:
             else row.pill=L"Always";
             row.muted=!shown;
             // No arrow where the column cannot move further.
-            row.iconButtons=id==StatusColumn?std::vector<wchar_t>{0,0}:std::vector<wchar_t>{i+1<order.size()?DownGlyph:wchar_t{0},i?UpGlyph:wchar_t{0}};
+            row.iconButtons=id==StatusColumn?std::vector<wchar_t>{0,0}:std::vector<wchar_t>{i+1<order.size()?Glyph::Down:wchar_t{0},i?Glyph::Up:wchar_t{0}};
             if(HasOptions(id)) expandable(row,Key::Column,id,48);
             else if(anyOptions) row.iconButtons.insert(row.iconButtons.begin(),0);
             push(std::move(row),Key::Column,id);
@@ -244,7 +243,7 @@ private:
         const bool on=list_.Rows()[row].toggle==1, pressed=code==RowList::kButton || code==RowList::kActivated;
         const int icon=code==RowList::kIconButton?list_.NotifiedIconButton():-1;
         const wchar_t glyph=icon>=0 && icon<static_cast<int>(list_.Rows()[row].iconButtons.size())?list_.Rows()[row].iconButtons[icon]:0;
-        const bool toggleExpand=glyph==ExpandGlyph || glyph==CollapseGlyph || code==RowList::kActivated;
+        const bool toggleExpand=glyph==Glyph::Expand || glyph==Glyph::Collapse || code==RowList::kActivated;
         switch(key) {
         case Key::Rows: if(toggleExpand) Expand(key,-1); break;
         case Key::GapDecimals: if(pressed) ChooseDecimals(); break;
@@ -265,8 +264,8 @@ private:
             break;
         case Key::Column:
             if(code==RowList::kToggled) { SetColumnVisible(o_,column,on); Refresh(); }
-            else if(glyph==UpGlyph) Move(column,-1);
-            else if(glyph==DownGlyph) Move(column,1);
+            else if(glyph==Glyph::Up) Move(column,-1);
+            else if(glyph==Glyph::Down) Move(column,1);
             else if(toggleExpand && HasOptions(column)) Expand(key,column);
             break;
         case Key::Header: case Key::Footer:

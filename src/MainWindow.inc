@@ -167,8 +167,7 @@ void DeleteLayoutSections(int id) {
     std::vector<wchar_t> buffer(65536); GetPrivateProfileSectionNamesW(buffer.data(),static_cast<DWORD>(buffer.size()),app.config.c_str());
     std::vector<std::wstring> names;
     for(const wchar_t* name=buffer.data();*name;name+=wcslen(name)+1) if(std::wstring_view(name).starts_with(prefix)) names.emplace_back(name);
-    for(const auto& name:names) WritePrivateProfileStringW(name.c_str(),nullptr,nullptr,app.config.c_str());
-    std::erase_if(app.savedSettings,[&](const auto& item){ return item.first.starts_with(prefix); });
+    for(const auto& name:names) DeleteSection(name);
 }
 // A new layout at the end of the list: a copy of the active one, or default overlays.
 void AddLayout(bool copy) {
@@ -184,9 +183,7 @@ void RemoveLayout(int id) {
     const auto at=std::find_if(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==id;}); if(at==app.layouts.end()) return;
     if(app.layout==id) SwitchLayout(1);
     DeleteLayoutSections(id);
-    const auto section=L"Layout "+std::to_wstring(id);
-    WritePrivateProfileStringW(section.c_str(),nullptr,nullptr,app.config.c_str());
-    std::erase_if(app.savedSettings,[&](const auto& item){ return item.first.starts_with(section+L"\n"); });
+    DeleteSection(L"Layout "+std::to_wstring(id));
     app.layouts.erase(std::find_if(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==id;}));
     Save();
 }

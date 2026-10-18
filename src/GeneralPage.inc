@@ -7,7 +7,6 @@ private:
     static constexpr int ListId=100, HotkeyId=200, HotkeyResetId=201, LaneEditId=202, TiresEditId=203, RateEditId=204;
     // Expanded rows beyond the three shortcuts.
     static constexpr int LaneRow=10, ServiceRow=11;
-    static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E';
     // Below 5 Hz short offtracks and pit timing get lost.
     static constexpr int Rates[]={5,10,15,20};
 
@@ -49,7 +48,7 @@ private:
             else if(samples) lane.detail=Format(learned,1)+L" s at this track, from "+std::to_wstring(samples)+(samples==1?L" observed visit":L" observed visits");
             else if(learned>0) lane.detail=Format(learned,1)+L" s, learned at this track in an earlier session";
             else lane.detail=L"Not known for this track yet: learned from the first pit visit anyone makes, or set it here.";
-            lane.iconButtons={expanded_==LaneRow?CollapseGlyph:ExpandGlyph}; lane.expandHeight=expanded_==LaneRow?48:0;
+            lane.iconButtons={expanded_==LaneRow?Glyph::Collapse:Glyph::Expand}; lane.expandHeight=expanded_==LaneRow?48:0;
             push(std::move(lane),Key::PitLane);
             RowList::Row service; service.title=L"Service times"+(t.car.empty()?std::wstring():L"  \u00B7  "+Wide(PlayerDriver()?PlayerDriver()->carName:std::string()));
             const double tires=TireChangeSeconds(); const bool together=SimultaneousService(app.session);
@@ -58,7 +57,7 @@ private:
             else service.detail=L"Four tires "+(tires>0?Format(tires,1)+L" s"+(t.tires>0?L"":L" (iRacing's value for the class)"):std::wstring(L"not set"))
                 +L"  \u00B7  refuel "+Format(RefuelRateLitres(),2)+L" l/s"+(t.rate>0?L"":L" (assumed until measured at your stop)")
                 +L"  \u00B7  "+rules+(together?L": fuel and tires together":L": tires after fuel");
-            service.iconButtons={expanded_==ServiceRow?CollapseGlyph:ExpandGlyph}; service.expandHeight=expanded_==ServiceRow?48:0;
+            service.iconButtons={expanded_==ServiceRow?Glyph::Collapse:Glyph::Expand}; service.expandHeight=expanded_==ServiceRow?48:0;
             push(std::move(service),Key::PitService);
         }
         header(L"Shortcuts  \u00B7  work in every program");
@@ -67,7 +66,7 @@ private:
         for(int i=0;i<HotkeyCount;++i) {
             RowList::Row row; row.title=names[i]; row.detail=HotkeyText(app.hotkeys[i]);
             if(app.hotkeyError.find(HotkeyKeys[i])!=std::wstring::npos) { row.pill=L"In use"; row.pillTone=RowList::Tone::Warning; }
-            row.iconButtons={i==expanded_?CollapseGlyph:ExpandGlyph}; row.expandHeight=i==expanded_?48:0;
+            row.iconButtons={i==expanded_?Glyph::Collapse:Glyph::Expand}; row.expandHeight=i==expanded_?48:0;
             push(std::move(row),Key::Hotkey,i);
         }
         header(L"Updates");

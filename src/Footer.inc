@@ -111,7 +111,7 @@ MetricText Metric(int metric,const Overlay* o=nullptr) {
         return text;
     }
     case DeclaredWetMetric: { MetricText text; if(f.declaredWet) { text.parts[1]=L"DECLARED WET"; text.pill=RGB(140,198,255); } return text; }
-    case BrakeBiasMetric: return {L"BB ",reference==f.player && std::isfinite(f.brakeBias)?Format(f.brakeBias,1):L"—"};
+    case BrakeBiasMetric: return {L"BB ",reference==f.player && (f.dialsKnown>>BrakeBiasDial&1) && std::isfinite(f.dials[BrakeBiasDial])?Format(f.dials[BrakeBiasDial],1):L"—"};
     }
     return std::wstring(L"—");
 }

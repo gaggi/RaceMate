@@ -131,7 +131,6 @@ int TireFamily(const Driver& driver) {
     return 0;
 }
 }
-bool HasMultipleDryCompounds(const Driver& driver) { return TireFamily(driver)!=0; }
 std::string TireLabel(const Driver& driver,int compound) {
     if(compound<0) return {};
     const int family=TireFamily(driver);

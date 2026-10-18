@@ -4,7 +4,6 @@ public:
 private:
     enum Key { Info, LayoutKey, WhiteTrackKey, Numbers, OwnClass, Pit, PitExitKey, Details, Rounded, Header, Footer, Retry, Cache, Background, PitLane, StartFinish, CornerNumbers, CornerNames, LabelSize, LabelContrast };
     static constexpr int ListId=100, SlotEditId=230, LabelSizeId=240;
-    static constexpr wchar_t ExpandGlyph=L'\uE70D', CollapseGlyph=L'\uE70E';
     void OnCreate() override { list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont()); editors_.Attach(list_,Instance(),TextFont()); Refresh(); }
     void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
     void Refresh() {
@@ -40,10 +39,10 @@ private:
         toggle(L"Corner names",L"Official names where iRacing supplies them. Tracks with numbers only do not get invented names.",o_.map.cornerNames,CornerNames);
         toggle(L"Label contrast outline",L"Dark outline around the text for readability over the circuit or other windows.",o_.map.labelContrast,LabelContrast);
         RowList::Row size; size.title=L"Label size"; size.detail=std::to_wstring(o_.map.labelScale)+L"% of the official SVG text size; follows the overlay scale.";
-        size.iconButtons={expanded_==LabelSize?CollapseGlyph:ExpandGlyph}; size.expandHeight=expanded_==LabelSize?52:0; push(std::move(size),LabelSize);
+        size.iconButtons={expanded_==LabelSize?Glyph::Collapse:Glyph::Expand}; size.expandHeight=expanded_==LabelSize?52:0; push(std::move(size),LabelSize);
         heading(L"Header and footer");
         for(Key key:{Header,Footer}) {
-            RowList::Row row=BandRow(o_,key==Footer); row.iconButtons={expanded_==key?CollapseGlyph:ExpandGlyph}; row.expandHeight=expanded_==key?BandEditorHeight:0;
+            RowList::Row row=BandRow(o_,key==Footer); row.iconButtons={expanded_==key?Glyph::Collapse:Glyph::Expand}; row.expandHeight=expanded_==key?BandEditorHeight:0;
             row.muted=MapOnly(o_); row.toggleEnabled=!MapOnly(o_);
             push(std::move(row),key);
         }

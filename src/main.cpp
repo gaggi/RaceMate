@@ -26,7 +26,6 @@
 #include <map>
 #include <emmintrin.h>
 #ifdef RACEMATE_DIAGNOSTICS
-#include <fstream>
 #include <psapi.h>
 #endif
 
@@ -717,19 +716,20 @@ void Save() {
     for(int i=0;i<HotkeyCount;++i) number(L"Hotkeys",HotkeyKeys[i],app.hotkeys[i]);
     if(!success && !app.settingsError) { app.settingsError=true; MessageBoxW(app.main,L"Could not save settings. Please check write access to the RaceMate configuration folder.",L"RaceMate",MB_OK|MB_ICONWARNING); }
 }
+// Deletes a settings section, and what Save() remembers of it so it is written again when needed.
+void DeleteSection(const std::wstring& section) {
+    WritePrivateProfileStringW(section.c_str(),nullptr,nullptr,app.config.c_str());
+    std::erase_if(app.savedSettings,[&](const auto& item){ return item.first.starts_with(section+L"\n"); });
+}
 // Removes an added instance with its settings section; the first instance of a kind stays.
 void RemoveInstance(Overlay& o) {
     if(o.number==1) return;
-    const auto section=Section(o);
-    WritePrivateProfileStringW(section.c_str(),nullptr,nullptr,app.config.c_str());
-    for(auto it=app.savedSettings.begin();it!=app.savedSettings.end();) it=it->first.rfind(section+L"\n",0)==0?app.savedSettings.erase(it):std::next(it);
+    DeleteSection(Section(o));
     // Later instances move up a number, so their sections are written again under the new names.
     const int kind=o.kind, number=o.number;
     DestroyOverlay(o); app.overlays.remove_if([&](const Overlay& other){return &other==&o;});
     for(auto& other:app.overlays) if(other.kind==kind && other.number>number) {
-        const auto old=Section(other);
-        WritePrivateProfileStringW(old.c_str(),nullptr,nullptr,app.config.c_str());
-        for(auto it=app.savedSettings.begin();it!=app.savedSettings.end();) it=it->first.rfind(old+L"\n",0)==0?app.savedSettings.erase(it):std::next(it);
+        DeleteSection(Section(other));
         --other.number;
     }
     Save();

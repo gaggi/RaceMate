@@ -37,5 +37,4 @@ namespace jsonlite
     };
 
     Value Parse(const std::string& input);
-    std::string Serialize(const Value& value, int indentSize = 2);
 }

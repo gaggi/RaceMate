@@ -7,7 +7,6 @@ public:
 private:
     enum class Key { None, Instance, Add, Preview, Move, Hide, Reset, Layout, AddLayout };
     static constexpr int ListId=100, ScaleId=200, OpacityId=201, CornerId=202, RateId=203, LayoutNameId=220, LayoutConditionId=221;
-    static constexpr wchar_t ExpandGlyph=L'', CollapseGlyph=L'', RemoveGlyph=L'', UpGlyph=L'', DownGlyph=L'';
     static constexpr const wchar_t* Corners[]={L"Top left",L"Top right",L"Bottom left",L"Bottom right"};
 
     void OnCreate() override {
@@ -46,7 +45,7 @@ private:
             RowList::Row row; row.title=l.name; row.detail=std::wstring(ConditionNames[l.condition])+L": "+ConditionDetails[l.condition];
             if(active) { row.pill=L"Active"; row.pillTone=RowList::Tone::Active; } else row.button=L"Use";
             // Right to left: expand, sort arrows, remove (not the first layout).
-            row.iconButtons={l.id==expandedLayout_?CollapseGlyph:ExpandGlyph,i+1<app.layouts.size()?DownGlyph:wchar_t{0},i>0?UpGlyph:wchar_t{0},l.id!=1?RemoveGlyph:wchar_t{0}};
+            row.iconButtons={l.id==expandedLayout_?Glyph::Collapse:Glyph::Expand,i+1<app.layouts.size()?Glyph::Down:wchar_t{0},i>0?Glyph::Up:wchar_t{0},l.id!=1?Glyph::Remove:wchar_t{0}};
             row.expandHeight=l.id==expandedLayout_?84:0;
             push(std::move(row),Key::Layout,nullptr,l.id);
         }
@@ -59,7 +58,7 @@ private:
             RowList::Row row; row.title=Name(o); row.detail=Summary(o);
             row.toggle=o.place.enabled?1:0; row.button=L"Settings";
             // Right to left: expand, remove (added instances only); an empty slot keeps them in line.
-            row.iconButtons={&o==expanded_?CollapseGlyph:ExpandGlyph,o.number>1?RemoveGlyph:wchar_t{0}};
+            row.iconButtons={&o==expanded_?Glyph::Collapse:Glyph::Expand,o.number>1?Glyph::Remove:wchar_t{0}};
             row.expandHeight=&o==expanded_?84:0;
             push(std::move(row),Key::Instance,&o);
         }
@@ -179,14 +178,14 @@ private:
         case Key::Instance:
             if(code==RowList::kToggled) { o->place.enabled=on; SettingChanged(); Refresh(); }
             else if(code==RowList::kButton) OpenOverlay(*o);
-            else if(glyph==RemoveGlyph) Remove(*o);
-            else if(glyph==ExpandGlyph || glyph==CollapseGlyph || code==RowList::kActivated) Expand(o);
+            else if(glyph==Glyph::Remove) Remove(*o);
+            else if(glyph==Glyph::Expand || glyph==Glyph::Collapse || code==RowList::kActivated) Expand(o);
             break;
         case Key::Layout:
             if(code==RowList::kButton) { SwitchLayout(layout); Refresh(); }
-            else if(glyph==RemoveGlyph) RemoveLayoutChoice(layout);
-            else if(glyph==UpGlyph || glyph==DownGlyph) MoveLayout(layout,glyph==UpGlyph?-1:1);
-            else if(glyph==ExpandGlyph || glyph==CollapseGlyph || code==RowList::kActivated) ExpandLayout(layout);
+            else if(glyph==Glyph::Remove) RemoveLayoutChoice(layout);
+            else if(glyph==Glyph::Up || glyph==Glyph::Down) MoveLayout(layout,glyph==Glyph::Up?-1:1);
+            else if(glyph==Glyph::Expand || glyph==Glyph::Collapse || code==RowList::kActivated) ExpandLayout(layout);
             break;
         case Key::AddLayout: if(pressed) AddLayoutChoice(); break;
         case Key::Add: if(pressed) Add(); break;

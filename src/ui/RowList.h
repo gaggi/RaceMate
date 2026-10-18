@@ -25,6 +25,12 @@
 // creates edit controls there as children of Handle(), places them with
 // ExpansionRect() and moves them again on kLayoutChanged (scrolling, resizing).
 // Their WM_COMMAND messages are passed on to the parent unchanged.
+// Row icon buttons, the same on every page (Segoe Fluent Icons / Segoe MDL2 Assets).
+namespace Glyph
+{
+    inline constexpr wchar_t Expand = L'\uE70D', Collapse = L'\uE70E', Up = L'\uE74A', Down = L'\uE74B', Remove = L'\uE74D';
+}
+
 class RowList
 {
 public:
@@ -115,12 +121,6 @@ public:
         glyphFont_ = CreateFontW(-Scale(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, UiTheme::IconFontFace());
         UpdateScrollRange();
-        InvalidateRect(window_, nullptr, FALSE);
-    }
-
-    void SetEmptyText(std::wstring text)
-    {
-        emptyText_ = std::move(text);
         InvalidateRect(window_, nullptr, FALSE);
     }
 
