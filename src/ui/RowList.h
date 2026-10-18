@@ -267,7 +267,11 @@ private:
             for (; last < rows_.size() && !(rows_[last].header && last != first); ++last)
             {
                 if (rows_[last].header) continue;
-                most = std::max(most, rows_[last].iconButtons.size());
+                // Only slots some row uses: trailing empty glyphs leave no gap.
+                const auto& icons = rows_[last].iconButtons;
+                size_t used = icons.size();
+                while (used > 0 && icons[used - 1] == 0) --used;
+                most = std::max(most, used);
                 toggles = toggles || rows_[last].toggle >= 0;
             }
             for (size_t index = first; index < last; ++index) { slots[index] = most; toggleColumn[index] = toggles; }
