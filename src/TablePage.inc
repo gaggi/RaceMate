@@ -19,7 +19,7 @@ private:
         {L"Car brand",L"Manufacturer, with its initial until logos arrive"},{L"iRating change",L"Estimated, as if the race ended in the current order"},
         {L"Laps since stop",L"L12; L- until a stop or the start was seen"},{L"Pit stops",L"Observed in this race; ? after joining late"},
         {L"Fuel to finish",L"Own-class estimate: green END at normal range, yellow SAVE with fuel saving. Full tank assumed; extra laps in Settings."},
-        {L"Safety and iRating",L"iRating on the license color, in one badge; short with the iRating column's short view"}};
+        {L"Safety and iRating",L"iRating on the license color, in one badge"}};
     static constexpr const wchar_t* NameFormats[]={L"First name Last name",L"F. Last name",L"F Last name"};
     static constexpr const wchar_t* FlagNames[]={L"Black flag",L"Slowdown",L"Required repairs"};
     static_assert(std::size(ColumnTexts)==ColumnCount);
@@ -36,7 +36,9 @@ private:
         if(id==BestColumn || id==LastColumn) return o_.kind==RelativeKind;
         return id==DriverColumn || id==StatusColumn || id==IntervalColumn || id==LapsColumn || id==GainedColumn || id>=LicenseColumn && id<=PitStopColumn || id>=BrandColumn;
     }
-    static bool HasOptions(int id) { return id==DriverColumn || id==StatusColumn || id==LicenseColumn || id==IRatingColumn || id==BrandColumn; }
+    static bool HasOptions(int id) { return id==DriverColumn || id==StatusColumn || id==LicenseColumn || id==IRatingColumn || id==CombinedRatingColumn || id==BrandColumn; }
+    // Short views: License, iRating, Safety and iRating.
+    static int ShortViewIndex(int id) { return id==CombinedRatingColumn?2:id-LicenseColumn; }
     std::wstring ColumnDetail(int id) const {
         switch(id) {
         case DriverColumn: return NameFormats[o_.table.nameFormat];
@@ -47,8 +49,8 @@ private:
             return text;
         }
         case BrandColumn: return o_.table.brandLogo && o_.table.brandName?L"Logo and name":(o_.table.brandLogo?L"Logo":(o_.table.brandName?L"Name":L"Nothing chosen"));
-        case LicenseColumn: case IRatingColumn: {
-            const bool shortView=o_.table.driverShortView[id-LicenseColumn];
+        case LicenseColumn: case IRatingColumn: case CombinedRatingColumn: {
+            const bool shortView=o_.table.driverShortView[ShortViewIndex(id)];
             const std::wstring base=ColumnTexts[id].detail[0]?ColumnTexts[id].detail:L"Driver rating";
             return base+(shortView?(id==LicenseColumn?L"  \u00B7  short: 3,45":L"  \u00B7  short: 2,4K"):L"");
         }
@@ -174,8 +176,8 @@ private:
         } else if(expandedId_==BrandColumn) {
             editors_.Check(BrandLogoEditId,L"Show logo",o_.table.brandLogo,0,10,160);
             editors_.Check(BrandNameEditId,L"Show name",o_.table.brandName,170,10,160);
-        } else if(expandedId_==LicenseColumn || expandedId_==IRatingColumn) {
-            const int index=expandedId_-LicenseColumn;
+        } else if(expandedId_==LicenseColumn || expandedId_==IRatingColumn || expandedId_==CombinedRatingColumn) {
+            const int index=ShortViewIndex(expandedId_);
             editors_.Check(ShortViewEditId,expandedId_==LicenseColumn?L"Short view: safety rating only (3,45)":L"Short view: thousands (2,4K)",o_.table.driverShortView[index],0,10,360);
         }
         syncing_=false; editors_.Position();
@@ -229,7 +231,7 @@ private:
             if(syncing_) return true;
             if(id==NameFormatEditId && code==CBN_SELCHANGE) o_.table.nameFormat=std::max(0,editors_.Selection(id));
             else if(id>=FlagEditId && id<FlagEditId+3 && code==BN_CLICKED) o_.table.driverFlags[id-FlagEditId]=editors_.Checked(id);
-            else if(id==ShortViewEditId && code==BN_CLICKED) o_.table.driverShortView[expandedId_-LicenseColumn]=editors_.Checked(id);
+            else if(id==ShortViewEditId && code==BN_CLICKED) o_.table.driverShortView[ShortViewIndex(expandedId_)]=editors_.Checked(id);
             else if(id>=SlotEditId && code==CBN_SELCHANGE) ApplyBandEditor(editors_,o_,expandedKey_==Key::Footer,id,SlotEditId);
             else return true;
             Changed(); return true;

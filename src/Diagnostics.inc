@@ -667,6 +667,29 @@ int RunDiagnostics() {
         report<<"Expanded editors fit the narrowest window: "<<(fitOk?"PASS":"FAIL")<<"\n"; ok=fitOk && ok;
     }
     {
+        // Design rule: in each group of a settings list the toggles stand in one column, with or without a button beside them.
+        bool alignOk=true; int toggles=0;
+        auto aligned=[&](const char* page) {
+            const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr);
+            auto* rows=list?reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA)):nullptr;
+            if(!rows) { alignOk=false; report<<"  no list on "<<page<<"\n"; return; }
+            LONG column=-1;
+            for(int i=0;i<static_cast<int>(rows->Rows().size());++i) {
+                if(rows->Rows()[i].header) { column=-1; continue; }
+                const RECT r=rows->ToggleRect(i); if(r.right<=r.left) continue;
+                ++toggles;
+                if(column<0) column=r.right;
+                else if(r.right!=column) { alignOk=false; report<<"  "<<page<<": toggle in row "<<i<<" ends at "<<r.right<<", others at "<<column<<"\n"; }
+            }
+        };
+        ShowPage(Page::Overlays); aligned("Overlays");
+        ShowPage(Page::Settings); aligned("Settings");
+        constexpr const char* pages[]={"Relative","Standings","Fuel Calculator","Pit Limiter","Weather","Track Map"};
+        for(int kind=0;kind<OverlayCount;++kind) { OpenOverlay(First(kind)); aligned(pages[kind]); }
+        ShowPage(Page::Overlays);
+        report<<"Toggles line up in each group of every settings list: "<<(alignOk && toggles>40?"PASS":"FAIL")<<"\n"; ok=alignOk && toggles>40 && ok;
+    }
+    {
         // Every telemetry and overlay rate combination keeps its rate over a minute of jittered ticks, and a pause restarts without a burst.
         bool ratesOk=true;
         for(int telemetry:{1,2,5,10,15,20}) for(int rate:OverlayRates) {

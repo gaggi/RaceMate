@@ -138,6 +138,15 @@ public:
         OffsetRect(&rect, 0, -scroll_);
         return rect;
     }
+    // Client rectangle of a row's toggle; empty without one.
+    RECT ToggleRect(int index) const
+    {
+        const auto layouts = Compute();
+        if (index < 0 || index >= static_cast<int>(layouts.size()) || rows_[static_cast<size_t>(index)].toggle < 0) return {};
+        RECT rect = layouts[static_cast<size_t>(index)].toggle;
+        OffsetRect(&rect, 0, -scroll_);
+        return rect;
+    }
 
     // Acts on a row's icon button as a click on it does.
     void PressIconButton(int index, int iconButton)
@@ -231,14 +240,25 @@ private:
         std::vector<Layout> layouts(rows_.size());
         const HDC dc = GetDC(window_);
         // Icon button slots per card: rows between two headers share one column layout.
+        // Toggles line up in a card too: when a row has a toggle and a button, every toggle
+        // leaves room for the widest button, so all of them stand in one column.
         std::vector<size_t> slots(rows_.size());
+        std::vector<int> buttonColumn(rows_.size());
         for (size_t first = 0; first < rows_.size();)
         {
             size_t last = first;
             size_t most = 0;
+            int widest = 0;
+            bool both = false;
             for (; last < rows_.size() && !(rows_[last].header && last != first); ++last)
-                if (!rows_[last].header) most = std::max(most, rows_[last].iconButtons.size());
-            for (size_t index = first; index < last; ++index) slots[index] = most;
+            {
+                const auto& row = rows_[last];
+                if (row.header) continue;
+                most = std::max(most, row.iconButtons.size());
+                if (!row.button.empty()) widest = std::max(widest, TextWidth(dc, textFont_, row.button) + Scale(28));
+                both = both || (row.toggle >= 0 && !row.button.empty());
+            }
+            for (size_t index = first; index < last; ++index) { slots[index] = most; buttonColumn[index] = both ? widest : 0; }
             first = last;
         }
         int y = 0;
@@ -278,8 +298,10 @@ private:
             {
                 const int width = TextWidth(dc, textFont_, row.button) + Scale(28);
                 layout.button = {x - width, middle - Scale(15), x, middle + Scale(15)};
-                x -= width + Scale(10);
+                x -= (row.toggle >= 0 && buttonColumn[index] ? buttonColumn[index] : width) + Scale(10);
             }
+            else if (row.toggle >= 0 && buttonColumn[index])
+                x -= buttonColumn[index] + Scale(10);
             if (row.toggle >= 0)
             {
                 layout.toggle = {x - Scale(40), middle - Scale(10), x, middle + Scale(10)};

@@ -162,7 +162,7 @@ struct TableSettings {
     std::vector<int> columnOrder;
     std::array<bool,DriverColumnCount> driverColumns{};
     std::array<bool,ExtraColumnCount> extraColumns{};
-    std::array<bool,2> driverShortView{};
+    std::array<bool,3> driverShortView{}; // License, iRating, Safety and iRating.
     std::array<bool,3> driverFlags{true,true,true};
     bool showDriver=true, showStatus=true, columnHeaders=false, classColors=true, brandLogo=true, brandName=true;
     bool gapSigns=false; // + / - before gaps (and intervals in the Standings); off by default: the row order already tells.
@@ -351,7 +351,7 @@ int ColumnWidth(const Overlay& o,int id) {
     if(id==BrandColumn && !t.brandLogo) return compact?92:100;
     if(compact && id==DriverColumn && t.nameFormat!=0) return 150;
     if(compact && (id==LicenseColumn || id==IRatingColumn) && t.driverShortView[id-LicenseColumn]) return 50;
-    if(compact && id==CombinedRatingColumn && t.driverShortView[IRatingColumn-LicenseColumn]) return 50;
+    if(compact && id==CombinedRatingColumn && t.driverShortView[2]) return 50;
     return compact?Columns[id].compactWidth:Columns[id].width;
 }
 std::vector<int> VisibleColumns(const Overlay& o) { std::vector<int> result; for(int id:o.table.columnOrder) if(ColumnVisible(o,id)) result.push_back(id); return result; }
@@ -456,6 +456,12 @@ std::wstring OverlayStatus(const Row& row,const TableSettings& t) {
     if(t.driverFlags[1] && (row.car.sessionFlags&SessionFlag::Furled)) return L"SLOW";
     return row.car.outLap?L"OUT":L"";
 }
+// In full, or short in thousands: 2,4K.
+std::wstring IRatingText(int rating,bool shortView) {
+    if(rating<=0) return L"—";
+    if(!shortView) return std::to_wstring(rating);
+    auto value=Format(rating/1000.0,1); std::replace(value.begin(),value.end(),L'.',L','); return value+L"K";
+}
 // driverColumn counts from LicenseColumn; a table's settings select its short views, none gives full values.
 std::wstring DriverValue(const Row& row,int driverColumn,const TableSettings* t=nullptr) {
     const int id=LicenseColumn+driverColumn;
@@ -469,11 +475,7 @@ std::wstring DriverValue(const Row& row,int driverColumn,const TableSettings* t=
         auto value=Wide(row.driver.license.substr(start,end==std::string::npos?end:end-start));
         std::replace(value.begin(),value.end(),L'.',L','); return value;
     }
-    case IRatingColumn: {
-        if(row.driver.rating<=0) return L"—";
-        if(!shortView) return std::to_wstring(row.driver.rating);
-        auto value=Format(row.driver.rating/1000.0,1); std::replace(value.begin(),value.end(),L'.',L','); return value+L"K";
-    }
+    case IRatingColumn: return IRatingText(row.driver.rating,shortView);
     case TiresColumn: { const auto label=TireLabel(row.driver,row.car.tireCompound); return label.empty()?L"—":Wide(label); }
     case PitLapColumn: return row.car.lastPitLap<0?L"—":std::to_wstring(row.car.lastPitLap);
     case PitStopColumn: {
@@ -508,7 +510,7 @@ int NormalizeScale(int scale) { return ((std::clamp(scale,50,150)+5)/10)*10; }
 void ReadTable(const wchar_t* section,int kind,TableSettings& t) {
     t.columnOrder=ReadOrder(section,L"ColumnOrder",DefaultColumns[kind]);
     for(int i=0;i<DriverColumnCount;++i) t.driverColumns[i]=ReadBool(section,DriverColumnKeys[i],false);
-    t.driverShortView={ReadBool(section,L"ShortLicenseView",false),ReadBool(section,L"ShortIRatingView",false)};
+    t.driverShortView={ReadBool(section,L"ShortLicenseView",false),ReadBool(section,L"ShortIRatingView",false),ReadBool(section,L"ShortCombinedRatingView",false)};
     for(int i=0;i<ExtraColumnCount;++i) t.extraColumns[i]=ReadBool(section,ExtraColumnKeys[i],false);
     t.classColors=ReadBool(section,L"ShowClassColor",true);
     t.brandLogo=ReadBool(section,L"ShowCarLogo",true); t.brandName=ReadBool(section,L"ShowCarName",true);
@@ -634,7 +636,7 @@ void Save() {
             const auto& t=o.table;
             order(section,L"ColumnOrder",t.columnOrder);
             for(int i=0;i<DriverColumnCount;++i) number(section,DriverColumnKeys[i],t.driverColumns[i]);
-            number(section,L"ShortLicenseView",t.driverShortView[0]); number(section,L"ShortIRatingView",t.driverShortView[1]);
+            number(section,L"ShortLicenseView",t.driverShortView[0]); number(section,L"ShortIRatingView",t.driverShortView[1]); number(section,L"ShortCombinedRatingView",t.driverShortView[2]);
             for(int i=0;i<ExtraColumnCount;++i) number(section,ExtraColumnKeys[i],t.extraColumns[i]);
             number(section,L"ShowClassColor",t.classColors); number(section,L"ShowCarLogo",t.brandLogo); number(section,L"ShowCarName",t.brandName);
             number(section,L"ShowBlackFlag",t.driverFlags[0]); number(section,L"ShowSlowdown",t.driverFlags[1]); number(section,L"ShowRequiredRepairs",t.driverFlags[2]);
@@ -1053,9 +1055,9 @@ const CellRenderer CellRenderers[]={
         if(status==OpponentFuelStatus::None) return;
         c.text=status==OpponentFuelStatus::End?L"END":L"SAVE";
         c.box=Cell::Filled; c.boxColor=status==OpponentFuelStatus::End?Ink::Green:Ink::Yellow; c.ink=Ink::Panel; c.font=SmallBold; },
-    // iRating on the license color: safety class and rating in one badge; follows the iRating column's short view.
+    // iRating on the license color: safety class and rating in one badge, with its own short view.
     +[](const Row& r,const Overlay& o,Cell& c) {
-        c.text=DriverValue(r,IRatingColumn-LicenseColumn,&o.table); if(c.text==L"—") { c.ink=Ink::Muted; return; }
+        c.text=IRatingText(r.driver.rating,o.table.driverShortView[2]); if(c.text==L"—") { c.ink=Ink::Muted; return; }
         c.box=Cell::Filled; c.boxColor=r.driver.license.empty()?Ink::NeutralBadge:LicenseFill(r.driver); c.ink=RGB(255,255,255); c.font=SmallBold; }
 };
 static_assert(std::size(CellRenderers)==ColumnCount);
