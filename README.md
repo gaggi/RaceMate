@@ -17,11 +17,11 @@ The window has three pages in its sidebar: **Overlays** (switch each overlay on 
 | --- | --- |
 | Ctrl + Alt + Shift + E | Toggle Move mode |
 | Ctrl + Alt + Shift + H | Hide/show all overlays |
-| Ctrl + Alt + Shift + S | Open Settings |
+| Ctrl + Alt + Shift + S | Open settings |
 | Ctrl + Alt + Shift + ← | Previous event in Race Control (opens it if closed) |
 | Ctrl + Alt + Shift + → | Next event in Race Control |
 
-Shortcuts are global and configurable on the **Settings** page: expand a shortcut, click the field and press a combination with Ctrl or Alt; **Reset** restores the default. The banner names shortcuts another program already owns.
+Shortcuts are global and configurable on the **Settings** page: click a shortcut and press a combination with Ctrl or Alt; Esc cancels, Backspace turns it off, and the reset arrow beside a changed one restores the default. The banner names shortcuts another program already owns.
 
 Overlays stay visible during spotting, replays and paused playback, and follow the camera car when you are not driving. They hide when iRacing disconnects, unless Preview is on. Outside Move mode they pass mouse clicks through and never take focus.
 
@@ -53,7 +53,7 @@ Separate class sections or one combined order, optionally only the reference car
 
 ### Header and footer
 
-Every overlay, including Pit Limiter, has an optional header and footer with up to four metrics, switched and chosen on the overlay's page. **All headers and footers offer the same metric list.** Footers are off by default; Pit Limiter also starts without a header. Fuel Calculator's header shows its name, current and expected final lap and the stops needed as a colored pill; Weather's shows its name and **DECLARED WET** while rain tires are allowed. The **Title bar** setting switches all headers at once.
+Every overlay, including Pit Limiter, has an optional header and footer with up to four metrics, switched and chosen on the overlay's page. **All headers and footers offer the same metric list.** Footers are off by default; Pit Limiter also starts without a header. Fuel Calculator's header shows its name, current and expected final lap and the stops needed as a colored pill; Weather's shows its name and **DECLARED WET** while rain tires are allowed. The **Headers on all overlays** setting switches all headers at once.
 
 Two overall-leader forecasts are available everywhere: **Leader projected race distance**, for example `~19.08 laps` at time expiry (at the finish for lap-limited races), and **Time left at leader's final lap**, for example `~13 s` or `~1:13` on the race clock when that leader is projected to start the final lap. They always refer to the overall leader, even when watching another car, and work before fuel consumption is learned. They are forecasts at the observed pace, not a report of an actual white flag. Missing data shows `—`. The existing **Current / Expected Final Lap** and **Estimated Laps Remaining** still refer to your car or the watched car. **Stops Needed (your car)** uses your fuel data.
 

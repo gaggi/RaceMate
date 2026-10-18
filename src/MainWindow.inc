@@ -23,6 +23,8 @@ std::wstring HotkeyText(WORD hotkey) {
     if(modifiers&HOTKEYF_CONTROL) text+=L"Ctrl+";
     if(modifiers&HOTKEYF_ALT) text+=L"Alt+";
     if(modifiers&HOTKEYF_SHIFT) text+=L"Shift+";
+    // The arrows as arrows: Windows names them in its own language ("NACH-LINKS"), the rest of the window is English.
+    switch(LOBYTE(hotkey)) { case VK_LEFT: return text+L"←"; case VK_RIGHT: return text+L"→"; case VK_UP: return text+L"↑"; case VK_DOWN: return text+L"↓"; }
     LONG key=static_cast<LONG>(MapVirtualKeyW(LOBYTE(hotkey),MAPVK_VK_TO_VSC))<<16; if(modifiers&HOTKEYF_EXT) key|=1<<24;
     wchar_t name[64]{}; GetKeyNameTextW(key,name,64);
     return text+(name[0]?std::wstring(name):std::to_wstring(LOBYTE(hotkey)));
@@ -79,8 +81,8 @@ void ShowPage(Page page,Overlay* overlay=nullptr) {
     const wchar_t* hints[]={L"Choose how many cars it shows, its columns and its header and footer.",
         L"Class leaders and the cars around you: rows, columns, header and footer.",
         L"Choose and order what it shows, and which laps count toward consumption.",
-        L"A reminder to switch the pit limiter on. Size, opacity and corner are on the Overlays page.",
-        L"Choose and order its cards.",L"Official SVG track map. Test the automatic layout, start/finish and distance projection."};
+        L"A reminder to switch the pit limiter on, and off again after pit exit, with what you changed in the car since the setup.",
+        L"Choose and order what it shows.",L"The official iRacing track map with every car: layout, markers, pit exit and what is drawn."};
     if(page==Page::Overlay) {
         SetWindowTextW(ui.title,Name(*ui.overlay).c_str()); SetWindowTextW(ui.hint,hints[ui.overlay->kind]);
     } else if(page==Page::RaceControl) {
@@ -89,7 +91,7 @@ void ShowPage(Page page,Overlay* overlay=nullptr) {
     } else {
         SetWindowTextW(ui.title,page==Page::Overlays?L"Overlays":L"Settings");
         SetWindowTextW(ui.hint,page==Page::Overlays?L"Turn overlays on or off, add more of a kind, and set their size and place. Open one to choose what it shows."
-            :L"Startup, refresh rate and keyboard shortcuts.");
+            :L"Startup, update rates, fuel and pit stop estimates, shortcuts and updates.");
     }
     ShowWindow(ui.back,page==Page::Overlay?SW_SHOW:SW_HIDE);
     UpdateOverlays(); // The edited overlay's border follows the page.

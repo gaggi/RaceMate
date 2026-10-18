@@ -691,6 +691,31 @@ int RunDiagnostics() {
         report<<"Expanded editors fit the narrowest window: "<<(fitOk?"PASS":"FAIL")<<"\n"; ok=fitOk && ok;
     }
     {
+        // Shortcuts change in their row: click, press a combination; Esc cancels, Backspace turns it off, the reset arrow
+        // appears only on a changed one and restores the default.
+        bool keysOk=true; const auto savedKeys=app.hotkeys;
+        ShowPage(Page::Settings);
+        const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr);
+        auto* rows=list?reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA)):nullptr;
+        const HWND field=FindWindowExW(ui.host.Content(),nullptr,HOTKEY_CLASSW,nullptr);
+        auto row=[&](const wchar_t* title){ if(rows) for(int i=0;i<static_cast<int>(rows->Rows().size());++i) if(rows->Rows()[i].title==title) return i; return -1; };
+        const int move=row(L"Move overlays");
+        keysOk=rows && field && move>=0 && row(L"Open settings")>=0 && rows->Rows()[move].button==HotkeyText(DefaultHotkeys[0]) && rows->Rows()[move].iconButtons==std::vector<wchar_t>{0} && keysOk;
+        if(keysOk) {
+            rows->ScrollIntoView(row(L"Next event in Race Control"));
+            rows->PressButton(move); keysOk=GetFocus()==field && rows->Rows()[move].button.find(L"Press")==0 && keysOk;
+            keysOk=Export(app.main,L"build\\qa\\main-shortcuts.bmp") && keysOk;
+            const WORD chosen=static_cast<WORD>(((HOTKEYF_CONTROL|HOTKEYF_ALT)<<8)|'J');
+            SendMessageW(field,HKM_SETHOTKEY,chosen,0); SendMessageW(ui.host.Content(),WM_COMMAND,MAKEWPARAM(200,EN_CHANGE),reinterpret_cast<LPARAM>(field));
+            keysOk=app.hotkeys[0]==chosen && GetFocus()!=field && rows->Rows()[move].button==HotkeyText(chosen) && rows->Rows()[move].iconButtons[0]==Glyph::Reset && keysOk;
+            rows->PressButton(move); SendMessageW(field,WM_KEYDOWN,VK_ESCAPE,0); keysOk=app.hotkeys[0]==chosen && GetFocus()!=field && keysOk;
+            rows->PressButton(move); SendMessageW(field,WM_KEYDOWN,VK_BACK,0); keysOk=app.hotkeys[0]==0 && rows->Rows()[move].button==L"Off" && keysOk;
+            rows->PressIconButton(move,0); keysOk=app.hotkeys[0]==DefaultHotkeys[0] && rows->Rows()[move].iconButtons[0]==0 && keysOk;
+        }
+        app.hotkeys=savedKeys; RegisterHotkeys(); Save(); ShowPage(Page::Overlays);
+        report<<"Shortcuts change, cancel, turn off and reset in their row: "<<(keysOk?"PASS":"FAIL")<<"\n"; ok=keysOk && ok;
+    }
+    {
         // Design rule: from the right expand, sort arrows, toggle, then a text button, each in one column per group;
         // a row with only a text button (Add, Reset) has it at the far right.
         bool alignOk=true; int toggles=0;

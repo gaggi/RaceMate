@@ -4,8 +4,7 @@ public:
     GeneralPage() : PageWindow(ui.heading,ui.text) {}
 private:
     enum class Key { None, StartWithWindows, StartMinimized, RefreshRate, TitleBar, OpponentFuel, PitLane, PitService, Hotkey, CheckUpdates, Version };
-    static constexpr int ListId=100, HotkeyId=200, HotkeyResetId=201, LaneEditId=202, TiresEditId=203, RateEditId=204;
-    // Expanded rows beyond the three shortcuts.
+    static constexpr int ListId=100, HotkeyId=200, LaneEditId=202, TiresEditId=203, RateEditId=204;
     static constexpr int LaneRow=10, ServiceRow=11;
     // Below 5 Hz short offtracks and pit timing get lost.
     static constexpr int Rates[]={5,10,15,20};
@@ -13,7 +12,34 @@ private:
     void OnCreate() override {
         list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont());
         editors_.Attach(list_,Instance(),TextFont());
+        // Records a new shortcut while a shortcut's button waits for one: a hotkey field out of sight that takes the
+        // keys. A shortcut always needs Ctrl or Alt so plain typing is never captured.
+        capture_=CreateWindowExW(0,HOTKEY_CLASSW,L"",WS_CHILD|WS_VISIBLE,-50,-50,1,1,Handle(),reinterpret_cast<HMENU>(static_cast<INT_PTR>(HotkeyId)),Instance(),nullptr);
+        SendMessageW(capture_,HKM_SETRULES,HKCOMB_NONE|HKCOMB_S,MAKELPARAM(HOTKEYF_CONTROL|HOTKEYF_ALT,0));
+        SetWindowSubclass(capture_,CaptureProc,1,reinterpret_cast<DWORD_PTR>(this));
         Refresh();
+    }
+    // Esc cancels, Backspace or Delete turns the shortcut off; leaving the field ends the wait.
+    static LRESULT CALLBACK CaptureProc(HWND w,UINT m,WPARAM wp,LPARAM lp,UINT_PTR id,DWORD_PTR data) {
+        auto* page=reinterpret_cast<GeneralPage*>(data);
+        const bool modified=GetKeyState(VK_CONTROL)<0 || GetKeyState(VK_MENU)<0;
+        if((m==WM_KEYDOWN || m==WM_SYSKEYDOWN) && !modified && (wp==VK_ESCAPE || wp==VK_BACK || wp==VK_DELETE)) {
+            if(wp!=VK_ESCAPE && page->capturing_>=0) { app.hotkeys[page->capturing_]=0; Save(); }
+            page->EndCapture(); return 0;
+        }
+        if(m==WM_GETDLGCODE) return DLGC_WANTALLKEYS;
+        if(m==WM_SETFOCUS && app.hotkeysEnabled) UnregisterHotkeys();
+        if(m==WM_KILLFOCUS) { RegisterHotkeys(); if(page->capturing_>=0) { page->capturing_=-1; PostMessageW(app.main,RefreshUiMessage,0,0); } }
+        if(m==WM_NCDESTROY) RemoveWindowSubclass(w,CaptureProc,id);
+        return DefSubclassProc(w,m,wp,lp);
+    }
+    void StartCapture(int hotkey) {
+        capturing_=hotkey; SendMessageW(capture_,HKM_SETHOTKEY,0,0);
+        Refresh(); SetFocus(capture_);
+    }
+    void EndCapture() {
+        capturing_=-1; SetFocus(list_.Handle()); // Registers the shortcuts again.
+        Refresh(); UpdateStatus();
     }
     void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
 
@@ -31,7 +57,7 @@ private:
         header(L"Overlays");
         RowList::Row rate; rate.title=L"Background rate"; rate.detail=std::to_wstring(app.rate)+L" Hz  \u00B7  for Race Control events and pit stops; overlays have their own rate, a faster one raises it"; rate.button=L"Choose...";
         push(std::move(rate),Key::RefreshRate);
-        toggle(Key::TitleBar,L"Title bar",L"Switches the configurable header of every overlay. Each overlay also has its own header and footer settings.",app.showTitleBar);
+        toggle(Key::TitleBar,L"Headers on all overlays",L"Switches the header of every overlay at once; each overlay's page also sets its own header and footer.",app.showTitleBar);
         header(L"Opponent fuel estimate");
         RowList::Row fuel; fuel.title=L"Additional laps with fuel saving";
         fuel.detail=L"+"+std::to_wstring(app.opponentFuelExtraLaps)+(app.opponentFuelExtraLaps==1?L" lap":L" laps")+L" for yellow SAVE. Green END uses your normal full-tank range. Shared by Relative and Standings."; fuel.button=L"Choose...";
@@ -60,13 +86,18 @@ private:
             service.iconButtons={expanded_==ServiceRow?Glyph::Collapse:Glyph::Expand}; service.expandHeight=expanded_==ServiceRow?48:0;
             push(std::move(service),Key::PitService);
         }
-        header(L"Shortcuts  \u00B7  work in every program");
-        const wchar_t* names[]={L"Move overlays",L"Hide all overlays",L"Open RaceMate",L"Previous event in Race Control",L"Next event in Race Control"};
-        static_assert(std::size(names)==HotkeyCount);
+        header(L"Shortcuts  \u00B7  work in every program, iRacing too");
+        // Click the shortcut, then press the new one; the reset arrow appears where it differs from the default.
+        const wchar_t* names[]={L"Move overlays",L"Hide all overlays",L"Open settings",L"Previous event in Race Control",L"Next event in Race Control"};
+        const wchar_t* details[]={L"Drag the overlays with the mouse; press it again when done.",L"Hides every overlay, and shows them again.",
+            L"Brings this window to the front.",L"Replays the event before the selected one; opens Race Control if it is closed.",L"Replays the event after the selected one."};
+        static_assert(std::size(names)==HotkeyCount && std::size(details)==HotkeyCount);
         for(int i=0;i<HotkeyCount;++i) {
-            RowList::Row row; row.title=names[i]; row.detail=HotkeyText(app.hotkeys[i]);
+            RowList::Row row; row.title=names[i]; row.detail=details[i];
+            row.button=i==capturing_?L"Press a shortcut \u2026":HotkeyText(app.hotkeys[i]);
+            if(i==capturing_) row.detail=L"With Ctrl or Alt  \u00B7  Esc cancels  \u00B7  Backspace turns it off";
             if(app.hotkeyError.find(HotkeyKeys[i])!=std::wstring::npos) { row.pill=L"In use"; row.pillTone=RowList::Tone::Warning; }
-            row.iconButtons={i==expanded_?Glyph::Collapse:Glyph::Expand}; row.expandHeight=i==expanded_?48:0;
+            row.iconButtons={app.hotkeys[i]!=DefaultHotkeys[i]?Glyph::Reset:wchar_t{0}};
             push(std::move(row),Key::Hotkey,i);
         }
         header(L"Updates");
@@ -76,7 +107,6 @@ private:
     }
     int ExpandedRow() const {
         for(size_t i=0;i<keys_.size();++i) {
-            if(keys_[i]==Key::Hotkey && hotkeys_[i]==expanded_) return static_cast<int>(i);
             if((keys_[i]==Key::PitLane && expanded_==LaneRow) || (keys_[i]==Key::PitService && expanded_==ServiceRow)) return static_cast<int>(i);
         }
         return -1;
@@ -95,15 +125,8 @@ private:
                 editors_.Label(L"Refuel",186,10,52); editors_.Edit(RateEditId,app.pitTimes.rate>0?Format(app.pitTimes.rate,2):L"",242,10,64); editors_.Label(L"l/s",312,10,30);
             }
             if(!known) for(int id:{LaneEditId,TiresEditId,RateEditId}) if(HWND edit=editors_.Get(id)) EnableWindow(edit,FALSE);
-            editors_.Position(); return;
+            editors_.Position();
         }
-        const HWND field=editors_.Add(HOTKEY_CLASSW,L"",WS_TABSTOP|WS_BORDER,HotkeyId,0,10,200,26);
-        // A shortcut always needs Ctrl or Alt so plain typing is never captured.
-        SendMessageW(field,HKM_SETRULES,HKCOMB_NONE|HKCOMB_S,MAKELPARAM(HOTKEYF_CONTROL|HOTKEYF_ALT,0));
-        SendMessageW(field,HKM_SETHOTKEY,app.hotkeys[expanded_],0); SetWindowSubclass(field,HotkeyFieldProc,1,0);
-        editors_.Button(HotkeyResetId,L"Reset",212,9,90);
-        editors_.Label(L"Click the field and press a combination with Ctrl or Alt.",316,10,0);
-        editors_.Position();
     }
     // Keeps a typed value; empty or invalid removes it.
     void ApplyPitTime(int id) {
@@ -129,18 +152,13 @@ private:
     bool OnCommand(int id,int code,HWND control) override {
         if(id==PageRefreshId) { Refresh(); return true; }
         if(id==HotkeyId) {
-            // Modifier-only intermediate states have no key yet; registration follows when the field loses focus.
+            // Modifier-only intermediate states have no key yet; the first full combination is the new shortcut.
             const WORD hotkey=static_cast<WORD>(SendMessageW(control,HKM_GETHOTKEY,0,0));
-            if(code==EN_CHANGE && expanded_>=0 && LOBYTE(hotkey)) { app.hotkeys[expanded_]=hotkey; Save(); Refresh(); }
+            if(code==EN_CHANGE && capturing_>=0 && LOBYTE(hotkey)) { app.hotkeys[capturing_]=hotkey; Save(); EndCapture(); }
             return true;
         }
         if(id==LaneEditId || id==TiresEditId || id==RateEditId) {
             if(code==EN_KILLFOCUS) { ApplyPitTime(id); Refresh(); }
-            return true;
-        }
-        if(id==HotkeyResetId) {
-            // Back to the default shortcut.
-            if(code==BN_CLICKED && expanded_>=0) { app.hotkeys[expanded_]=DefaultHotkeys[expanded_]; SendMessageW(editors_.Get(HotkeyId),HKM_SETHOTKEY,app.hotkeys[expanded_],0); RegisterHotkeys(); Save(); Refresh(); UpdateStatus(); }
             return true;
         }
         if(id!=ListId) return false;
@@ -162,7 +180,10 @@ private:
                 if(choice>=0) { app.opponentFuelExtraLaps=choice; SettingChanged(); Refresh(); }
             }
             break;
-        case Key::Hotkey: if(code==RowList::kIconButton || code==RowList::kActivated) Expand(hotkeys_[row]); break;
+        case Key::Hotkey:
+            if(code==RowList::kIconButton) { app.hotkeys[hotkeys_[row]]=DefaultHotkeys[hotkeys_[row]]; RegisterHotkeys(); Save(); Refresh(); UpdateStatus(); }
+            else if(pressed) StartCapture(hotkeys_[row]);
+            break;
         case Key::PitLane: if(code==RowList::kIconButton || code==RowList::kActivated) Expand(LaneRow); break;
         case Key::PitService: if(code==RowList::kIconButton || code==RowList::kActivated) Expand(ServiceRow); break;
         case Key::CheckUpdates: if(code==RowList::kToggled) { SetCheckUpdates(on); Refresh(); } break;
@@ -177,6 +198,6 @@ private:
 
     RowList list_; RowEditors editors_;
     std::vector<Key> keys_; std::vector<int> hotkeys_;
-    int expanded_=-1; std::wstring startupError_;
+    int expanded_=-1, capturing_=-1; HWND capture_=nullptr; std::wstring startupError_;
 };
 HWND CreateGeneralPage(HWND parent) { return PageWindow::Show(std::make_unique<GeneralPage>(),app.instance,parent,560,360); }

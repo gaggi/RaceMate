@@ -28,7 +28,7 @@
 // Row icon buttons, the same on every page (Segoe Fluent Icons / Segoe MDL2 Assets).
 namespace Glyph
 {
-    inline constexpr wchar_t Expand = L'\uE70D', Collapse = L'\uE70E', Up = L'\uE74A', Down = L'\uE74B', Remove = L'\uE74D';
+    inline constexpr wchar_t Expand = L'\uE70D', Collapse = L'\uE70E', Up = L'\uE74A', Down = L'\uE74B', Remove = L'\uE74D', Reset = L'\uE7A7';
 }
 
 class RowList
@@ -168,6 +168,11 @@ public:
     void PressIconButton(int index, int iconButton)
     {
         if (index >= 0 && index < static_cast<int>(rows_.size())) Activate({index, PartKind::IconButton, iconButton});
+    }
+    // Acts on a row's text button as a click on it does.
+    void PressButton(int index)
+    {
+        if (index >= 0 && index < static_cast<int>(rows_.size())) Activate({index, PartKind::Button});
     }
 
     // Keeps the expanded area of a row in view, e.g. right after expanding it.

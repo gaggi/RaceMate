@@ -46,11 +46,11 @@ private:
             row.muted=MapOnly(o_); row.toggleEnabled=!MapOnly(o_);
             push(std::move(row),key);
         }
-        heading(L"SVG source");
-        RowList::Row status; status.title=L"Automatic layout match"; status.detail=L"Exact iRacing TrackID plus internal TrackName. Unknown layouts are left empty. Preview uses Lime Rock GP with sample cars."; push(std::move(status),Info);
+        heading(L"Map data");
+        RowList::Row status; status.title=L"Track detection"; status.detail=L"Exact iRacing TrackID plus internal TrackName. Unknown layouts are left empty. Preview uses Lime Rock GP with sample cars."; push(std::move(status),Info);
         RowList::Row retry; retry.title=L"Retry loading this map"; retry.detail=L"Uses valid cached geometry. Retries missing corner labels immediately; otherwise failed label requests wait six hours."; retry.button=L"Retry"; push(std::move(retry),Retry);
-        RowList::Row cache; cache.title=L"Local SVG cache"; cache.detail=TrackMapCache().wstring(); cache.button=L"Open folder"; push(std::move(cache),Cache);
-        RowList::Row note; note.title=L"Experimental distance projection"; note.detail=L"Start/finish and direction come from the official SVG. Lap percentages follow its prepared path length. No learned fallback or per-track corrections. SVGs download once per layout while this overlay is enabled."; push(std::move(note),Info);
+        RowList::Row cache; cache.title=L"Map cache"; cache.detail=TrackMapCache().wstring(); cache.button=L"Open folder"; push(std::move(cache),Cache);
+        RowList::Row note; note.title=L"Car positions"; note.detail=L"Start/finish and direction come from the official SVG. Lap percentages follow its prepared path length. No learned fallback or per-track corrections. SVGs download once per layout while this overlay is enabled."; push(std::move(note),Info);
         list_.SetRows(std::move(rows));
     }
     void BuildEditors() {
