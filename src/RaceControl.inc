@@ -388,7 +388,7 @@ bool RaceIncidentsHigh(int incidents) {
 double RaceStintSeconds(const Row& row) {
     const double missing=std::numeric_limits<double>::quiet_NaN();
     if(!app.frame.connected || app.session.type!="Race" || View(app.frame)==ViewMode::Replay || row.car.pit || row.car.towing || row.car.surface<0) return missing;
-    if(app.preview) return row.car.stintLaps>=0?row.car.stintLaps*139.4:missing;
+    if(app.preview) return row.car.stintLaps>=0?row.car.stintLaps*53.7:missing;
     const double start=row.car.stintStartTime;
     return std::isfinite(start) && start>=0 && std::isfinite(app.frame.time) && app.frame.time>=start?app.frame.time-start:missing;
 }
@@ -475,10 +475,12 @@ void UpdateRaceControl(bool force) {
         std::vector<RaceEvent> all;
         if(app.preview) {
             const EventType types[]={EventType::Offtrack,EventType::Incident,EventType::Crash,EventType::PitEntry,EventType::PitStop,EventType::Overtake};
+            // The race so far, about 53 s a lap: the pass by a car that is ahead now, the stop that took 42 s.
             for(int i=5;i>=0;--i) {
-                const auto& driver=app.session.drivers[i]; RaceEvent e;
-                e.id=i+1; e.type=types[i]; e.session=0; e.car=driver.index; e.time=600+i*42; e.lap=4+i/2; e.number=driver.number; e.driver=driver.name;
-                e.estimated=i==2 || i==5; e.detail=i==2?"New repair flag; possible crash":(i==4?"Pit lane visit: 42 s":(i==5?"Passed #12 Luca Weber":"Observed during this session"));
+                const int who=i==4?5:(i==5?4:i); const auto& driver=app.session.drivers[who]; RaceEvent e;
+                e.id=i+1; e.type=types[i]; e.session=0; e.car=driver.index; e.time=100+i*55; e.lap=static_cast<int>(e.time/53.3)+1; e.number=driver.number; e.driver=driver.name;
+                const auto& passed=app.session.drivers[5];
+                e.estimated=i==2 || i==5; e.detail=i==2?"New repair flag; possible crash":(i==4?"Pit lane visit: 42 s":(i==5?"Passed #"+passed.number+" "+passed.name:"Observed during this session"));
                 all.push_back(e);
             }
         } else { const auto& recorded=app.events.Events(); all.assign(recorded.rbegin(),recorded.rend()); }

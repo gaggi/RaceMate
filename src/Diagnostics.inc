@@ -219,8 +219,8 @@ int RunDiagnostics() {
         if(trackMap.ready && !trackMap.geometry.pitPaths.empty()) {
             const auto savedNow=app.now; const auto pitting=std::find_if(app.session.drivers.begin(),app.session.drivers.end(),[](const Driver& d){ return app.frame.cars[d.index].pit; });
             if(pitting!=app.session.drivers.end()) {
-                app.now=static_cast<ULONGLONG>((1-std::fmod(pitting->index*.091,1.))*90000); UpdateOverlays();
-                const double lap=std::fmod(app.now/90000.+pitting->index*.091,1.);
+                app.frame.cars[pitting->index].pct=.995; InvalidateModel(); UpdateOverlays();
+                const double lap=app.frame.cars[pitting->index].pct;
                 const auto onPit=trackMap.geometry.PitAt(lap), onTrack=trackMap.geometry.At(lap);
                 pitOk=(onPit.x!=onTrack.x || onPit.y!=onTrack.y) && Export(map.window,L"build\\qa\\trackmap-pit-lane.bmp") && pitOk;
                 app.now=savedNow; UpdateOverlays();
@@ -1199,7 +1199,7 @@ int RunDiagnostics() {
         app.ratingChanges.fill(NoRatingChange); app.ratingVersion=app.modelVersion;
         app.ratingChanges[leader.driver.index]=12; app.ratingChanges[saver.driver.index]=-10;
         extrasOk=RaceStandingCell(leader,RaceRatingChangeField)==L"+12" && RaceStandingCell(saver,RaceRatingChangeField)==L"-10" && RaceStandingCell(unknown,RaceRatingChangeField)==L"\u2014" && extrasOk;
-        extrasOk=RaceStandingCell(leader,RaceStintTimeField)==L"23:14" && RaceStandingCell(unknown,RaceStintTimeField)==L"\u2014" && extrasOk;
+        extrasOk=RaceStandingCell(leader,RaceStintTimeField)==L"8:57" && RaceStandingCell(unknown,RaceStintTimeField)==L"\u2014" && extrasOk;
         extrasOk=RaceStandingCell(leader,RaceStopsField)==L"10" && RaceStandingCell(unknown,RaceStopsField)==L"\u2014" && extrasOk;
         for(int column:{RaceFuelField,RaceStintLapsField,RaceStintTimeField,RaceStopsField,RaceRatingChangeField,RaceBrandField}) {
             raceControl.sortColumn=column;
@@ -1228,7 +1228,7 @@ int RunDiagnostics() {
         wchar_t lapText[32]{}; NMLVDISPINFOW item{}; item.hdr.hwndFrom=raceControl.feed; item.hdr.code=LVN_GETDISPINFOW;
         item.item.mask=LVIF_TEXT; item.item.iItem=0; item.item.iSubItem=lapColumn; item.item.pszText=lapText; item.item.cchTextMax=32;
         SendMessageW(raceControl.window,WM_NOTIFY,RaceFeedId,reinterpret_cast<LPARAM>(&item));
-        extrasOk=std::wstring(lapText)==L"4" && extrasOk;
+        extrasOk=std::wstring(lapText)==L"2" && extrasOk; // The earliest event, 100 s into the race.
         auto infoText=[] { wchar_t text[512]{}; GetWindowTextW(RaceItem(RaceInfoId),text,512); return std::wstring(text); };
         UpdateRaceControl(true); RECT withInfo{}; GetWindowRect(raceControl.feed,&withInfo);
         extrasOk=IsWindowVisible(RaceItem(RaceInfoId)) && infoText().find(LeaderDistanceValue())!=std::wstring::npos && infoText().find(WhiteFlagTimeValue())!=std::wstring::npos && extrasOk;
@@ -1353,7 +1353,8 @@ int RunDiagnostics() {
     {
         const auto savedFrame=app.frame; const auto savedSession=app.session; const auto savedStandings=First(StandingsKind).table.standings;
         app.preview=false; app.session.type="Race"; app.frame.state=4; First(StandingsKind).table.standings={}; First(StandingsKind).table.standings.liveGaps=true;
-        app.frame.cars[app.frame.player].pct=.52; app.frame.cars[app.frame.player].estTime=.52*138.2;
+        // Just past the leader on the same lap.
+        app.frame.cars[app.frame.player].pct=app.frame.cars[0].pct+.02; app.frame.cars[app.frame.player].estTime=app.frame.cars[app.frame.player].pct*53.3;
         UpdateOverlays(); const auto liveRows=Rows(First(1)); const auto liveRelative=Rows(First(0));
         const auto player=std::find_if(liveRelative.begin(),liveRelative.end(),[](const Row& row){return row.player;});
         ok=player!=liveRelative.end() && player->car.position==1 && !liveRows.empty() && liveRows.front().player && liveRows.front().car.classPosition==1 && ok;

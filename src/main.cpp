@@ -760,10 +760,14 @@ void RegisterHotkeys() {
 }
 // Derived data is cached per model version, so nothing is computed for overlays or footers that are not shown.
 void InvalidateModel() { ++app.modelVersion; }
+// The preview's race at Lime Rock Park: GT3 laps of about 53 s, the leader's and your pace.
+constexpr double PreviewLeaderPace=53.3, PreviewOwnPace=53.7;
 FuelPlan PreviewPlan() {
-    FuelPlan p; p.samples=12; p.stintStartLap=4; p.lapsToFinish=12.55;
-    auto& race=p.prediction; race.status=PredictionStatus::Racing; race.leader=0; race.leaderPace=138.2; race.ownPace=139.4;
-    auto& finish=race.finish; finish.valid=true; finish.winner=0; finish.leaderTotalDistance=19+17/race.leaderPace; finish.leaderDistance=12.02; finish.finalLapTimeLeft=17;
+    // You finish on lap 20: the laps to go follow your place on the lap.
+    FuelPlan p; p.samples=12; p.stintStartLap=4; p.lapsToFinish=std::max(0.0,20-(app.frame.lapCompleted+app.frame.lapPct));
+    auto& race=p.prediction; race.status=PredictionStatus::Racing; race.leader=0; race.leaderPace=PreviewLeaderPace; race.ownPace=PreviewOwnPace;
+    // The leader at 7.5 laps with 630 s left: 11.8 laps to go, the final lap starting 17 s before the clock runs out.
+    auto& finish=race.finish; finish.valid=true; finish.winner=0; finish.leaderTotalDistance=19+17/race.leaderPace; finish.leaderDistance=finish.leaderTotalDistance-7.5; finish.finalLapTimeLeft=17;
     finish.ownDistance=p.lapsToFinish;
     const double burns[]={3.09,3.12,3.10,3.21,2.98,3.11,3.13}; const int counts[]={1,10,5,12,12,12,3};
     for(int i=0;i<FuelMetricCount;++i) p.estimates[i]={burns[i],std::max(0.0,finish.ownDistance*burns[i]-app.frame.fuel),counts[i]};
@@ -2003,13 +2007,28 @@ void PreviewWeather() {
         app.weatherHistory.Update(app.session,sample);
     }
 }
+// Sample data for the preview: one race that every overlay shows alike. Lime Rock Park, as on the track map, 18 minutes;
+// it starts with you on lap 8 and 630 s left and runs five minutes before it starts over. The cars keep their gaps
+// and move on together: laps, clock, fuel and stints with them.
 void PreviewData(double time) {
     app.session=DemoSession(); app.frame=DemoFrame(time); app.frame.pit=false;
-    for(auto& d:app.session.drivers) { d.license="A 3.45"; d.licenseColor=0x55aaff; auto& c=app.frame.cars[d.index]; c.tireCompound=d.index%2; c.lastPitLap=8; c.lastPitDuration=42.3; c.lastPitStationary=21.6; }
-    app.frame.cars[1].outLap=true; app.frame.cars[2].pit=true; app.frame.cars[2].pitStationary=8.4; app.frame.cars[5].surface=-1;
-    for(int i=0;i<10;++i) { auto& c=app.frame.cars[i]; c.stintLaps=i==2?0:(i==6?-1:3+i); c.stops=i==6?-1:1; }
-    // Without it every car behind you is also behind on track, leaving the Relative's top row empty.
-    auto& lapped=app.frame.cars[9]; lapped.lap=7; lapped.pct=app.frame.cars[3].pct+.12; lapped.estTime=lapped.pct*138.2;
+    auto& s=app.session; auto& f=app.frame;
+    s.track="Lime Rock Park"; s.trackName="limerock 2019 gp"; s.trackConfig="Grand Prix"; s.trackId=353; s.trackMeters=2470;
+    const double run=std::fmod(std::max(0.0,time),300.), laps=run/PreviewLeaderPace;
+    f.timeTotal=1080; f.timeLeft=630-run; f.bestLap=52.9+3*.07; f.lastLap=PreviewOwnPace;
+    const char* licenses[]={"A 4.21","A 3.45","B 3.88","B 2.94","A 2.67","C 3.12","B 4.05","C 2.38","D 2.71","B 1.96"};
+    for(int i=0;i<10;++i) {
+        auto& d=s.drivers[i]; auto& c=f.cars[i]; d.license=licenses[i];
+        // 2.6 s apart on track as in the gaps, the last car a lap down behind you; laps of about 53 s.
+        const double progress=(i==9?6.57:7.45+(3-i)*2.6/PreviewLeaderPace)+laps;
+        c.completed=static_cast<int>(progress); c.lap=c.completed+1; c.pct=progress-c.completed; c.estTime=c.pct*PreviewLeaderPace;
+        c.best=52.9+i*.07; c.last=53.4+i*.09; c.tireCompound=i%2; c.lastPitDuration=42.3; c.lastPitStationary=21.6;
+        // A stop each one to six laps before lap 8, the third car in the pits now; one car joined late.
+        const int stint=i==2?0:(i==6?-1:1+(i*3)%6);
+        c.lastPitLap=stint>=0?8-stint:-1; c.stintLaps=stint>=0?c.lap-c.lastPitLap:-1; c.stops=i==6?-1:1;
+    }
+    const auto& own=f.cars[3]; f.lapCompleted=own.completed; f.lapPct=own.pct; f.fuel=27.4-3.12*laps;
+    f.cars[1].outLap=true; f.cars[2].pit=true; f.cars[2].pitStationary=8.4; f.cars[5].surface=-1;
     PreviewWeather();
     for(auto& driver:app.session.drivers) if(driver.index>=6) {
         driver.classId=2; driver.className="GT4"; driver.classColor=0x67b7ff;
@@ -2039,7 +2058,7 @@ void Tick() {
     {
         ProfileScope total("tick (everything below)");
         app.now=GetTickCount64();
-        if(app.preview) PreviewData(app.now/1000.0);
+        if(app.preview) PreviewData(app.diagnostics?0:app.now/1000.0);
         else {
             bool connected=false;
             { ProfileScope p("telemetry read (session YAML included)"); connected=app.telemetry.Read(app.frame,app.session); }
