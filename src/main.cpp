@@ -71,10 +71,10 @@ enum Metric {
     NoMetric, TrackMetric, IncidentsMetric, TrackTempMetric, AirTempMetric, TemperaturesMetric, TimeRemainingMetric, TimeElapsedMetric,
     CurrentLapMetric, FinalLapMetric, LapsRemainingMetric, LocalTimeMetric, SimTimeMetric, SessionTypeMetric, WetnessMetric, WindMetric,
     SofMetric, OverlayNameMetric, PositionMetric, BrakeBiasMetric, StopsNeededMetric, DeclaredWetMetric,
-    LeaderDistanceMetric, WhiteFlagTimeMetric, LapLeaderDistanceMetric, TrackLayoutMetric, PitExitMetric
+    LeaderDistanceMetric, WhiteFlagTimeMetric, LapLeaderDistanceMetric, TrackLayoutMetric, PitExitMetric, FuelAtFinishMetric
 };
-constexpr int MetricCount=PitExitMetric+1;
-const wchar_t* MetricTitles[]={L"None",L"Track",L"Incidents",L"Track Temperature",L"Air Temperature",L"Temperatures",L"Session Time Remaining",L"Session Time Elapsed",L"Current Lap",L"Current / Expected Final Lap",L"Estimated Laps Remaining",L"Local Time",L"Sim Time",L"Session Type",L"Track Wetness",L"Wind",L"Class SOF",L"Overlay Name",L"Position in Class",L"Brake Bias (your car)",L"Stops Needed (your car)",L"Declared Wet",L"Leader projected race distance",L"Time left at leader's final lap",L"Current lap / Leader projected distance",L"Track and layout",L"Pit exit (your car)"};
+constexpr int MetricCount=FuelAtFinishMetric+1;
+const wchar_t* MetricTitles[]={L"None",L"Track",L"Incidents",L"Track Temperature",L"Air Temperature",L"Temperatures",L"Session Time Remaining",L"Session Time Elapsed",L"Current Lap",L"Current / Expected Final Lap",L"Estimated Laps Remaining",L"Local Time",L"Sim Time",L"Session Type",L"Track Wetness",L"Wind",L"Class SOF",L"Overlay Name",L"Position in Class",L"Brake Bias (your car)",L"Stops Needed (your car)",L"Declared Wet",L"Leader projected race distance",L"Time left at leader's final lap",L"Current lap / Leader projected distance",L"Track and layout",L"Pit exit (your car)",L"Fuel at finish (your car)"};
 static_assert(std::size(MetricTitles)==MetricCount);
 // The first slot sits on the left, the others right-aligned in order. Keys keep their earlier names.
 constexpr int SlotCount=4;
@@ -860,6 +860,8 @@ COLORREF Mix(COLORREF base,COLORREF ink,double alpha) {
     auto channel=[&](int b,int i){ return static_cast<int>(std::lround(b+(i-b)*alpha)); };
     return RGB(channel(GetRValue(base),GetRValue(ink)),channel(GetGValue(base),GetGValue(ink)),channel(GetBValue(base),GetBValue(ink)));
 }
+// Litres with their sign: +10.8 L spare, −4.2 L missing.
+std::wstring SignedLitres(double value) { return std::isfinite(value)?(value>=0?L"+":L"\u2212")+Format(std::abs(value),1)+L" L":std::wstring(L"\u2014"); }
 // The pit window at the 10-lap average and the own pace, as the Fuel Calculator and the Stops Needed metric show it.
 // Writes a positive value, or removes the key.
 void WriteNumber(const wchar_t* section,const std::wstring& key,double value) {
@@ -1274,6 +1276,12 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         const double capacity=app.session.fuelCapacity; const bool capacityKnown=std::isfinite(capacity) && capacity>0;
         const double range=tankKnown && burn>0?f.fuel/burn:-1, refuel=burn>0?basis.add:-1, needed=burn>0 && p.lapsToFinish>=0?burn*p.lapsToFinish:-1;
         const bool refuelFits=refuel>=0 && (!capacityKnown || refuel<=capacity);
+        // At the finish at the current consumption: spare when no stop is needed any more, else missing; a small
+        // shortfall can be saved instead, up to a tenth of the average.
+        const double atFinish=tankKnown && burn>0?window.fuelAtEnd:std::numeric_limits<double>::quiet_NaN();
+        const bool spare=std::isfinite(atFinish) && atFinish>=0;
+        const double save=std::isfinite(atFinish) && atFinish<0 && p.lapsToFinish>0?-atFinish/p.lapsToFinish:-1;
+        const bool saveable=save>0 && save<=.1*burn;
         const int current=f.lapCompleted>=0?f.lapCompleted+1:-1, finishLap=FuelFinishLap();
         auto lap=[](int number){ return number>0?L"L"+std::to_wstring(number):std::wstring(L"—"); };
         // Targets: the most fuel per lap that still reaches the latest stop, or the finish when no stop is needed.
@@ -1292,7 +1300,10 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             for(int id:o.fuel.order) if(on[id]) switch(id) {
             case TankModule: item(L"TANK",litres(tankKnown?f.fuel:-1),white); item(L"RANGE",range>=0?Format(range,1)+L" laps":L"—",Ink::Accent); break;
             case FiguresModule: item(L"AVG 10",burn>0?Format(burn,2):L"—",white); break;
-            case RefuelCard: item(L"REFUEL",litres(refuel,true),refuel<0?Ink::Muted:(refuelFits?Ink::Green:Ink::Red)); break;
+            case RefuelCard:
+                if(spare) item(L"AT FINISH",SignedLitres(atFinish),Ink::Green);
+                else item(L"REFUEL",litres(refuel,true),refuel<0?Ink::Muted:(refuelFits?Ink::Green:Ink::Red));
+                break;
             case WindowCard: item(L"BOX BY",open?lap(window.lastLap):L"—",white); break;
             case TargetRow: item(L"TARGET",target(0)>=0?Format(target(0),2):L"—",targetInk(target(0))); break;
             case OneLongerRow: item(L"+1 LAP",target(1)>=0?Format(target(1),2):L"—",targetInk(target(1))); break;
@@ -1340,10 +1351,12 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                     fill(rect(left,top,span,12),Ink::BarBack);
                     auto at=[&](double value){ return left+static_cast<int>(span*std::clamp(value/scale,0.0,1.0)); };
                     if(scale>0 && tankKnown) fill(rect(left,top,at(f.fuel)-left,12),Ink::Accent);
+                    if(scale>0 && spare && needed>=0) fill(rect(at(needed),top,at(f.fuel)-at(needed),12),Ink::Green);
                     if(scale>0 && tankKnown && needed>f.fuel) out.push_back({DrawCommand::Hatch,Regular,0,{px(at(f.fuel)),px(top)-titleOffset,px(at(needed)),px(top+12)-titleOffset},Ink::HatchFore,{static_cast<float>(Ink::HatchBack)}});
                     if(scale>0 && needed>=0) fill(rect(at(needed)-1,top-4,2,20),RGB(255,255,255));
                     fill(rect(16,y+97,8,8),Ink::Accent); label(L"In tank",rect(29,y+92,70,18),Ink::Muted,Small);
                     if(tankKnown && needed>f.fuel) { fill(rect(100,y+97,8,8),Ink::Missing); label(L"Missing "+litres(needed-f.fuel),rect(113,y+92,130,18),Ink::Muted,Small); }
+                    if(spare) { fill(rect(100,y+97,8,8),Ink::Green); label(L"Spare "+litres(atFinish),rect(113,y+92,130,18),Ink::Muted,Small); }
                     if(needed>=0) { fill(rect(246,y+96,2,10),RGB(255,255,255)); label(L"Needed "+litres(needed)+L" · "+Format(p.lapsToFinish,1)+L" laps",rect(253,y+92,W-269,18),Ink::Muted,Small); }
                     y+=112;
                 }
@@ -1396,8 +1409,9 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                         label(std::move(value),rect(x+12,y+24,cardWidth-24,32),ink,Hero);
                         label(std::move(note),rect(x+12,y+56,cardWidth-24,16),Ink::Muted,Small); x+=cardWidth+10;
                     };
-                    for(int which:{id,pair?next:-1}) if(which==RefuelCard) card(L"REFUEL TO FINISH",litres(refuel,true),refuel<0?Ink::Muted:(refuelFits?Ink::Green:Ink::Red),
-                        refuel<0?L"waiting for laps":(refuel==0?L"enough fuel to finish":(refuelFits?L"fits in the tank":L"more than one tank")));
+                    for(int which:{id,pair?next:-1}) if(which==RefuelCard && spare) card(L"AT FINISH",SignedLitres(atFinish),Ink::Green,L"\u2248"+Format(atFinish/burn,1)+L" laps spare");
+                    else if(which==RefuelCard) card(L"REFUEL TO FINISH",litres(refuel,true),refuel<0?Ink::Muted:(refuelFits?Ink::Green:Ink::Red),
+                        refuel<0?L"waiting for laps":(saveable?L"or save "+Format(save,2)+L" L/lap":(refuel==0?L"enough fuel to finish":(refuelFits?L"fits in the tank":L"more than one tank"))));
                     else if(which==WindowCard) card(L"PIT WINDOW",open?lap(window.firstLap)+L"–"+std::to_wstring(window.lastLap):L"—",white,
                         open?(window.openNow?std::wstring(L"open now"):L"opens "+lap(window.firstLap))+L" · latest "+lap(window.lastLap)
                             :(noStop?L"no stop needed":(extraStop?L"an extra stop is needed":L"waiting for laps")));

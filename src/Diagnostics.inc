@@ -923,6 +923,15 @@ int RunDiagnostics() {
     fuelSummary=CalculatePitWindow(app.session,app.frame,Plan().lapsToFinish,Plan().estimates[5].consumption);
     ok=fuelSummary.stops==0 && fuelSummary.fuelAtEnd>0 && ok;
     ok=Export(First(2).window,L"build\\qa\\fuel-surplus.bmp") && ok;
+    {
+        // With no stop needed: the fuel left at the finish in the card, the tank bar's legend, the header pill and its own metric.
+        auto& fuel=First(FuelKind); const auto window=FuelWindow();
+        auto shows=[&](const std::wstring& text){ return std::any_of(fuel.scene.begin(),fuel.scene.end(),[&](const DrawCommand& c){ return c.type==DrawCommand::Text && c.text.find(text)!=std::wstring::npos; }); };
+        const auto spare=SignedLitres(window.fuelAtEnd);
+        bool finishOk=window.status==PitWindowStatus::NoStopNeeded && spare.rfind(L"+",0)==0 && shows(L"AT FINISH") && shows(L"laps spare") && shows(L"Spare ") && !shows(L"REFUEL TO FINISH");
+        finishOk=FooterValue(StopsNeededMetric)==L"NO STOP \u00B7 "+spare && FooterValue(FuelAtFinishMetric)==L"At finish "+spare && finishOk;
+        report<<"Fuel at the finish: card, tank bar, header pill and metric: "<<(finishOk?"PASS":"FAIL")<<"\n"; ok=finishOk && ok;
+    }
     app.session.fuelCapacity=14; app.frame.fuel=12; UpdateOverlays();
     fuelSummary=CalculatePitWindow(app.session,app.frame,Plan().lapsToFinish,Plan().estimates[5].consumption);
     ok=fuelSummary.stops==3 && ok;

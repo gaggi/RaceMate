@@ -105,11 +105,13 @@ MetricText Metric(int metric,const Overlay* o=nullptr) {
     }
     case StopsNeededMetric: {
         const auto window=FuelWindow(); MetricText text;
-        if(window.status==PitWindowStatus::NoStopNeeded) { text.parts[1]=L"NO STOP NEEDED"; text.pill=Ink::Green; }
+        // With the fuel left at the finish once it is known.
+        if(window.status==PitWindowStatus::NoStopNeeded) { text.parts[1]=std::isfinite(window.fuelAtEnd) && window.fuelAtEnd>=0?L"NO STOP \u00B7 "+SignedLitres(window.fuelAtEnd):L"NO STOP NEEDED"; text.pill=Ink::Green; }
         else if(window.status==PitWindowStatus::Open) { text.parts[1]=std::to_wstring(window.stops)+(window.stops==1?L" STOP NEEDED":L" STOPS NEEDED"); text.pill=Ink::Orange; }
         else if(window.status==PitWindowStatus::ExtraStopNeeded) { text.parts[1]=L"NO PIT WINDOW"; text.pill=Ink::Red; }
         return text;
     }
+    case FuelAtFinishMetric: return {L"At finish ",SignedLitres(FuelWindow().fuelAtEnd)};
     case DeclaredWetMetric: { MetricText text; if(f.declaredWet) { text.parts[1]=L"DECLARED WET"; text.pill=RGB(140,198,255); } return text; }
     case BrakeBiasMetric: return {L"BB ",reference==f.player && (f.dialsKnown>>BrakeBiasDial&1) && std::isfinite(f.dials[BrakeBiasDial])?Format(f.dials[BrakeBiasDial],1):L"—"};
     }
