@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(RaceMate VERSION 0.1.2 LANGUAGES CXX RC)
+project(RaceMate VERSION 0.2.0 LANGUAGES CXX RC)
 # Releases are looked up at github.com/<owner>/<repository>/releases/latest.
 set(RACEMATE_GITHUB_OWNER "gaggi" CACHE STRING "RaceMate GitHub owner")
 set(RACEMATE_GITHUB_REPOSITORY "RaceMate" CACHE STRING "RaceMate GitHub repository")
