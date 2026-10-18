@@ -1452,6 +1452,36 @@ int RunDiagnostics() {
     }
     ok=cornersOk && ok;
     report<<"Fixed corner: all four corners on every overlay, resize/shrink, no jump on selection and persisted anchors: "<<(cornersOk?"PASS":"FAIL")<<"\n";
+    {
+        // The app's preview: a simulated race the real analyses follow. Fuel, forecast, pit history and events all
+        // come from it, every overlay shows the same race, and nothing it learns reaches the settings.
+        wchar_t laneBefore[32]{}; GetPrivateProfileStringW(L"PitStop",L"Lane 353",L"",laneBefore,32,app.config.c_str());
+        app.diagnostics=false; app.preview=true; app.frame={}; app.session={};
+        const auto started=std::chrono::steady_clock::now(); StartPreviewRace();
+        const double catchUp=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
+        for(auto& o:app.overlays) o.place.enabled=o.kind!=PitLimiterKind;
+        app.now=GetTickCount64(); app.previewClock=app.now; UpdateOverlays();
+        for(int wait=0;wait<300 && !trackMap.ready && trackMap.task.Running();++wait) { Sleep(10); UpdateOverlays(); }
+        const auto& plan=Plan(); const auto window=FuelWindow(); const auto& f=app.frame; const auto& s=app.session;
+        bool simOk=s.key.rfind("preview ",0)==0 && f.time>=app.previewRace.ShowFrom() && plan.estimates[FuelBasis].samples>=5;
+        simOk=std::abs(plan.estimates[FuelBasis].consumption-2.42)<.4 && plan.lapsToFinish>0 && plan.prediction.status==PredictionStatus::Racing && simOk;
+        simOk=window.status!=PitWindowStatus::Unavailable && LeaderDistanceValue()!=L"\u2014" && simOk;
+        int stops=0; for(const auto& e:app.events.Events()) stops+=e.type==EventType::PitStop;
+        simOk=!app.events.Events().empty() && simOk;
+        const auto standings=Rows(First(StandingsKind)), relative=Rows(First(RelativeKind));
+        simOk=!relative.empty() && std::any_of(relative.begin(),relative.end(),[](const Row& r){ return r.player; }) && !standings.empty() && simOk;
+        // Gaps in the Relative have the sign of their place: cars shown above you are ahead.
+        for(size_t i=0;i+1<relative.size();++i) simOk=(!std::isfinite(relative[i].gap) || !std::isfinite(relative[i+1].gap) || relative[i].gap<=relative[i+1].gap+1e-6) && simOk;
+        // Four seconds on: the race moves, the same session goes on. A longer pause moves it at most five seconds.
+        const auto key=s.key; const double before=f.time; app.previewClock=GetTickCount64()-4000; Tick();
+        simOk=app.session.key==key && app.frame.time>before+3.9 && app.frame.time<before+5.1 && simOk;
+        wchar_t laneAfter[32]{}; GetPrivateProfileStringW(L"PitStop",L"Lane 353",L"",laneAfter,32,app.config.c_str());
+        simOk=wcscmp(laneBefore,laneAfter)==0 && simOk;
+        for(int kind:{RelativeKind,StandingsKind,FuelKind,WeatherKind,TrackMapKind}) simOk=Export(First(kind).window,L"build\\qa\\preview-race-"+std::to_wstring(kind)+L".bmp") && simOk;
+        report<<"Preview race: "<<s.drivers.size()<<" cars, catch-up "<<static_cast<int>(catchUp)<<" ms, "<<app.events.Events().size()<<" events ("<<stops<<" stops), fuel samples "
+            <<plan.estimates[FuelBasis].samples<<", window "<<static_cast<int>(window.status)<<": "<<(simOk?"PASS":"FAIL")<<"\n"; ok=simOk && ok;
+        app.diagnostics=true; PreviewData(0); UpdateOverlays();
+    }
     Frame liveFrame; Session liveSession;
     if(app.telemetry.Read(liveFrame,liveSession)) {
         app.preview=false; app.frame=liveFrame; app.session=liveSession; First(StandingsKind).table.standings={}; raceControl.message.clear();

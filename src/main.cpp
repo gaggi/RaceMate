@@ -1,6 +1,7 @@
 #include "Telemetry.h"
 #include "RaceControl.h"
 #include "TrackMapLoader.h"
+#include "PreviewRace.h"
 #include <windowsx.h>
 #include <commctrl.h>
 #include <shellapi.h>
@@ -283,6 +284,8 @@ struct App {
     unsigned opponentFuelVersion=~0u; int opponentFuelExtra=-1; bool opponentFuelPreview=false;
     std::array<OpponentFuelStatus,MaxCars> opponentFuelStatuses{};
     std::vector<DrawCommand> sceneBuffer; bool overlayClass=false;
+    // The preview's simulated race, and the clock it last advanced to.
+    PreviewRace previewRace; ULONGLONG previewClock=0;
     // When YawNorth last changed: within 3 s the heading belongs to a car that moves.
     double lastYaw=std::numeric_limits<double>::quiet_NaN(); ULONGLONG yawChanged=0;
     NOTIFYICONDATAW tray{};
@@ -307,6 +310,9 @@ ULONGLONG ProcessCpuMicroseconds() {
     auto value=[](FILETIME t){ return (static_cast<ULONGLONG>(t.dwHighDateTime)<<32|t.dwLowDateTime)/10; };
     return value(kernel)+value(user);
 }
+// The diagnostics' preview: fixed sample data their checks rely on. The app's preview is a simulated race instead,
+// which the real analyses follow like a session in iRacing.
+bool PreviewFixture() { return app.preview && app.diagnostics; }
 std::wstring Numbered(const wchar_t* name,int number) { return number>1?std::wstring(name)+L" "+std::to_wstring(number):std::wstring(name); }
 std::wstring Name(const Overlay& o) { return Numbered(Titles[o.kind],o.number); }
 // Sections of the active layout: "Layout 3: Relative 2"; layout 1 keeps the plain names.
@@ -775,7 +781,7 @@ FuelPlan PreviewPlan() {
 }
 const FuelPlan& Plan() {
     if(app.planVersion!=app.modelVersion) {
-        if(app.preview) app.fuelPlan=PreviewPlan();
+        if(PreviewFixture()) app.fuelPlan=PreviewPlan();
         else { const auto prediction=app.predictor.Predict(app.session,app.frame); app.fuelPlan=app.fuel.Plan(app.frame,&prediction); }
         app.planVersion=app.modelVersion;
     }
@@ -785,7 +791,7 @@ OpponentFuelStatus FuelFinishStatus(int index) {
     if(index<0 || index>=MaxCars) return OpponentFuelStatus::None;
     if(app.opponentFuelVersion!=app.modelVersion || app.opponentFuelExtra!=app.opponentFuelExtraLaps || app.opponentFuelPreview!=app.preview) {
         app.opponentFuelStatuses.fill(OpponentFuelStatus::None);
-        if(app.preview) { app.opponentFuelStatuses[0]=OpponentFuelStatus::End; app.opponentFuelStatuses[4]=OpponentFuelStatus::Save; }
+        if(PreviewFixture()) { app.opponentFuelStatuses[0]=OpponentFuelStatus::End; app.opponentFuelStatuses[4]=OpponentFuelStatus::Save; }
         else {
             const auto& plan=Plan();
             for(const auto& driver:app.session.drivers) if(driver.index>=0 && driver.index<MaxCars)
@@ -873,6 +879,8 @@ const Driver* PlayerDriver() {
 }
 void LoadPitTimes() {
     auto& t=app.pitTimes; const auto track=std::to_wstring(app.session.trackId);
+    // The preview neither reads nor keeps times: what it shows comes from its own race.
+    auto ReadNumber=[](const wchar_t* section,const std::wstring& key){ return app.preview?-1.0: ::ReadNumber(section,key); };
     if(app.session.trackId>=0 && app.pitLane.Track()!=app.session.trackId) { app.pitLane.Seed(app.session.trackId,ReadNumber(L"PitStop",L"Lane "+track)); t.samplesSaved=0; }
     if(t.track!=app.session.trackId) { t.track=app.session.trackId; t.fixedLane=t.track>=0?ReadNumber(L"PitStop",L"LaneFixed "+track):-1; }
     // Times depend on the car and on the server's rule set (DTM tires, NEC fuel rate), so they are kept per both.
@@ -885,6 +893,7 @@ void UpdatePitStop() {
     LoadPitTimes();
     app.pitLane.Update(app.session,app.frame); app.refuel.Update(app.frame);
     auto& t=app.pitTimes;
+    if(app.preview) return;
     if(app.pitLane.Samples()!=t.samplesSaved && app.pitLane.Samples()>0 && t.track>=0) { t.samplesSaved=app.pitLane.Samples(); WriteNumber(L"PitStop",L"Lane "+std::to_wstring(t.track),app.pitLane.Loss()); }
     if(app.refuel.Rate()>0 && std::abs(app.refuel.Rate()-t.rate)>.01 && !t.car.empty()) { t.rate=app.refuel.Rate(); WriteNumber(L"PitStop",L"FuelRate "+t.car,t.rate); }
 }
@@ -907,11 +916,11 @@ const PitRejoin& PitExit() {
     app.pitExitVersion=app.modelVersion; app.pitExit={}; app.pitExitPartial=false;
     const auto& f=app.frame;
     if(app.session.type!="Race" || f.pit || View(f)!=ViewMode::InCar) return app.pitExit;
-    const double lane=app.preview?22:PitLaneSeconds();
+    const double lane=PreviewFixture()?22:PitLaneSeconds();
     if(lane<=0) return app.pitExit;
     auto service=PlannedService(app.session,f); const double tires=TireChangeSeconds();
     if(service.tires>0 && tires<=0) { service.tires=0; app.pitExitPartial=true; }
-    const double stop=app.preview?20:std::max(0.0,ServiceTime(service,RefuelRateLitres(),tires,SimultaneousService(app.session)));
+    const double stop=PreviewFixture()?20:std::max(0.0,ServiceTime(service,RefuelRateLitres(),tires,SimultaneousService(app.session)));
     double pace=Plan().prediction.ownPace; if(!(pace>0)) pace=f.lastLap>0?f.lastLap:f.bestLap;
     app.pitExit=PredictRejoin(app.session,f,lane+stop,pace);
     return app.pitExit;
@@ -2035,11 +2044,27 @@ void ProcessFrame(bool connected) {
 }
 void WriteProfile();
 void AutoLayout();
+void ResetAnalyses() { app.pitLane.Reset(); app.refuel.Reset(); app.weatherHistory.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.events.Reset(); }
+void StartPreviewRace() {
+    LARGE_INTEGER counter{}; QueryPerformanceCounter(&counter);
+    ResetAnalyses(); app.previewRace.Start(static_cast<uint32_t>(counter.QuadPart^GetTickCount64()));
+    // Every analysis sees the race from the green flag, as if RaceMate had watched it all.
+    while(app.previewRace.Time()<app.previewRace.ShowFrom()) {
+        app.previewRace.Advance(.5); app.session=app.previewRace.CurrentSession(); app.frame=app.previewRace.CurrentFrame(); ProcessFrame(true);
+    }
+    app.previewClock=GetTickCount64();
+}
+void AdvancePreviewRace() {
+    if(app.previewRace.Finished() || app.previewRace.CurrentSession().drivers.empty()) { StartPreviewRace(); return; }
+    const double seconds=std::min(5.0,(app.now-app.previewClock)/1000.0); app.previewClock=app.now;
+    app.previewRace.Advance(seconds); app.session=app.previewRace.CurrentSession(); app.frame=app.previewRace.CurrentFrame(); ProcessFrame(true);
+}
 void Tick() {
     {
         ProfileScope total("tick (everything below)");
         app.now=GetTickCount64();
-        if(app.preview) PreviewData(app.now/1000.0);
+        if(PreviewFixture()) PreviewData(app.now/1000.0);
+        else if(app.preview) AdvancePreviewRace();
         else {
             bool connected=false;
             { ProfileScope p("telemetry read (session YAML included)"); connected=app.telemetry.Read(app.frame,app.session); }
@@ -2074,7 +2099,12 @@ void WriteProfile() {
     profiler.sessionStart=app.telemetry.sessionParseTicks; profiler.parsesStart=app.telemetry.sessionParses;
 }
 void ShowSettings() { ShowWindow(app.main,IsIconic(app.main)?SW_RESTORE:SW_SHOW); SetForegroundWindow(app.main); UpdateOverlays(); }
-void TogglePreview() { app.preview=!app.preview; app.pitLane.Reset(); app.refuel.Reset(); app.frame={}; app.session={}; app.weatherHistory.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.telemetry.Close(); app.events.Reset(); Tick(); RefreshPage(); }
+void TogglePreview() {
+    app.preview=!app.preview; app.frame={}; app.session={}; ResetAnalyses(); app.telemetry.Close();
+    // A new race every time the preview starts.
+    if(app.preview && !app.diagnostics) StartPreviewRace();
+    Tick(); RefreshPage();
+}
 void ToggleEdit() { app.edit=!app.edit; Tick(); UpdateOverlays(); RefreshPage(); }
 void ToggleHidden() { app.hidden=!app.hidden; UpdateOverlays(); RefreshPage(); }
 LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
