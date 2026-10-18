@@ -18,7 +18,8 @@ public:
     // Changes with every added or amended event.
     uint64_t Revision() const { return revision_; }
 private:
-    struct Sample { bool seen=false,pit=false; int surface=-1,position=0,incidents=-1,lap=-1; double progress=-1,speed=-1,pitTime=-1,lastCrash=-100; unsigned flags=0; std::string driver; };
+    struct Sample { bool seen=false,pit=false; int surface=-1,position=0,incidents=-1,lap=-1,liveLap=-1; double progress=-1,speed=-1,pitTime=-1,lastCrash=-100; unsigned flags=0; std::string driver; };
+    void AddIncidentPoints(const Session&,const Frame&);
     struct Pass { int car=-1,other=-1; double time=0; };
     void Add(const Session&,const Frame&,const Driver&,EventType,double,const std::string&,bool=false);
     std::array<Sample,MaxCars> samples_{};

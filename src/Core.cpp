@@ -810,8 +810,9 @@ Session DemoSession() {
     for (int i = 0; i < 10; ++i) { s.drivers.push_back({i,1,2400+i*117,0xe7c451,false,false,names[i],std::to_string(12+i),"GT3"}); s.drivers.back().carPath=paths[i]; s.drivers.back().brand=CarBrand(paths[i],""); }
     return s;
 }
-double RelativeWindAngle(const Frame& f) {
-    if(!f.connected || !f.onTrack || f.replay || ReferenceCar(f)!=f.player || !std::isfinite(f.windDirection) || !std::isfinite(f.yawNorth) || !std::isfinite(f.windSpeed) || f.windSpeed<=0) return std::numeric_limits<double>::quiet_NaN();
+double RelativeWindAngle(const Frame& f,bool headingLive) {
+    const bool driving=f.onTrack && !f.replay && ReferenceCar(f)==f.player;
+    if(!f.connected || !(driving || headingLive) || !std::isfinite(f.windDirection) || !std::isfinite(f.yawNorth) || !std::isfinite(f.windSpeed) || f.windSpeed<=0) return std::numeric_limits<double>::quiet_NaN();
     // WindDir (where the wind comes from) and YawNorth (where the car points) share one
     // convention, so their difference is the source bearing relative to the car.
     // Cross-checked against iRdashies, which shows WindDir - YawNorth (+ half a turn for

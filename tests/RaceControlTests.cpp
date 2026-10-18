@@ -51,6 +51,17 @@ void RaceControlTests() {
     { EventRecorder copy=events; const auto last=copy.Revision(); copy.Reset(); Require(copy.Events().empty() && copy.Revision()>last,"a reset never repeats an earlier revision"); }
     auto replay=f; replay.onTrack=false; replay.replayTime=90; replay.replaySession=0; replay.cars[0].surface=0; events.Update(s,replay);
     Require(Count(events,EventType::Offtrack)==1,"reviewing old replay does not duplicate event feed");
+    {
+        // Incident points come from the live session info, so they count while a replay is watched, at the live time.
+        auto watched=s; auto& driver=watched.drivers[1]; replay.incidentsKnown=false;
+        const int before=Count(events,EventType::Incident); driver.incidentCount=std::max(0,driver.incidentCount);
+        replay.time+=1; events.Update(watched,replay);
+        driver.incidentCount+=2; replay.time+=1; events.Update(watched,replay);
+        Require(Count(events,EventType::Incident)==before+1 && events.Events().back().car==driver.index && events.Events().back().time==replay.time
+            && events.Events().back().detail.rfind("+2",0)==0,"incident points during a replay are recorded at the live session time");
+        replay.time+=1; events.Update(watched,replay); Require(Count(events,EventType::Incident)==before+1,"and only once");
+        f.time=replay.time+1; events.Update(watched,f); Require(Count(events,EventType::Incident)==before+1,"back live they are not counted again");
+    }
     f.time-=50; f.cars[0].surface=0; events.Update(s,f); Require(Count(events,EventType::Offtrack)==1,"rewind remains below recording frontier");
     events.Reset(); f=TestFrame(); f.cars[0].pit=true; events.Update(s,f); f.time+=1; f.cars[0].pit=false; events.Update(s,f);
     Require(Count(events,EventType::PitStop)==0,"incomplete late-join pit visit is not invented");

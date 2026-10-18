@@ -655,8 +655,10 @@ void WindTests() {
  f.yawNorth=pi; Near(RelativeWindAngle(f),3*pi/2,"east wind facing south comes from the left");
  f.windDirection=std::numeric_limits<double>::quiet_NaN(); Require(!std::isfinite(RelativeWindAngle(f)),"missing wind direction has no arrow");
  f.windDirection=0; f.windSpeed=0; Require(!std::isfinite(RelativeWindAngle(f)),"calm wind has no direction");
- f.windSpeed=4; f.onTrack=false; Require(!std::isfinite(RelativeWindAngle(f)),"spotting does not reuse player heading");
- f.onTrack=true; f.replay=true; Require(!std::isfinite(RelativeWindAngle(f)),"replay does not reuse live heading");
+ f.windSpeed=4; f.onTrack=false; Require(!std::isfinite(RelativeWindAngle(f)),"spotting does not reuse a heading that stopped changing");
+ Near(RelativeWindAngle(f,true),pi,"spotting uses the watched car's heading while it is live");
+ f.onTrack=true; f.replay=true; Require(!std::isfinite(RelativeWindAngle(f)),"replay does not reuse a heading that stopped changing");
+ Near(RelativeWindAngle(f,true),pi,"replay uses the replayed car's heading while it is live");
  f.replay=false; f.connected=false; Require(!std::isfinite(RelativeWindAngle(f)),"disconnect has no direction");
 }
 void WeatherHistoryTests() {

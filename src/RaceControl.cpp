@@ -23,11 +23,27 @@ void EventRecorder::Add(const Session&,const Frame& f,const Driver& d,EventType 
     events_.push_back(std::move(event)); ++revision_;
     if(events_.size()>2000) events_.erase(events_.begin(),events_.begin()+100);
 }
+// Incident points that came in while a replay is watched, at the live session time and the car's last live lap.
+void EventRecorder::AddIncidentPoints(const Session& s,const Frame& f) {
+    for(const auto& d:s.drivers) {
+        if(d.index<0 || d.index>=MaxCars) continue;
+        auto& previous=samples_[d.index];
+        const int incidents=d.index==f.player && f.incidentsKnown?f.incidents:d.incidentCount;
+        if(previous.driver!=d.name) { previous={}; previous.driver=d.name; }
+        else if(incidents>=0 && previous.incidents>=0 && incidents>previous.incidents) {
+            Add(s,f,d,EventType::Incident,f.time,"+"+std::to_string(incidents-previous.incidents)+" incident point(s)");
+            events_.back().lap=previous.liveLap;
+        }
+        if(incidents>=0) previous.incidents=incidents;
+    }
+}
 void EventRecorder::Update(const Session& s,const Frame& f) {
     if(!f.connected) { for(auto& sample:samples_) sample.seen=false; time_=-1; passes_.clear(); return; }
     if(key_!=s.key || session_!=f.session) { Reset(); key_=s.key; session_=f.session; }
-    // Reviewing old footage must not add duplicate events or overwrite the live baseline.
+    // Reviewing old footage must not add duplicate events or overwrite the live baseline: positions, surfaces and
+    // passes are the replay's. Incident points are not; they come from the session info, which stays live.
     if(View(f)==ViewMode::Replay) {
+        AddIncidentPoints(s,f);
         for(auto& sample:samples_) sample.seen=false; time_=-1; passes_.clear(); return;
     }
     if(f.time<frontier_-1e-7) { for(auto& sample:samples_) sample.seen=false; time_=-1; passes_.clear(); return; }
@@ -95,6 +111,7 @@ void EventRecorder::Update(const Session& s,const Frame& f) {
     for(const auto& d:s.drivers) if(d.index>=0 && d.index<MaxCars) {
         const auto& car=f.cars[d.index]; auto& previous=samples_[d.index];
         previous.seen=car.surface>=0 && car.pct>=0; previous.driver=d.name; previous.pit=car.pit; previous.surface=car.surface; previous.position=car.position;
+        if(car.lap>=0) previous.liveLap=car.lap;
         previous.progress=car.completed>=0?car.completed+car.pct:(car.lap>=0?car.lap-1+car.pct:-1);
     }
     time_=f.time;

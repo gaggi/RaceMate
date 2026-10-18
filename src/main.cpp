@@ -281,6 +281,8 @@ struct App {
     unsigned opponentFuelVersion=~0u; int opponentFuelExtra=-1; bool opponentFuelPreview=false;
     std::array<OpponentFuelStatus,MaxCars> opponentFuelStatuses{};
     std::vector<DrawCommand> sceneBuffer; bool overlayClass=false;
+    // When YawNorth last changed: within 3 s the heading belongs to a car that moves.
+    double lastYaw=std::numeric_limits<double>::quiet_NaN(); ULONGLONG yawChanged=0;
     NOTIFYICONDATAW tray{};
 } app;
 // --profile: where RaceMate spends its time while it runs, written every 10 s to profile.txt beside settings.ini.
@@ -1464,7 +1466,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         static constexpr const wchar_t* Compass[]={L"N",L"NE",L"E",L"SE",L"S",L"SW",L"W",L"NW"};
         static constexpr const wchar_t* Sides[]={L"Headwind",L"From front right",L"Crosswind from the right",L"From rear right",L"Tailwind",L"From rear left",L"Crosswind from the left",L"From front left"};
         constexpr double pi=3.141592653589793;
-        const double angle=on[WindRelative]?RelativeWindAngle(f):std::numeric_limits<double>::quiet_NaN();
+        const double angle=on[WindRelative]?RelativeWindAngle(f,app.preview || app.now-app.yawChanged<3000):std::numeric_limits<double>::quiet_NaN();
         auto octant=[&](double radians){ return static_cast<int>(std::lround(std::fmod(std::fmod(radians,2*pi)+2*pi,2*pi)/(pi/4)))%8; };
         const std::wstring speed=f.windSpeed>=0?Format(f.windSpeed*3.6,0):L"—", from=std::isfinite(f.windDirection)?Compass[octant(f.windDirection)]:L"";
         const std::wstring side=std::isfinite(angle)?Sides[octant(angle)]:L"";
@@ -1990,6 +1992,7 @@ void PollUpdates();
 // Posted to the main window when the banner and the current page should show new state.
 constexpr UINT RefreshUiMessage=WM_APP+2;
 void ProcessFrame(bool connected) {
+    if(app.frame.yawNorth!=app.lastYaw && std::isfinite(app.frame.yawNorth)) { app.lastYaw=app.frame.yawNorth; app.yawChanged=app.now; }
     if(!connected) { app.frame={}; app.events.Update(app.session,app.frame); app.session={}; app.pitLane.Reset(); app.refuel.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.weatherHistory.Reset(); }
     else {
         { ProfileScope p("analysis: pit history"); app.pitHistory.Update(app.session,app.frame); }

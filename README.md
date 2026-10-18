@@ -98,7 +98,7 @@ Green when the limiter is on, red when it is off, gray when unknown. Shown while
 
 ### Weather
 
-Modules, each with its own switch and ordered with the arrows on the overlay's page (the strip follows the same order): the track condition in iRacing's seven levels; precipitation; track and air temperature; the track temperature of the last 20 minutes; wind speed, compass direction and the direction ring relative to your car (with "Crosswind from the left" and similar); humidity, sky and fog; track usage.
+Modules, each with its own switch and ordered with the arrows on the overlay's page (the strip follows the same order): the track condition in iRacing's seven levels; precipitation; track and air temperature; the track temperature of the last 20 minutes; wind speed, compass direction and the direction ring relative to your car, or to the car you watch live or in a replay while iRacing reports its heading (with "Crosswind from the left" and similar); humidity, sky and fog; track usage.
 
 - **Trend arrows** compare with ten minutes ago (from five minutes of history on): rising, falling or steady. iRacing publishes no forecast, so RaceMate samples the weather every 30 seconds itself.
 - The wind module shows the **wind rose** (the ring with the speed inside), the **wind text** or both. With only the wind rose switched on, the overlay shrinks to the ring.
@@ -131,7 +131,7 @@ See [the prototype test guide](docs/trackmap-prototype.md) and [third-party noti
 
 ## Race Control
 
-A normal resizable window (Race Control page or tray menu) with full standings and an event feed: offtracks, incidents, possible crashes, pit entries and stops, black flags and estimated overtakes. Up to 2,000 events are kept for the current session.
+A normal resizable window (Race Control page or tray menu) with full standings and an event feed: offtracks, incidents, possible crashes, pit entries and stops, black flags and estimated overtakes. Up to 2,000 events are kept for the current session. While you watch a replay, cars move as recorded, so only incident points keep counting: they come from the live session info and are stamped with the live session time.
 
 Events stay on the left and standings on the right. Drag the divider between the tables to change their width ratio; it is saved across restarts. Both tables retain a minimum width. Double-click the divider (or focus it and press Home) to restore the original 56/44 split; Left/Right also adjusts it. Filters and replay controls remain reachable independently of the split.
 

@@ -114,7 +114,9 @@ private:
     std::array<bool, DialCount> ignored_{}; std::array<SetupValue, DialCount> values_{}; std::vector<DialChange> changes_;
 };
 // Clockwise source bearing on screen: 0 is ahead, pi/2 is right.
-double RelativeWindAngle(const Frame&);
+// While you drive, always; while you watch another car or a replay, only with headingLive: iRacing then reports in
+// YawNorth where the watched car points, but a value that stopped changing belongs to a car that is not moving.
+double RelativeWindAngle(const Frame&, bool headingLive = false);
 // Track and air temperature, precipitation and wetness every 30 s of session time, 20 minutes back.
 class WeatherHistory {
 public:
