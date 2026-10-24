@@ -5,7 +5,7 @@ public:
     explicit TablePage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
     enum class Key { None, Rounded, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, ClassView, OwnClass, LiveGaps, UntimedOrder, ClassColors, LapColors, Progress, PitExit, Column, Header, Footer, ColumnHeadings };
-    static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, PitAheadEditId=215, PitBehindEditId=216, NameFormatEditId=201, FlagEditId=202, ShortViewEditId=205, SlotEditId=206, BrandLogoEditId=213, BrandNameEditId=214;
+    static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, PitAheadEditId=215, PitBehindEditId=216, NameFormatEditId=201, FlagEditId=202, ShortViewEditId=205, SlotEditId=206, BrandLogoEditId=213, BrandNameEditId=214, PositionEditId=230;
     static constexpr UINT_PTR TypingTimer=1;
     struct ColumnText { const wchar_t* name; const wchar_t* detail; };
     static constexpr ColumnText ColumnTexts[]={
@@ -35,11 +35,12 @@ private:
         if(id==BestColumn || id==LastColumn) return o_.kind==RelativeKind;
         return id==DriverColumn || id==StatusColumn || id==IntervalColumn || id==LapsColumn || id==GainedColumn || id>=LicenseColumn && id<=PitStopColumn || id>=BrandColumn;
     }
-    static bool HasOptions(int id) { return id==DriverColumn || id==StatusColumn || id==LicenseColumn || id==IRatingColumn || id==CombinedRatingColumn || id==BrandColumn; }
+    bool HasOptions(int id) const { return (id==PositionColumn && o_.kind==RelativeKind) || id==DriverColumn || id==StatusColumn || id==LicenseColumn || id==IRatingColumn || id==CombinedRatingColumn || id==BrandColumn; }
     // Short views: License, iRating, Safety and iRating.
     static int ShortViewIndex(int id) { return id==CombinedRatingColumn?2:id-LicenseColumn; }
     std::wstring ColumnDetail(int id) const {
         switch(id) {
+        case PositionColumn: if(o_.kind==RelativeKind) return o_.table.classPositions?L"In each car's class":L"Overall, across all classes"; return ColumnTexts[id].detail;
         case DriverColumn: return NameFormats[o_.table.nameFormat];
         case GapColumn: return o_.kind==RelativeKind?L"Time to each car, estimated":L"Gap to the class leader";
         case StatusColumn: {
@@ -167,6 +168,9 @@ private:
             editors_.Label(L"cars around the pit exit row",300,10,0);
         } else if(expandedKey_==Key::Header || expandedKey_==Key::Footer) {
             BandEditors(editors_,o_,expandedKey_==Key::Footer,SlotEditId);
+        } else if(expandedId_==PositionColumn) {
+            editors_.Label(L"Position",0,10,90);
+            editors_.Combo(PositionEditId,{L"In class",L"Overall"},o_.table.classPositions?0:1,94,10,200);
         } else if(expandedId_==DriverColumn) {
             editors_.Label(L"Name format",0,10,90);
             editors_.Combo(NameFormatEditId,std::vector<std::wstring>(std::begin(NameFormats),std::end(NameFormats)),o_.table.nameFormat,94,10,200);
@@ -224,6 +228,10 @@ private:
         if(id==RowsEditId || (id>=LeadersEditId && id<=BehindEditId) || id==PitAheadEditId || id==PitBehindEditId) { if(code==EN_CHANGE && !syncing_) { typing_=true; SetTimer(Handle(),TypingTimer,500,nullptr); } return true; }
         if(id==BrandLogoEditId || id==BrandNameEditId) {
             if(!syncing_ && code==BN_CLICKED) { (id==BrandLogoEditId?o_.table.brandLogo:o_.table.brandName)=editors_.Checked(id); Changed(); }
+            return true;
+        }
+        if(id==PositionEditId) {
+            if(!syncing_ && code==CBN_SELCHANGE && editors_.Selection(id)>=0) { o_.table.classPositions=editors_.Selection(id)==0; Changed(); }
             return true;
         }
         if(id>=NameFormatEditId && id<SlotEditId+SlotCount) {

@@ -260,6 +260,12 @@ const Source Sources[]={
 #include "TrackMapSources.inc"
 };
 }
+std::string TrackFolder(int trackId) {
+    const auto* source=FindSource(trackId); if(!source) return {};
+    // ".../tracks_indianapolis/448-indianapolis-2022-road" belongs to "indianapolis".
+    std::string_view track(source->folder); const auto at=track.find("/tracks_"); if(at==std::string_view::npos) return {};
+    track.remove_prefix(at+8); return std::string(track.substr(0,track.find('/')));
+}
 std::string NormalizeName(std::string_view name) {
     std::string result;
     for(unsigned char c:name) {
@@ -278,6 +284,15 @@ Point Geometry::At(double fraction,int overrideDirection,double offset) const {
     const int sign=overrideDirection?overrideDirection:direction;
     return Sample(route,distances,Wrap(start/length+sign*(fraction+offset))*length);
 }
+double Geometry::Heading(double fraction) const {
+    if(!direction) return std::numeric_limits<double>::quiet_NaN();
+    // Three map units either side: wide enough to smooth the sampling, narrow enough for hairpins.
+    const double step=length>0?3/length:0;
+    const Point a=At(fraction-step), b=At(fraction+step);
+    if(!std::isfinite(fraction) || (a.x==b.x && a.y==b.y)) return std::numeric_limits<double>::quiet_NaN();
+    const double heading=std::atan2(b.x-a.x,a.y-b.y);
+    return heading<0?heading+2*3.141592653589793:heading;
+}
 Point Geometry::PitAt(double fraction) const {
     const Point track=At(fraction);
     Point best=track; double minimum=std::numeric_limits<double>::max();
@@ -285,6 +300,35 @@ Point Geometry::PitAt(double fraction) const {
     // Farther than a twelfth of the map from the track: not the pit lane beside it (the pit road leaves the circuit elsewhere).
     const double limit=std::max(high.x-low.x,high.y-low.y)/12;
     return minimum<=limit?best:track;
+}
+double Geometry::PitHeading(double fraction) const {
+    constexpr double NaN=std::numeric_limits<double>::quiet_NaN(), Turn=2*3.141592653589793;
+    const Point track=At(fraction); const double extent=std::max(high.x-low.x,high.y-low.y);
+    Point at{}; double minimum=std::numeric_limits<double>::max();
+    for(const auto& path:pitPaths) { double d=0; const auto q=Nearest(path,track,&d); if(d<minimum) { minimum=d; at=q; } }
+    // As PitAt: farther than a twelfth of the map, the pit lane is not beside this point.
+    if(pitPaths.empty() || minimum>extent/12) return NaN;
+    // The long axis of the drawing within a fiftieth of the map around that point: pit lanes are drawn as bands or
+    // as dashes with rounded ends, whose single edges point every way, but whose extent follows the lane.
+    const double radius=extent/50; Point centre{}; int count=0;
+    std::vector<Point> near;
+    for(const auto& path:pitPaths) for(size_t i=1;i<path.size();++i) {
+        // Points every unit along the edges, so long straight edges weigh by their length.
+        const Point a=path[i-1], delta=path[i]-a; const int steps=std::max(1,static_cast<int>(std::sqrt(Dot(delta,delta))));
+        for(int s=0;s<steps;++s) { const Point p=a+delta*(static_cast<double>(s)/steps); if(Dot(p-at,p-at)<=radius*radius) { near.push_back(p); centre=centre+p; ++count; } }
+    }
+    if(count<2) return NaN;
+    centre=centre*(1./count);
+    double xx=0,xy=0,yy=0; for(const auto& p:near) { const Point d=p-centre; xx+=d.x*d.x; xy+=d.x*d.y; yy+=d.y*d.y; }
+    // Direction of the larger eigenvector of the covariance; a round blob has none.
+    const double axis=std::atan2(2*xy,xx-yy)/2, spread=std::hypot(xx-yy,2*xy);
+    if(spread<.2*(xx+yy)) return NaN;
+    const Point delta{std::cos(axis),std::sin(axis)};
+    double heading=std::atan2(delta.x,-delta.y);
+    // An outline runs both ways: the way that goes along with the track beside it.
+    const double travel=Heading(fraction);
+    if(std::isfinite(travel) && std::abs(std::remainder(heading-travel,Turn))>Turn/4) heading+=Turn/2;
+    return std::fmod(std::fmod(heading,Turn)+Turn,Turn);
 }
 Result Prepare(std::string active,std::string finish,std::string pit,std::string turns,std::string background,std::string inactive) {
     Result result;

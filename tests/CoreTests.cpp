@@ -659,7 +659,20 @@ void WindTests() {
  Near(RelativeWindAngle(f,true),pi,"spotting uses the watched car's heading while it is live");
  f.onTrack=true; f.replay=true; Require(!std::isfinite(RelativeWindAngle(f)),"replay does not reuse a heading that stopped changing");
  Near(RelativeWindAngle(f,true),pi,"replay uses the replayed car's heading while it is live");
+ Near(RelativeWindAngle(f,false,0),0,"a paused replay falls back to the heading from the track map");
+ f.replay=false; f.onTrack=false; Near(RelativeWindAngle(f,false,pi/2),3*pi/2,"spotting live uses the heading from the track map");
+ Near(RelativeWindAngle(f,true,pi/2),pi,"a live YawNorth wins over the track map");
+ f.onTrack=true; Near(RelativeWindAngle(f,false,0),pi,"your own driving never takes the track map");
+ f.replay=true;
  f.replay=false; f.connected=false; Require(!std::isfinite(RelativeWindAngle(f)),"disconnect has no direction");
+ // North on the official map: TrackNorthOffset plus three quarter turns, as fitted for these tracks against OpenStreetMap.
+ Require(NorthTurnFromOffset(3.1263)==89 && NorthTurnFromOffset(3.0612)==85 && NorthTurnFromOffset(.2629)==285 && NorthTurnFromOffset(.6275)==306 && NorthTurnFromOffset(1.5656)==0,"north turn from TrackNorthOffset");
+ Require(NorthTurnFromOffset(std::numeric_limits<double>::quiet_NaN())==-1,"no offset, no turn");
+ Near(ParseSession("WeekendInfo:\n TrackID: 448\n TrackNorthOffset: 3.1263 rad\n",0).trackNorthOffset,3.1263,"TrackNorthOffset is read from the session info");
+ // Lime Rock, from the car in its pit box: YawNorth 1.99379 and the pit lane running left on the map give 204
+ // degrees, as fitted against OpenStreetMap, where the offset gives 294.
+ Require(NorthTurnFromHeadings(1.99379,3*pi/2)==204 && NorthTurnFromOffset(.4107)==294,"north from the car in the pit box");
+ Require(NorthTurnFromHeadings(.1,.2)==354 && NorthTurnFromHeadings(std::numeric_limits<double>::quiet_NaN(),0)==-1,"turns wrap; no heading, no turn");
 }
 void WeatherHistoryTests() {
  auto s=DemoSession(); auto f=DemoFrame(0); WeatherHistory history;

@@ -36,7 +36,7 @@ constexpr UINT TrayMessage=WM_APP+1;
 enum OverlayKind { RelativeKind, StandingsKind, FuelKind, PitLimiterKind, WeatherKind, TrackMapKind };
 constexpr int OverlayCount=TrackMapKind+1;
 constexpr bool IsTable(int kind) { return kind==RelativeKind || kind==StandingsKind; }
-const wchar_t* Titles[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pit Limiter",L"Weather",L"Track Map"};
+const wchar_t* Titles[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pit Assist",L"Weather",L"Track Map"};
 const wchar_t* Sections[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pitlimiter",L"Weather",L"Track Map"};
 constexpr POINT DefaultPositions[]={{40,120},{480,120},{40,470},{40,720},{40,820},{960,120}};
 // Refresh rates an overlay can choose, and each overlay's default; telemetry is read at least as often as the fastest.
@@ -99,7 +99,7 @@ constexpr ModuleInfo FuelModules[]={
     {L"ShowPitWindow",L"Pit window",L"Earliest and latest lap to stop",true},
     {L"ShowTimeline",L"Pit window timeline",L"One block per lap of a full tank: window green, current lap yellow",true},
     {L"ShowOneShorter",L"One lap shorter",L"Most fuel per lap for one lap less",true},
-    {L"ShowTarget",L"Target",L"Most fuel per lap that still reaches the latest stop, or the finish",true},
+    {L"ShowTarget",L"Target",L"Most fuel per lap that still reaches the latest stop, or the finish; outside races, the laps the fuel lasts at the average",true},
     {L"ShowOneLonger",L"One lap longer",L"Most fuel per lap for one lap more",true},
     {L"ShowTwoLonger",L"Two laps longer",L"Most fuel per lap for two laps more",false},
     {L"ShowLeaderDistance",L"Leader projected race distance",L"Total leader laps at time expiry, with two decimals; at the finish for lap-limited races. No future stops assumed.",false},
@@ -130,7 +130,7 @@ constexpr ModuleInfo WeatherModules[]={
     {L"ShowDetails",L"Details",L"Humidity, sky and fog",false},
     {L"ShowTrackUsage",L"Track usage",L"How much rubber is on the track",false},
     {L"ShowTrends",L"Trend arrows",L"Rising, falling or steady over the last 10 minutes",true},
-    {L"ShowWindDirection",L"Wind relative to the car",L"Arrow on the ring and crosswind text; needs your car's heading, so only while you drive",true},
+    {L"ShowWindDirection",L"Wind relative to the car",L"Arrow on the ring and crosswind text, for the car you drive or watch",true},
     // Parts of the wind module, switched in its expanded row.
     {L"ShowWindRose",L"Wind rose",L"The ring with the speed inside",true},
     {L"ShowWindText",L"Wind text",L"Speed, compass direction and crosswind",true}};
@@ -168,7 +168,8 @@ struct TableSettings {
     bool showDriver=true, showStatus=true, columnHeaders=false, classColors=true, brandLogo=true, brandName=true;
     bool gapSigns=false; // + / - before gaps (and intervals in the Standings); off by default: the row order already tells.
     int nameFormat=0;
-    int rows=7, gapDecimals=1; bool hidePit=false, best=false, last=false, lapColors=true; // Relative.
+    int rows=7, gapDecimals=1; bool hidePit=false, best=false, last=false, lapColors=true, classPositions=true; // Relative.
+    // classPositions: the Position column counts within each car's class instead of overall (the Standings follow their class view).
     StandingsOptions standings; bool interval=false, laps=false, gained=false, progress=true, pitExit=false; // Standings.
     int pitExitAhead=2, pitExitBehind=2; // Cars shown around the pit exit row.
 };
@@ -192,6 +193,7 @@ struct TrackMapSettings {
     bool whiteTrack=true; // White with a black edge, readable over any background; off: the grey of the panel.
     // iRacing's optional layers: the drawing around the track, and the track's other configurations.
     bool surroundings=false, allConfigs=false;
+    bool northUp=false; // Turned so north points up, where iRacing turned the drawing to fit.
 };
 enum TrackMapLayout { MapLayout, CircleLayout, LineLayout };
 constexpr int TrackMapWidth=440, TrackMapBodyHeight=264;
@@ -209,8 +211,9 @@ constexpr COLORREF TrackMapTransparentKey=RGB(1,2,3), TrackMapMoveKey=RGB(1,2,4)
 struct Overlay {
     HWND window=nullptr; int kind=0, number=1; Placement place;
     Bands bands; TableSettings table; FuelSettings fuel; WeatherSettings weather; TrackMapSettings map;
-    bool setupChanges=true; // Pit Limiter: in the pit lane, list in-car adjustments that differ from the setup.
-    bool pitStrip=true;     // Pit Limiter: the pit lane with your car, your box, where to brake and where the limiter can go off.
+    bool setupChanges=true; // Pit Assist: in the pit lane, list in-car adjustments that differ from the setup.
+    bool pitStrip=true;     // Pit Assist: the pit lane with your car, your box, where to brake and where the limiter can go off.
+    bool pitSeconds=false;  // Pit Assist: count down to the brake points, box and exit in seconds instead of metres.
     HDC dc=nullptr; HBITMAP bitmap=nullptr; HGDIOBJ original=nullptr, originalFont=nullptr;
     HWND frame=nullptr; int frameState=-1; RECT frameRect{}; // The ring around it while edited or movable.
     std::array<HFONT,FontCount> fonts{}; int width=0,height=0,dpi=0;
@@ -260,7 +263,8 @@ struct App {
     RECT windowRect{}; bool windowMaximized=false;
     std::list<Overlay> overlays; // Grouped by kind, in instance order; each stays at its address for its window.
     // Layouts in priority order and the active one; automatic switching follows a situation once it held for a second.
-    std::vector<Layout> layouts{Layout{}}; int layout=1, layoutSituation=-1, pendingSituation=-1; ULONGLONG pendingSince=0;
+    // layoutIdle: no layout applies to the situation, so the overlays stay hidden until one does or one is chosen by hand.
+    std::vector<Layout> layouts{Layout{}}; int layout=1, layoutSituation=-1, pendingSituation=-1; ULONGLONG pendingSince=0; bool layoutIdle=false;
     Frame frame; Session session; Telemetry telemetry; FuelCalculator fuel;
     EventRecorder events; PitHistory pitHistory; PitLimiterVisibility pitVisibility; SetupDials setupDials;
     RacePredictor predictor; FuelPlan fuelPlan;
@@ -277,6 +281,8 @@ struct App {
     int opponentFuelExtraLaps=3;
     // Pit stop estimate: lane loss learned per track or fixed by the user, service times per car (CarPath).
     PitLaneLoss pitLane; RefuelRate refuel; PitLaneEnds pitEnds; BrakingRate braking;
+    // Whether Pit Assist shows, and where its strip starts while it does, so it stays put on the way in.
+    bool pitVisible=false; double pitStripLeft=std::numeric_limits<double>::quiet_NaN();
     struct { int track=-1; std::wstring car; double fixedLane=-1, tires=-1, rate=-1; int samplesSaved=0, endsSaved=0, brakingSaved=0; } pitTimes;
     unsigned pitExitVersion=~0u; PitRejoin pitExit; bool pitExitPartial=false;
     unsigned modelVersion=0,planVersion=~0u,ratingVersion=~0u;
@@ -288,6 +294,8 @@ struct App {
     double lastYaw=std::numeric_limits<double>::quiet_NaN(); ULONGLONG yawChanged=0;
     NOTIFYICONDATAW tray{};
 } app;
+// YawNorth changed within 3 s: the heading belongs to a car that moves, even one you watch.
+bool HeadingLive() { return app.preview || app.now-app.yawChanged<3000; }
 // --profile: where RaceMate spends its time while it runs, written every 10 s to profile.txt beside settings.ini.
 // Off, each measured spot costs one check of a flag.
 struct Profiler {
@@ -541,6 +549,7 @@ void ReadTable(const wchar_t* section,int kind,TableSettings& t) {
         t.hidePit=ReadBool(section,L"HideDriversInPit",false);
         t.lapColors=ReadBool(section,L"ShowLapColors",true);
         t.best=ReadBool(section,L"ShowBestLap",false); t.last=ReadBool(section,L"ShowLastLap",false);
+        t.classPositions=ReadBool(section,L"ClassPositions",true);
     } else {
         auto& standings=t.standings;
         standings.separateClasses=ReadBool(section,L"SeparateClasses",true);
@@ -584,11 +593,12 @@ void ReadInstance(Overlay& o) {
     if(kind==WeatherKind) o.weather.order=ReadOrder(section.c_str(),L"ModuleOrder",WeatherOrder);
     for(int i=0;i<WeatherModuleCount;++i) o.weather.display[i]=ReadBool(section.c_str(),WeatherModules[i].key,WeatherModules[i].on);
     o.weather.strip=o.fuel.strip;
-    if(kind==PitLimiterKind) { o.setupChanges=ReadBool(section.c_str(),L"ShowSetupChanges",true); o.pitStrip=ReadBool(section.c_str(),L"ShowPitLaneProgress",true); }
+    if(kind==PitLimiterKind) { o.setupChanges=ReadBool(section.c_str(),L"ShowSetupChanges",true); o.pitStrip=ReadBool(section.c_str(),L"ShowPitLaneProgress",true); o.pitSeconds=ReadBool(section.c_str(),L"CountdownInSeconds",false); }
     if(kind==TrackMapKind) {
         o.map.numbers=ReadBool(section.c_str(),L"ShowCarNumbers",true); o.map.ownClass=ReadBool(section.c_str(),L"OwnClass",false);
         o.map.markerText=std::clamp(ReadInt(section.c_str(),L"MarkerText",0),0,2); o.map.whiteTrack=ReadBool(section.c_str(),L"WhiteTrack",true);
         o.map.surroundings=ReadBool(section.c_str(),L"ShowMapBackground",false); o.map.allConfigs=ReadBool(section.c_str(),L"ShowAllConfigs",false);
+        o.map.northUp=ReadBool(section.c_str(),L"NorthUp",false);
         o.map.pit=ReadBool(section.c_str(),L"ShowPitCars",true); o.map.details=ReadBool(section.c_str(),L"ShowMapDetails",false);
         o.map.background=ReadBool(section.c_str(),L"ShowBackground",true); o.map.pitLane=ReadBool(section.c_str(),L"ShowPitLane",true);
         o.map.startFinish=ReadBool(section.c_str(),L"ShowStartFinish",true);
@@ -616,7 +626,7 @@ void LoadLayouts() {
 }
 // The active layout's overlays: instances added or dropped to its counts, then its settings.
 void LoadOverlays() {
-    // Each kind's section counts its instances; the Pit Limiter has only one.
+    // Each kind's section counts its instances; the Pit Assist has only one.
     for(int kind=0;kind<OverlayCount;++kind) {
         const int count=kind==PitLimiterKind?1:std::clamp(ReadInt(KindSection(kind).c_str(),L"Instances",1),1,99);
         for(int number=1;number<=count;++number)
@@ -684,6 +694,7 @@ void Save() {
             if(o.kind==RelativeKind) {
                 number(section,L"Rows",t.rows); number(section,L"GapDecimals",t.gapDecimals); number(section,L"HideDriversInPit",t.hidePit);
                 number(section,L"ShowLapColors",t.lapColors); number(section,L"ShowBestLap",t.best); number(section,L"ShowLastLap",t.last);
+                number(section,L"ClassPositions",t.classPositions);
             } else {
                 const auto& standings=t.standings;
                 number(section,L"SeparateClasses",standings.separateClasses); number(section,L"OwnClass",standings.ownClass);
@@ -702,10 +713,10 @@ void Save() {
             for(int i=0;i<WeatherModuleCount;++i) number(section,WeatherModules[i].key,o.weather.display[i]);
             number(section,L"Layout",o.weather.strip); order(section,L"ModuleOrder",o.weather.order);
         }
-        if(o.kind==PitLimiterKind) { number(section,L"ShowSetupChanges",o.setupChanges); number(section,L"ShowPitLaneProgress",o.pitStrip); }
+        if(o.kind==PitLimiterKind) { number(section,L"ShowSetupChanges",o.setupChanges); number(section,L"ShowPitLaneProgress",o.pitStrip); number(section,L"CountdownInSeconds",o.pitSeconds); }
         if(o.kind==TrackMapKind) {
             number(section,L"ShowCarNumbers",o.map.numbers); number(section,L"OwnClass",o.map.ownClass); number(section,L"MarkerText",o.map.markerText); number(section,L"WhiteTrack",o.map.whiteTrack);
-            number(section,L"ShowMapBackground",o.map.surroundings); number(section,L"ShowAllConfigs",o.map.allConfigs);
+            number(section,L"ShowMapBackground",o.map.surroundings); number(section,L"ShowAllConfigs",o.map.allConfigs); number(section,L"NorthUp",o.map.northUp);
             number(section,L"ShowPitCars",o.map.pit); number(section,L"ShowMapDetails",o.map.details);
             number(section,L"ShowBackground",o.map.background); number(section,L"ShowPitLane",o.map.pitLane); number(section,L"ShowStartFinish",o.map.startFinish);
             number(section,L"ShowCornerNumbers",o.map.cornerNumbers); number(section,L"ShowCornerNames",o.map.cornerNames);
@@ -876,6 +887,12 @@ const Driver* PlayerDriver() {
     const auto it=std::find_if(app.session.drivers.begin(),app.session.drivers.end(),[](const Driver& d){ return d.index==app.frame.player; });
     return it==app.session.drivers.end()?nullptr:&*it;
 }
+// The braking learned in this session, kept for the car's next one: written once when you leave the car, the sim
+// disconnects or RaceMate quits, not after every braking zone.
+void SaveBraking() {
+    auto& t=app.pitTimes;
+    if(app.braking.Measured()!=t.brakingSaved && app.braking.Samples()>0 && app.braking.Rate()>0 && !t.car.empty()) { t.brakingSaved=app.braking.Measured(); WriteNumber(L"PitStop",L"Braking "+t.car,app.braking.Rate()); }
+}
 void LoadPitTimes() {
     auto& t=app.pitTimes; const auto track=std::to_wstring(app.session.trackId);
     if(app.session.trackId>=0 && app.pitLane.Track()!=app.session.trackId) { app.pitLane.Seed(app.session.trackId,ReadNumber(L"PitStop",L"Lane "+track)); t.samplesSaved=0; }
@@ -884,10 +901,10 @@ void LoadPitTimes() {
     // Times depend on the car and on the server's rule set (DTM tires, NEC fuel rate), so they are kept per both.
     const auto* own=PlayerDriver(); const bool rules=!app.session.ruleSet.empty() && app.session.ruleSet!="None";
     const std::wstring car=own?Wide(own->carPath+(rules?" "+app.session.ruleSet:"")):L"";
-    if(car!=t.car) { t.car=car; t.tires=car.empty()?-1:ReadNumber(L"PitStop",L"Tires "+car); t.rate=car.empty()?-1:ReadNumber(L"PitStop",L"FuelRate "+car); app.refuel.Reset();
+    if(car!=t.car) { SaveBraking(); t.car=car; t.tires=car.empty()?-1:ReadNumber(L"PitStop",L"Tires "+car); t.rate=car.empty()?-1:ReadNumber(L"PitStop",L"FuelRate "+car); app.refuel.Reset();
         app.braking.Reset(); app.braking.Seed(car.empty()?-1:ReadNumber(L"PitStop",L"Braking "+car)); t.brakingSaved=0; }
 }
-// Learns from every frame; a new lane loss or a measured refuel rate is kept for the next session.
+// Learns from every frame; a new lane loss or a measured refuel rate is kept for the next session, the braking when it ends.
 void UpdatePitStop() {
     LoadPitTimes();
     app.pitLane.Update(app.session,app.frame); app.refuel.Update(app.frame); app.pitEnds.Update(app.session,app.frame); app.braking.Update(app.frame);
@@ -899,7 +916,7 @@ void UpdatePitStop() {
         if(app.pitEnds.Entry()>=0) WriteNumber(L"PitStop",L"PitEntry "+track,app.pitEnds.Entry());
         if(app.pitEnds.Exit()>=0) WriteNumber(L"PitStop",L"PitExit "+track,app.pitEnds.Exit());
     }
-    if(app.braking.Samples()!=t.brakingSaved && app.braking.Rate()>0 && !t.car.empty()) { t.brakingSaved=app.braking.Samples(); WriteNumber(L"PitStop",L"Braking "+t.car,app.braking.Rate()); }
+    if(!app.frame.onTrack) SaveBraking(); // Out of the car, in the garage or the menus.
 }
 double PitLaneSeconds() { return app.pitTimes.fixedLane>0?app.pitTimes.fixedLane:app.pitLane.Loss(); }
 // The measured or typed refuel rate; until then 3 l/s, half under the NEC rules, which fuel at 50 % of the usual rate.
@@ -945,14 +962,14 @@ int BrandLogo(const std::string& brand) {
     for(int i=0;i<static_cast<int>(std::size(BrandLogoNames));++i) if(brand==BrandLogoNames[i]) return i;
     return -1;
 }
-// In-car adjustments that differ from the setup, while the Pit Limiter shows them: in the pit lane; an example in preview.
+// In-car adjustments that differ from the setup, while the Pit Assist shows them: in the pit lane; an example in preview.
 std::vector<DialChange> ShownSetupChanges(const Overlay& o) {
     if(o.kind!=PitLimiterKind || !o.setupChanges) return {};
     if(app.preview) return {{AbsDial,5,3,0,false},{BrakeBiasDial,52.5,53.5,1,true}};
     return app.pitVisibility.InPits()?app.setupDials.Changes():std::vector<DialChange>{};
 }
 constexpr int SetupChangeRow=28;
-// The Pit Limiter's pit lane strip: entry, your box and exit in metres from your box, your car on the way, where to
+// The Pit Assist's pit lane strip: entry, your box and exit in metres from your box, your car on the way, where to
 // brake for the entry's speed limit and for the box, and what comes next.
 struct PitStripModel {
     bool shown=false, brakeNow=false, inLane=false;
@@ -961,8 +978,33 @@ struct PitStripModel {
     std::wstring text, speed; COLORREF speedInk=Ink::Value;
 };
 constexpr int PitStripHeight=64;
-// Slowing into the box is gentle; for the entry, the car's learned braking with a margin, else a careful 8 m/s².
-constexpr double StallDeceleration=7, AssumedDeceleration=8;
+// Slowing into the box is gentle; for the entry, the car's learned braking with a small margin, else 10 m/s².
+// The countdown shows the brake point ahead, so no reaction time is added.
+constexpr double StallDeceleration=7, AssumedDeceleration=10, LearnedBrakingShare=.95;
+double PitEntryDeceleration() { const double learned=app.braking.Rate(); return learned>0?LearnedBrakingShare*learned:AssumedDeceleration; }
+// The preview's pass through the pit lane, from where the strip starts: on at racing speed, braking to the
+// limit for the entry, at the limit to the box, four seconds in it, then out past the exit. Metres from the box.
+struct PitPass { double car=0, speed=0; bool pit=false, stall=false; };
+PitPass PreviewPitPass(double time,double entry,double exit,double limit) {
+    const double v0=46, a=PitEntryDeceleration(), start=entry-260, brake=entry-(v0*v0-limit*limit)/(2*a), slow=-limit*limit/(2*StallDeceleration);
+    const double accelerate=4, out=exit+40;
+    // Each phase: its length in seconds; the pass then repeats.
+    const double phases[]={(brake-start)/v0,(v0-limit)/a,(slow-entry)/limit,limit/StallDeceleration,4,limit/accelerate,(out-limit*limit/(2*accelerate))/limit};
+    double total=0; for(double length:phases) total+=length;
+    double t=std::fmod(std::max(0.0,time),total);
+    PitPass p; int phase=0; while(phase<6 && t>phases[phase]) t-=phases[phase++];
+    switch(phase) {
+    case 0: p={start+v0*t,v0}; break;
+    case 1: p={brake+v0*t-a*t*t/2,v0-a*t}; break;
+    case 2: p={entry+limit*t,limit,true}; break;
+    case 3: p={slow+limit*t-StallDeceleration*t*t/2,limit-StallDeceleration*t,true}; break;
+    case 4: p={0,0,true,true}; break;
+    case 5: p={accelerate*t*t/2,accelerate*t,true}; break;
+    default: p={limit*limit/(2*accelerate)+limit*t,limit,true}; break;
+    }
+    p.pit=p.car>=entry && p.car<=exit;
+    return p;
+}
 PitStripModel PitStrip(const Overlay& o) {
     PitStripModel m; const auto& s=app.session; const auto& f=app.frame;
     if(o.kind!=PitLimiterKind || !o.pitStrip || s.pitStallPct<0 || !(s.trackMeters>0) || f.player<0 || f.player>=MaxCars) return m;
@@ -971,23 +1013,30 @@ PitStripModel PitStrip(const Overlay& o) {
     m.shown=true; m.car=metres(f.lapPct);
     if(entryPct>=0) m.entry=metres(entryPct);
     if(exitPct>=0) m.exit=metres(exitPct);
-    const double v=f.cars[f.player].speed, limit=s.pitSpeedLimit, learned=app.braking.Rate();
-    // A learned deceleration counts with a margin; without one the distances are marked as estimates.
-    const std::wstring about=learned>0?L"":L"~";
-    auto distance=[&](double d){ return about+std::to_wstring(static_cast<long long>(std::lround(std::max(0.0,d))))+L" m"; };
-    m.inLane=f.pit || (std::isfinite(m.entry) && std::isfinite(m.exit) && m.car>=m.entry && m.car<=m.exit);
+    const double limit=s.pitSpeedLimit; double v=f.cars[f.player].speed; bool pit=f.pit, stall=f.inStall;
+    if(app.preview && limit>0) {
+        const auto pass=PreviewPitPass(app.diagnostics?0:app.now/1000.0,m.entry,m.exit,limit);
+        m.car=pass.car; v=pass.speed; pit=pass.pit; stall=pass.stall;
+    }
+    // Counting down in metres, or in tenths of a second at the current speed; metres again when nearly stopped.
+    auto distance=[&](double d){
+        d=std::max(0.0,d);
+        if(o.pitSeconds && v>=2) return Format(d/v,1)+L" s";
+        return std::to_wstring(static_cast<long long>(std::lround(d)))+L" m";
+    };
+    m.inLane=pit || (std::isfinite(m.entry) && std::isfinite(m.exit) && m.car>=m.entry && m.car<=m.exit);
     if(std::isfinite(m.entry) && m.car<m.entry) {
-        const double brake=limit>0 && v>=0?BrakingDistance(v,limit,learned>0?.85*learned:AssumedDeceleration):0;
+        const double brake=limit>0 && v>=0?BrakingDistance(v,limit,PitEntryDeceleration(),0):0;
         if(brake>0) {
             m.brake=m.entry-brake;
             if(m.brake>m.car) m.text=L"Brake for pit entry in "+distance(m.brake-m.car); else { m.text=L"BRAKE NOW"; m.brakeNow=true; }
         } else m.text=L"Pit entry in "+distance(m.entry-m.car);
-    } else if(f.inStall || (std::abs(m.car)<=4 && v>=0 && v<1)) m.text=L"In your box";
+    } else if(stall || (std::abs(m.car)<=4 && v>=0 && v<1)) m.text=L"In your box";
     else if(m.car<0) {
         m.text=L"Box in "+distance(-m.car);
         if(v>1) {
-            m.brake=-BrakingDistance(v,0,StallDeceleration);
-            if(m.brake>m.car) m.text+=L"  \u00B7  brake in "+distance(m.brake-m.car); else { m.text+=L"  \u00B7  BRAKE NOW"; m.brakeNow=true; }
+            m.brake=-BrakingDistance(v,0,StallDeceleration,0);
+            if(m.brake>m.car) m.text+=L"  ·  brake in "+distance(m.brake-m.car); else { m.text+=L"  ·  BRAKE NOW"; m.brakeNow=true; }
         }
     } else if(std::isfinite(m.exit) && m.car<m.exit) m.text=L"Limiter off in "+distance(m.exit-m.car);
     else m.text=std::isfinite(m.exit)?L"Past pit exit":L"Pit exit ahead";
@@ -995,10 +1044,14 @@ PitStripModel PitStrip(const Overlay& o) {
         m.speed=std::to_wstring(std::lround(v*3.6))+L" / "+std::to_wstring(std::lround(limit*3.6))+L" km/h";
         m.speedInk=v>limit+.3?Ink::Orange:(m.inLane?Ink::Green:Ink::Value);
     }
-    // From before the entry to past the exit; on the way in far enough back for your car and the brake point.
+    // From before the entry to past the exit; on the way in far enough back for your car and the brake point. Once
+    // shown the start only moves further back, so the strip doesn't jump when the car reaches the entry.
     const double start=std::isfinite(m.entry)?m.entry:-150;
-    m.left=std::max(start-450,std::min({start-60,std::isfinite(m.brake)?m.brake-30:start,m.car-15}));
-    m.right=(std::isfinite(m.exit)?m.exit:100)+30;
+    double left=std::max(start-450,std::min({start-60,std::isfinite(m.brake)?m.brake-30:start,m.car-15}));
+    if(app.preview) left=start-275;
+    else if(app.pitVisible && std::isfinite(app.pitStripLeft)) left=std::min(left,app.pitStripLeft);
+    if(!app.preview) app.pitStripLeft=app.pitVisible?left:std::numeric_limits<double>::quiet_NaN();
+    m.left=left; m.right=(std::isfinite(m.exit)?m.exit:100)+30;
     return m;
 }
 int HeightWithTitle(const Overlay& o) {
@@ -1100,7 +1153,8 @@ using CellRenderer=void(*)(const Row&,const Overlay&,Cell&);
 // Indexed by Column, shared by Relative and Standings.
 const CellRenderer CellRenderers[]={
     +[](const Row& r,const Overlay& o,Cell& c) {
-        const int position=o.kind==StandingsKind && o.table.standings.separateClasses?r.car.classPosition:r.car.position;
+        const bool inClass=o.kind==StandingsKind?o.table.standings.separateClasses:o.table.classPositions;
+        const int position=inClass?r.car.classPosition:r.car.position;
         c.text=position>0?std::to_wstring(position):L"—"; c.ink=Ink::Muted; },
     +[](const Row& r,const Overlay& o,Cell& c) {
         c.box=Cell::Filled; c.font=Bold; c.text=L"#"+Wide(r.driver.number);
@@ -1179,6 +1233,9 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
     auto shape=[&](DrawCommand::Type type,RECT r,COLORREF color,int radius=3) {
         r.top-=titleOffset; r.bottom-=titleOffset; out.push_back({type,Regular,0,r,color,{static_cast<float>(px(radius))}});
     };
+    // Bars like the fuel tank: 12 px of a dark track with square ends; a mark on one is 2 px wide and stands 4 px over both edges.
+    constexpr int BarHeight=12;
+    auto barMark=[&](int x,int top,COLORREF ink) { fill(rect(x-1,top-4,2,BarHeight+8),ink); };
     const COLORREF white=Ink::White, muted=Ink::Muted;
     out.push_back({DrawCommand::Fill,Regular,0,{0,0,width,height},MapOnly(o)?(app.edit?TrackMapMoveKey:TrackMapTransparentKey):Ink::Panel});
     // Width in physical pixels, measured with the overlay's fonts exactly as DrawLabel will.
@@ -1349,9 +1406,17 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         const int current=f.lapCompleted>=0?f.lapCompleted+1:-1, finishLap=FuelFinishLap();
         auto lap=[](int number){ return number>0?L"L"+std::to_wstring(number):std::wstring(L"—"); };
         // Targets: the most fuel per lap that still reaches the latest stop, or the finish when no stop is needed.
-        const int targetLap=open?window.lastLap:(noStop?finishLap:-1);
-        const double targetDistance=open?window.lastLap-(f.lapCompleted+f.lapPct):(noStop?p.lapsToFinish:-1);
-        auto target=[&](int extra){ const double distance=targetDistance+extra; return tankKnown && targetDistance>0 && distance>.05?f.fuel/distance:-1.0; };
+        // Outside races, as in practice or testing, the laps the fuel lasts at the average, counted at the line, and
+        // the most fuel per lap for laps more or less than that.
+        const bool onFuel=!app.preview && !app.session.type.empty() && app.session.type!="Race";
+        const int fuelLaps=onFuel && range>=0?static_cast<int>(std::floor(range+f.lapPct+1e-9)):-1;
+        const int targetLap=onFuel?(fuelLaps>0 && current>0?current+fuelLaps-1:-1):(open?window.lastLap:(noStop?finishLap:-1));
+        const double targetDistance=onFuel?(fuelLaps>=0?fuelLaps-f.lapPct:-1):(open?window.lastLap-(f.lapCompleted+f.lapPct):(noStop?p.lapsToFinish:-1));
+        auto target=[&](int extra){ const double distance=targetDistance+extra; return tankKnown && (onFuel?fuelLaps>=0:targetDistance>0) && distance>.05?f.fuel/distance:-1.0; };
+        auto lapsOnFuel=[&](int extra,bool main) {
+            const int laps=std::max(0,fuelLaps+extra);
+            return std::to_wstring(laps)+(laps==1?L" lap":L" laps")+(main?L" on fuel":L"");
+        };
         auto targetInk=[&](double value){ return value<0 || burn<=0?Ink::Muted:(value>=burn?Ink::Green:(value>=.9*burn?Ink::Yellow:Ink::Red)); };
         auto litres=[](double value,bool plus=false){ return value<0?std::wstring(L"—"):(plus?L"+":L"")+Format(value,1)+L" L"; };
         const int W=OverlayWidth(o); int y=32;
@@ -1369,7 +1434,10 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                 else item(L"REFUEL",litres(refuel,true),refuelInk);
                 break;
             case WindowCard: item(L"BOX BY",open?lap(window.lastLap):L"—",white); break;
-            case TargetRow: item(L"TARGET",target(0)>=0?Format(target(0),2):L"—",targetInk(target(0))); break;
+            case TargetRow:
+                if(onFuel) item(L"ON FUEL",fuelLaps>=0?lapsOnFuel(0,false):L"—",Ink::Accent);
+                else item(L"TARGET",target(0)>=0?Format(target(0),2):L"—",targetInk(target(0)));
+                break;
             case OneLongerRow: item(L"+1 LAP",target(1)>=0?Format(target(1),2):L"—",targetInk(target(1))); break;
             case LeaderDistanceModule: item(L"LEADER LAPS",LeaderDistanceValue(),Ink::Accent); break;
             case WhiteFlagTimeModule: item(L"FINAL LAP",WhiteFlagTimeValue(),white); break;
@@ -1412,12 +1480,12 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                     label(laps,{end-unitWidth-px(5)-lapsWidth,px(y+24),end-unitWidth-px(5)+1,px(y+68)},Ink::Accent,Large);
                     // The bar spans the tank (or more fuel when the finish needs more): fuel in it, fuel missing to the finish, and the finish mark.
                     const int left=16,span=W-32,top=y+74; const double scale=std::max({capacityKnown?capacity:0.0,needed,tankKnown?f.fuel:0.0});
-                    fill(rect(left,top,span,12),Ink::BarBack);
+                    fill(rect(left,top,span,BarHeight),Ink::BarBack);
                     auto at=[&](double value){ return left+static_cast<int>(span*std::clamp(value/scale,0.0,1.0)); };
-                    if(scale>0 && tankKnown) fill(rect(left,top,at(f.fuel)-left,12),Ink::Accent);
-                    if(scale>0 && spare && needed>=0) fill(rect(at(needed),top,at(f.fuel)-at(needed),12),Ink::Green);
-                    if(scale>0 && tankKnown && needed>f.fuel) out.push_back({DrawCommand::Hatch,Regular,0,{px(at(f.fuel)),px(top)-titleOffset,px(at(needed)),px(top+12)-titleOffset},Ink::HatchFore,{static_cast<float>(Ink::HatchBack)}});
-                    if(scale>0 && needed>=0) fill(rect(at(needed)-1,top-4,2,20),RGB(255,255,255));
+                    if(scale>0 && tankKnown) fill(rect(left,top,at(f.fuel)-left,BarHeight),Ink::Accent);
+                    if(scale>0 && spare && needed>=0) fill(rect(at(needed),top,at(f.fuel)-at(needed),BarHeight),Ink::Green);
+                    if(scale>0 && tankKnown && needed>f.fuel) out.push_back({DrawCommand::Hatch,Regular,0,{px(at(f.fuel)),px(top)-titleOffset,px(at(needed)),px(top+BarHeight)-titleOffset},Ink::HatchFore,{static_cast<float>(Ink::HatchBack)}});
+                    if(scale>0 && needed>=0) barMark(at(needed),top,RGB(255,255,255));
                     // Legend: in tank on the left, missing or spare in the middle, needed on the right, like the bar reads.
                     auto key=[&](int x,COLORREF ink,bool mark,std::wstring text,int width) {
                         if(mark) fill({x,px(y+96),x+px(2),px(y+106)},ink); else fill({x,px(y+97),x+px(8),px(y+105)},ink);
@@ -1524,9 +1592,10 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                         fill(rect(0,y,W,16+24*rows),Ink::Band); fill(rect(0,y,W,1),Ink::Line); y+=8;
                     }
                     static constexpr const wchar_t* names[]={L"One lap shorter",L"Target",L"One lap longer",L"Two laps longer"};
+                    static constexpr const wchar_t* onFuelNames[]={L"One lap less",L"Laps on fuel",L"One lap more",L"Two laps more"};
                     const int extra=id-TargetRow; const double value=target(extra); const bool main=extra==0;
-                    label(names[id-OneShorterRow],rect(16,y,150,24),main?white:Ink::Muted,main?Bold:Regular);
-                    label(targetLap>0?lap(targetLap+extra):L"",rect(166,y,50,24),Ink::Label,Small);
+                    label(onFuel?(fuelLaps>=0?lapsOnFuel(extra,main):onFuelNames[id-OneShorterRow]):names[id-OneShorterRow],rect(16,y,150,24),main?white:Ink::Muted,main?Bold:Regular);
+                    label(targetLap>0 && (!onFuel || value>=0)?lap(targetLap+extra):L"",rect(166,y,50,24),Ink::Label,Small);
                     label(value>=0?L"max "+Format(value,2)+L" L/lap":L"—",rect(216,y,150,24),targetInk(value),main?Bold:Regular,DT_RIGHT);
                     label(value>=0 && burn>0?(value>=burn?L"+":L"−")+Format(std::abs(value/burn-1)*100,0)+L" %":L"",rect(366,y,W-382,24),Ink::Label,Small,DT_RIGHT);
                     y+=24;
@@ -1558,7 +1627,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         static constexpr const wchar_t* Compass[]={L"N",L"NE",L"E",L"SE",L"S",L"SW",L"W",L"NW"};
         static constexpr const wchar_t* Sides[]={L"Headwind",L"From front right",L"Crosswind from the right",L"From rear right",L"Tailwind",L"From rear left",L"Crosswind from the left",L"From front left"};
         constexpr double pi=3.141592653589793;
-        const double angle=on[WindRelative]?RelativeWindAngle(f,app.preview || app.now-app.yawChanged<3000):std::numeric_limits<double>::quiet_NaN();
+        const double angle=on[WindRelative]?RelativeWindAngle(f,HeadingLive(),MapHeading()):std::numeric_limits<double>::quiet_NaN();
         auto octant=[&](double radians){ return static_cast<int>(std::lround(std::fmod(std::fmod(radians,2*pi)+2*pi,2*pi)/(pi/4)))%8; };
         const std::wstring speed=f.windSpeed>=0?Format(f.windSpeed*3.6,0):L"—", from=std::isfinite(f.windDirection)?Compass[octant(f.windDirection)]:L"";
         const std::wstring side=std::isfinite(angle)?Sides[octant(angle)]:L"";
@@ -1679,25 +1748,25 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         int y=90;
         if(const auto strip=PitStrip(o); strip.shown) {
             // The lap from before the entry to past the exit; your car, your box in yellow, where to brake in orange.
-            const int W=OverlayWidth(o), left=16, span=W-32;
+            // The bar, its marks and their names below it as on the fuel tank; the lane a shade lighter, driven in the accent color.
+            const int W=OverlayWidth(o), left=16, span=W-32, top=y+12;
             auto x=[&](double metres){ return left+static_cast<int>(std::lround(span*std::clamp((metres-strip.left)/(strip.right-strip.left),0.0,1.0))); };
-            fill(rect(left,y+14,span,6),Ink::BarBack);
-            if(std::isfinite(strip.entry) && std::isfinite(strip.exit)) fill(rect(x(strip.entry),y+14,x(strip.exit)-x(strip.entry),6),RGB(45,53,64));
+            fill(rect(left,top,span,BarHeight),Ink::BarBack);
+            if(std::isfinite(strip.entry) && std::isfinite(strip.exit)) fill(rect(x(strip.entry),top,x(strip.exit)-x(strip.entry),BarHeight),Ink::LapDone);
             const double from=std::isfinite(strip.entry)?strip.entry:strip.left;
-            if(strip.inLane && strip.car>from) fill(rect(x(from),y+14,x(strip.car)-x(from),6),Ink::Accent);
+            if(strip.inLane && strip.car>from) fill(rect(x(from),top,x(strip.car)-x(from),BarHeight),Ink::Accent);
             auto mark=[&](double metres,COLORREF ink,const wchar_t* name) {
-                fill(rect(x(metres)-1,y+8,2,18),ink);
-                if(name) label(name,rect(x(metres)-30,y+27,60,14),ink==RGB(255,255,255)?muted:ink,Small,DT_CENTER);
+                barMark(x(metres),top,ink);
+                if(name) label(name,rect(x(metres)-30,top+18,60,16),ink==RGB(255,255,255)?muted:ink,Small,DT_CENTER);
             };
             if(std::isfinite(strip.entry)) mark(strip.entry,RGB(255,255,255),L"entry");
             if(std::isfinite(strip.exit)) mark(strip.exit,strip.car>0?Ink::Green:RGB(255,255,255),L"exit");
             if(std::isfinite(strip.brake)) mark(strip.brake,Ink::Orange,nullptr);
-            fill(rect(x(0)-1,y+6,3,20),Ink::Yellow); fill(rect(x(0)-4,y+4,9,5),Ink::Yellow);
-            label(L"box",rect(x(0)-30,y+27,60,14),Ink::Yellow,Small,DT_CENTER);
-            shape(DrawCommand::RoundFill,rect(x(strip.car)-6,y+11,12,12),RGB(255,255,255),6);
-            shape(DrawCommand::RoundFill,rect(x(strip.car)-5,y+12,10,10),Ink::Yellow,5);
-            label(strip.text,rect(16,y+42,W-140,18),strip.brakeNow?Ink::Orange:white,strip.brakeNow?Bold:Regular);
-            if(!strip.speed.empty()) label(strip.speed,rect(W-136,y+42,120,18),strip.speedInk,Regular,DT_RIGHT);
+            mark(0,Ink::Yellow,L"box");
+            shape(DrawCommand::RoundFill,rect(x(strip.car)-7,top-1,14,14),RGB(255,255,255),7);
+            shape(DrawCommand::RoundFill,rect(x(strip.car)-6,top,12,12),Ink::Yellow,6);
+            label(strip.text,rect(16,y+46,W-140,18),strip.brakeNow?Ink::Orange:white,strip.brakeNow?Bold:Regular);
+            if(!strip.speed.empty()) label(strip.speed,rect(W-136,y+46,120,18),strip.speedInk,Regular,DT_RIGHT);
             y+=PitStripHeight;
         }
         // Adjustments made in the car since the setup was loaded: the dial, now in yellow, then the setup's value.
@@ -1713,7 +1782,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         }
         footer(changes.empty()?y:y+8);
     }
-    // The 1 px border, last so it stays on top; the window region rounds the same corners. The Pit Limiter's color needs none.
+    // The 1 px border, last so it stays on top; the window region rounds the same corners. The Pit Assist's color needs none.
     if(o.kind!=PitLimiterKind && !MapOnly(o)) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{static_cast<float>(o.place.rounded?px(CornerRadius):0)}});
 }
 // DrawTextW costs about three times as much as measuring and ExtTextOutW; it remains only for ellipsis.
@@ -2042,15 +2111,22 @@ bool RefreshDue(ULONGLONG& due,ULONGLONG now,int period,int slack) {
     due=due+period>now?due+period:now+period;
     return true;
 }
+// The overlay's rate, raised to 10 Hz while it shows something that moves fast: the pit limiter warning,
+// or the wind arrow, which turns with the car while the Weather overlay otherwise refreshes once a second.
+int RefreshRate(const Overlay& o) {
+    const auto& d=o.weather.display;
+    const bool windArrow=o.kind==WeatherKind && d[WindModule] && d[WindRose] && d[WindRelative] && std::isfinite(RelativeWindAngle(app.frame,HeadingLive(),MapHeading()));
+    return (o.kind==PitLimiterKind && app.pitVisibility.Warning()) || windArrow?std::max(o.place.rate,10):o.place.rate;
+}
 // Ticks refresh each overlay at its own rate; everything else (settings, hide, diagnostics) forces a refresh.
 void UpdateOverlays(bool force=true) {
     if(!app.overlayClass) return;
     UpdateTrackMap();
     InvalidateModel();
-    const bool pitVisible=app.pitVisibility.Update(app.session,app.frame);
+    const bool pitVisible=app.pitVisible=app.pitVisibility.Update(app.session,app.frame);
     app.setupDials.Update(app.session,app.frame);
     for(auto& o:app.overlays) {
-        bool visible=o.place.enabled && !app.hidden && (o.kind!=WeatherKind || std::any_of(o.weather.display.begin(),o.weather.display.begin()+WeatherPanelCount,[](bool value){return value;})) && (app.preview || (app.frame.connected && (o.kind!=PitLimiterKind || pitVisible)));
+        bool visible=o.place.enabled && !app.hidden && (!app.layoutIdle || app.preview || app.edit) && (o.kind!=WeatherKind || std::any_of(o.weather.display.begin(),o.weather.display.begin()+WeatherPanelCount,[](bool value){return value;})) && (app.preview || (app.frame.connected && (o.kind!=PitLimiterKind || pitVisible)));
         auto style=GetWindowLongPtrW(o.window,GWL_EXSTYLE);
         const auto desired=app.edit?(style&~WS_EX_TRANSPARENT):(style|WS_EX_TRANSPARENT);
         if(style!=desired) SetWindowLongPtrW(o.window,GWL_EXSTYLE,desired);
@@ -2060,7 +2136,7 @@ void UpdateOverlays(bool force=true) {
         if(visible) {
             const int dpi=GetDpiForWindow(o.window);
             RECT client{}; GetClientRect(o.window,&client);
-            const int rate=o.kind==PitLimiterKind && app.pitVisibility.Warning()?std::max(o.place.rate,10):o.place.rate;
+            const int rate=RefreshRate(o);
             if(force) o.due=app.now+1000/rate;
             else if(!RefreshDue(o.due,app.now,1000/rate,app.timerMs/2)) continue;
             if(client.bottom!=MulDiv(BaseHeight(o),dpi*o.place.scale,9600) || client.right!=MulDiv(OverlayWidth(o),dpi*o.place.scale,9600)) { Fit(o); InvalidateModel(); }
@@ -2071,7 +2147,7 @@ void UpdateOverlays(bool force=true) {
 // Telemetry is read at the chosen rate, or faster when an enabled overlay refreshes faster.
 int ReadRate() {
     int rate=app.rate;
-    for(const auto& o:app.overlays) if(o.place.enabled) rate=std::max(rate,o.place.rate);
+    for(const auto& o:app.overlays) if(o.place.enabled) rate=std::max(rate,RefreshRate(o));
     return rate;
 }
 void Timer() {
@@ -2096,6 +2172,8 @@ void PreviewData(double time) {
     auto& s=app.session; auto& f=app.frame;
     s.track="Lime Rock Park"; s.trackName="limerock 2019 gp"; s.trackConfig="Grand Prix"; s.trackId=353; s.trackMeters=2470;
     s.pitStallPct=.032; s.pitSpeedLimit=56.33/3.6;
+    // The limiter goes on with the pass through the pit lane that Pit Assist shows.
+    f.limiterKnown=true; f.limiter=PreviewPitPass(time,(.94-1-s.pitStallPct)*s.trackMeters,(.075-s.pitStallPct)*s.trackMeters,s.pitSpeedLimit).pit;
     const double run=std::fmod(std::max(0.0,time),300.), laps=run/PreviewLeaderPace;
     f.timeTotal=1080; f.timeLeft=630-run; f.bestLap=52.9+3*.07; f.lastLap=PreviewOwnPace;
     const char* licenses[]={"A 4.21","A 3.45","B 3.88","B 2.94","A 2.67","C 3.12","B 4.05","C 2.38","D 2.71","B 1.96"};
@@ -2124,7 +2202,7 @@ void PollUpdates();
 constexpr UINT RefreshUiMessage=WM_APP+2;
 void ProcessFrame(bool connected) {
     if(app.frame.yawNorth!=app.lastYaw && std::isfinite(app.frame.yawNorth)) { app.lastYaw=app.frame.yawNorth; app.yawChanged=app.now; }
-    if(!connected) { app.frame={}; app.events.Update(app.session,app.frame); app.session={}; app.pitLane.Reset(); app.refuel.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.weatherHistory.Reset(); }
+    if(!connected) { SaveBraking(); app.frame={}; app.events.Update(app.session,app.frame); app.session={}; app.pitLane.Reset(); app.refuel.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.weatherHistory.Reset(); }
     else {
         { ProfileScope p("analysis: pit history"); app.pitHistory.Update(app.session,app.frame); }
         { ProfileScope p("analysis: pit stop estimate"); UpdatePitStop(); }
@@ -2223,7 +2301,7 @@ void TrayMenu() {
     AppendMenuW(menu,MF_STRING,6,L"Race Control");
     if(app.layouts.size()>1) {
         HMENU layouts=CreatePopupMenu();
-        for(size_t i=0;i<app.layouts.size();++i) AppendMenuW(layouts,MF_STRING|(app.layouts[i].id==app.layout?MF_CHECKED:0),100+i,app.layouts[i].name.c_str());
+        for(size_t i=0;i<app.layouts.size();++i) AppendMenuW(layouts,MF_STRING|(app.layouts[i].id==app.layout && !app.layoutIdle?MF_CHECKED:0),100+i,app.layouts[i].name.c_str());
         AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(layouts),L"Layout");
     }
     AppendMenuW(menu,MF_SEPARATOR,0,nullptr); AppendMenuW(menu,MF_STRING,5,L"Exit");
@@ -2279,7 +2357,7 @@ LRESULT CALLBACK MainProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     }
     case WM_DESTROY:
         trackMap.task.Cancel();
-        if(!app.diagnostics) { RememberWindowPlacement(); Save(); }
+        if(!app.diagnostics) { RememberWindowPlacement(); Save(); SaveBraking(); }
         CloseRaceControl();
         KillTimer(w,1); Shell_NotifyIconW(NIM_DELETE,&app.tray);
         UnregisterHotkeys(); app.hotkeysEnabled=false;

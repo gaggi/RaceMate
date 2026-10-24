@@ -106,7 +106,7 @@ void BrakingRate::Update(const Frame& f) {
     if(startTime_>=0 && (!braking || gap)) {
         // A braking zone ends: its average, if it was long and hard enough to tell.
         const double span=lastTime_-startTime_, drop=startSpeed_-lastSpeed_;
-        if(!gap && span>=.6 && drop>=8) { samples_.push_back(std::clamp(drop/span,3.0,40.0)); if(samples_.size()>15) samples_.erase(samples_.begin()); }
+        if(!gap && span>=.6 && drop>=8) { samples_.push_back(std::clamp(drop/span,3.0,40.0)); ++measured_; if(samples_.size()>15) samples_.erase(samples_.begin()); }
         startTime_=-1;
     }
     if(braking && startTime_<0) { startTime_=f.time; startSpeed_=speed; }
@@ -117,9 +117,9 @@ double BrakingRate::Rate() const {
     auto values=samples_; std::nth_element(values.begin(),values.begin()+values.size()/2,values.end());
     return values[values.size()/2];
 }
-double BrakingDistance(double speed,double target,double deceleration) {
+double BrakingDistance(double speed,double target,double deceleration,double reaction) {
     if(!(speed>target) || !(deceleration>0)) return 0;
-    return (speed*speed-target*target)/(2*deceleration)+.3*speed;
+    return (speed*speed-target*target)/(2*deceleration)+reaction*speed;
 }
 void RefuelRate::Update(const Frame& f) {
     if(!f.connected || !f.inStall || !f.fuelKnown || View(f)==ViewMode::Replay) { lastTime_=lastFuel_=-1; startTime_=-1; return; }

@@ -41,8 +41,9 @@ private:
         // Layouts in priority order: when the situation changes, the first whose condition applies becomes active.
         header(L"Layouts");
         for(size_t i=0;i<app.layouts.size();++i) {
-            const auto& l=app.layouts[i]; const bool active=l.id==app.layout;
+            const auto& l=app.layouts[i]; const bool active=l.id==app.layout && !app.layoutIdle;
             RowList::Row row; row.title=l.name; row.detail=std::wstring(ConditionNames[l.condition])+L": "+ConditionDetails[l.condition];
+            if(l.id==app.layout && app.layoutIdle) row.detail+=L"  ·  None applies now: overlays hidden";
             if(active) { row.pill=L"Active"; row.pillTone=RowList::Tone::Active; } else row.button=L"Use";
             // Right to left: expand, sort arrows, remove (not the first layout).
             row.iconButtons={l.id==expandedLayout_?Glyph::Collapse:Glyph::Expand,i+1<app.layouts.size()?Glyph::Down:wchar_t{0},i>0?Glyph::Up:wchar_t{0},l.id!=1?Glyph::Remove:wchar_t{0}};
@@ -147,7 +148,7 @@ private:
         const auto at=std::find_if(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==id;});
         const auto target=at-app.layouts.begin()+step;
         if(at==app.layouts.end() || target<0 || target>=static_cast<long long>(app.layouts.size())) return;
-        std::swap(*at,app.layouts[static_cast<size_t>(target)]); Save(); Refresh(); BuildEditors();
+        std::swap(*at,app.layouts[static_cast<size_t>(target)]); ReconsiderLayout(); Save(); Refresh(); BuildEditors();
     }
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); return true; }
@@ -163,7 +164,7 @@ private:
             return true;
         }
         if(id==LayoutConditionId) {
-            if(Layout* layout=FindLayout(expandedLayout_); layout && !syncing_ && code==CBN_SELCHANGE && editors_.Selection(id)>=0) { layout->condition=editors_.Selection(id); Save(); Refresh(); }
+            if(Layout* layout=FindLayout(expandedLayout_); layout && !syncing_ && code==CBN_SELCHANGE && editors_.Selection(id)>=0) { layout->condition=editors_.Selection(id); ReconsiderLayout(); Save(); Refresh(); }
             return true;
         }
         if(id!=ListId) return false;

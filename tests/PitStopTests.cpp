@@ -55,6 +55,13 @@ void BrakingTests() {
     // A light lift or a short tap is not a braking zone.
     for(int i=1;i<=3;++i) { f.time+=.1; f.brake=.9; f.cars[0].speed=40-i; rate.Update(f); }
     f.time+=.1; f.brake=0; rate.Update(f); Require(rate.Samples()==1,"a short tap is not counted");
+    // Past the 15 kept zones the count of measured ones still grows, so the value is saved again at the session's end.
+    for(int zone=0;zone<16;++zone) {
+        for(int i=1;i<=20;++i) { f.time+=.1; f.brake=.9; f.cars[0].speed=60-1.5*i; rate.Update(f); }
+        f.time+=.1; f.brake=0; rate.Update(f);
+    }
+    Require(rate.Samples()==15 && rate.Measured()==17,"the last 15 zones are kept, every measured one is counted");
+    Require(std::abs(BrakingDistance(50,15.65,8,0)-(50*50-15.65*15.65)/16)<1e-9,"braking distance without reaction time");
     Require(std::abs(BrakingDistance(50,15.65,8)-(50*50-15.65*15.65)/16-15)<1e-9 && BrakingDistance(10,15,8)==0,"braking distance with reaction time, none below the target");
     const auto session=ParseSession("WeekendInfo:\n TrackLength: 2.3360 km\n TrackPitSpeedLimit: 56.33 kph\nDriverInfo:\n DriverCarIdx: 0\n DriverPitTrkPct: 0.032358\n Drivers:\n - CarIdx: 0\n   UserName: You\n",0);
     Require(std::abs(session.pitStallPct-.032358)<1e-9 && std::abs(session.pitSpeedLimit-56.33/3.6)<1e-9,"own pit box and pit speed limit from the session info");

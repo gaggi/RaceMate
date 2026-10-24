@@ -15,9 +15,56 @@ void RetryTrackMap(bool retryLabels=false) {
     trackMap.task.Cancel(); trackMap.identity.clear();
     if(retryLabels && trackMap.id>=0) { std::error_code error; std::filesystem::remove(TrackMapCache()/std::to_wstring(trackMap.id)/L"turns-attempt.txt",error); }
 }
+// Where north lies on the official map: TrackNorthOffset from the session info, until your car in its pit stall
+// settles it. A settled turn is kept per track (all its layouts are drawn alike) in north.ini beside the SVGs.
+struct NorthState { std::string track; int settled=-1; } north;
+std::wstring NorthFile() { return (TrackMapCache()/L"north.ini").wstring(); }
+void ForgetNorth() {
+    if(!north.track.empty()) WritePrivateProfileStringW(L"North",Wide(north.track).c_str(),nullptr,NorthFile().c_str());
+    north.settled=-1;
+}
+int MapNorthTurn() { return north.settled>=0?north.settled:NorthTurnFromOffset(app.session.trackNorthOffset); }
+void RefreshPage();
+// Your car in its pit stall stands along the pit lane: its YawNorth against the drawn pit lane beside the stall
+// (the track there, without a pit drawing) settles north. Once settled, nothing more is measured on this track.
+void UpdateNorth() {
+    const std::string track=app.preview?std::string():trackmap::TrackFolder(app.session.trackId);
+    if(track!=north.track) {
+        north={}; north.track=track;
+        if(!track.empty()) { std::error_code error; std::filesystem::create_directories(TrackMapCache(),error); north.settled=static_cast<int>(GetPrivateProfileIntW(L"North",Wide(track).c_str(),-1,NorthFile().c_str())); }
+    }
+    if(track.empty() || north.settled>=0 || !trackMap.ready || trackMap.preview || trackMap.id!=app.session.trackId) return;
+    const auto& f=app.frame;
+    if(!f.onTrack || f.replay || f.player<0 || f.player>=MaxCars || ReferenceCar(f)!=f.player) return;
+    const auto& c=f.cars[f.player];
+    if(c.surface!=1 || c.pct<0 || c.speed>.5) return;
+    const auto& g=trackMap.geometry; double heading=g.PitHeading(c.pct);
+    if(!std::isfinite(heading)) heading=g.Heading(c.pct);
+    const int measured=NorthTurnFromHeadings(f.yawNorth,heading); if(measured<0) return;
+    // Within 2 degrees of the session info, that stays; otherwise the pit box.
+    const int formula=NorthTurnFromOffset(app.session.trackNorthOffset), apart=formula<0?360:std::abs(measured-formula)%360;
+    north.settled=std::min(apart,360-apart)<=2?formula:measured;
+    WritePrivateProfileStringW(L"North",Wide(track).c_str(),std::to_wstring(north.settled).c_str(),NorthFile().c_str());
+    ++trackMap.revision; RefreshPage();
+}
+// A wind arrow while you watch another car live takes its heading from the official map, when its north is known.
+bool WindArrowNeedsMap() {
+    return !app.preview && MapNorthTurn()>=0 && std::any_of(app.overlays.begin(),app.overlays.end(),[](const Overlay& o){
+        const auto& d=o.weather.display; return o.kind==WeatherKind && o.place.enabled && d[WindModule] && d[WindRose] && d[WindRelative]; });
+}
+// The reference car's compass heading from the official map: its direction of travel there, turned to north.
+double MapHeading() {
+    const int turn=MapNorthTurn(), car=ReferenceCar(app.frame);
+    if(!trackMap.ready || trackMap.preview || turn<0 || car<0 || car>=MaxCars) return std::numeric_limits<double>::quiet_NaN();
+    // Not in the world or in the pit stall: no direction of travel.
+    const auto& c=app.frame.cars[car];
+    if(c.pct<0 || c.surface<0 || c.surface==1) return std::numeric_limits<double>::quiet_NaN();
+    constexpr double pi=3.141592653589793;
+    return std::fmod(trackMap.geometry.Heading(c.pct)+turn*pi/180,2*pi);
+}
 void UpdateTrackMap() {
     // Only the official map needs the SVGs; circle and line work without them.
-    const bool enabled=std::any_of(app.overlays.begin(),app.overlays.end(),[](const Overlay& o){return o.kind==TrackMapKind && o.place.enabled && o.map.layout==MapLayout;});
+    const bool enabled=WindArrowNeedsMap() || std::any_of(app.overlays.begin(),app.overlays.end(),[](const Overlay& o){return o.kind==TrackMapKind && o.place.enabled && o.map.layout==MapLayout;});
     if(!enabled || (!app.preview && !app.frame.connected)) {
         if(trackMap.task.Running() || trackMap.ready || !trackMap.identity.empty()) {
             trackMap.task.Cancel(); trackMap.identity.clear(); trackMap.geometry={}; trackMap.ready=false; ++trackMap.revision;
@@ -52,10 +99,13 @@ void UpdateTrackMap() {
             trackMap.message=trackMap.geometry.direction?L"SVG distance projection":L"Direction unresolved; car positions hidden";
         } else trackMap.message=result?Wide(result->map.error):L"SVG loader failed; retry in settings";
     }
+    UpdateNorth();
 }
 struct MapTransform {
     double scale=1,x=0,y=0;
-    trackmap::Point Apply(trackmap::Point p) const { return {x+p.x*scale,y+p.y*scale}; }
+    double cosine=1,sine=0; // The drawing turned clockwise, for north up.
+    void Turn(int degrees) { cosine=std::cos(degrees*3.141592653589793/180); sine=std::sin(degrees*3.141592653589793/180); }
+    trackmap::Point Apply(trackmap::Point p) const { return {x+(p.x*cosine-p.y*sine)*scale,y+(p.x*sine+p.y*cosine)*scale}; }
 };
 bool ShowMapLabel(const trackmap::Label& label,const TrackMapSettings& settings) {
     return label.number?settings.cornerNumbers:settings.cornerNames;
@@ -63,7 +113,7 @@ bool ShowMapLabel(const trackmap::Label& label,const TrackMapSettings& settings)
 int MapStyle(const TrackMapSettings& settings) {
     return (settings.background?1:0)|(settings.pitLane?2:0)|(settings.startFinish?4:0)
         |(settings.cornerNumbers?8:0)|(settings.cornerNames?16:0)|(settings.labelContrast?32:0)|(settings.labelScale<<6)|(settings.layout<<15)|(settings.whiteTrack?1<<17:0)
-        |(settings.surroundings?1<<18:0)|(settings.allConfigs?1<<19:0);
+        |(settings.surroundings?1<<18:0)|(settings.allConfigs?1<<19:0)|(settings.northUp?1<<20:0);
 }
 // Circle and line: where a lap fraction lies in an area of this physical size; the scene and the static drawing share it.
 struct MapShapeInfo {
@@ -79,27 +129,30 @@ MapShapeInfo MapShape(const Overlay& o,int width,int height) {
     return {o.map.layout,static_cast<double>(width),static_cast<double>(height),static_cast<double>(MulDiv(14,o.dpi*o.place.scale,9600))};
 }
 MapTransform MapFit(const trackmap::Geometry& g,int width,int height,const TrackMapSettings& settings) {
-    auto low=g.low,high=g.high;
+    // North up turns the map when its north is known; bounds are taken after turning, labels stay upright.
+    MapTransform transform; transform.Turn(settings.northUp?std::max(0,MapNorthTurn()):0);
+    trackmap::Point low{std::numeric_limits<double>::max(),std::numeric_limits<double>::max()},high{-low.x,-low.y};
+    auto extend=[&](trackmap::Point p) { low.x=std::min(low.x,p.x); low.y=std::min(low.y,p.y); high.x=std::max(high.x,p.x); high.y=std::max(high.y,p.y); };
+    // Turned by an odd angle, the corners of the bounds would leave a margin: the drawing itself then.
+    if(transform.sine==0) for(double x:{g.low.x,g.high.x}) for(double y:{g.low.y,g.high.y}) extend(transform.Apply({x,y}));
+    else for(const auto* layer:{&g.active,&g.finish}) for(const auto& shape:layer->shapes) for(const auto& path:shape.paths) for(const auto p:path.points) extend(transform.Apply(p));
     // The other configurations shown whole; the surroundings may run off the edges.
-    if(settings.allConfigs) for(const auto& shape:g.inactive.shapes) for(const auto& path:shape.paths) for(const auto p:path.points) {
-        low.x=std::min(low.x,p.x); low.y=std::min(low.y,p.y); high.x=std::max(high.x,p.x); high.y=std::max(high.y,p.y);
-    }
+    if(settings.allConfigs) for(const auto& shape:g.inactive.shapes) for(const auto& path:shape.paths) for(const auto p:path.points) extend(transform.Apply(p));
     for(const auto& label:g.labels) if(ShowMapLabel(label,settings)) {
         // Conservative text bounds also reserve room for names outside the road.
         const double size=label.size*settings.labelScale/100.,w=label.text.size()*size*.75;
         const double left=label.anchor==1?-w/2:(label.anchor==2?-w:0);
         const double cosine=std::cos(label.angle),sine=std::sin(label.angle);
-        for(double x:{left-size*.1,left+w+size*.1}) for(double y:{-size*1.1,size*.3}) {
-            const trackmap::Point p{label.position.x+x*cosine-y*sine,label.position.y+x*sine+y*cosine};
-            low.x=std::min(low.x,p.x); low.y=std::min(low.y,p.y); high.x=std::max(high.x,p.x); high.y=std::max(high.y,p.y);
-        }
+        const auto at=transform.Apply(label.position);
+        for(double x:{left-size*.1,left+w+size*.1}) for(double y:{-size*1.1,size*.3}) extend({at.x+x*cosine-y*sine,at.y+x*sine+y*cosine});
     }
     const double w=high.x-low.x,h=high.y-low.y;
     // Small inset protects the contrast outline against clipping at bitmap edges.
     width=std::max(8,width); height=std::max(8,height);
     const int inset=(settings.cornerNumbers || settings.cornerNames)?3:0;
     const double scale=std::min((width-2*inset)/w,(height-2*inset)/h);
-    return {scale,(width-w*scale)/2-low.x*scale,(height-h*scale)/2-low.y*scale};
+    transform.scale=scale; transform.x=(width-w*scale)/2-low.x*scale; transform.y=(height-h*scale)/2-low.y*scale;
+    return transform;
 }
 // A layer in one colour; with an edge, a black rim of that width goes around every shape first, so one shape's
 // rim never cuts into the next.

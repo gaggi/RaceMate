@@ -292,7 +292,7 @@ int RunDiagnostics() {
         finish.valid=false; forecastOk=LeaderDistanceValue()==L"—" && WhiteFlagTimeValue()==L"—" && forecastOk;
         forecastOk=FooterValue(LapLeaderDistanceMetric)==L"Lap 8 / —" && forecastOk;
         app.fuelPlan=savedPlan;
-        // One registry and renderer for both bands of every kind, including the Pit Limiter.
+        // One registry and renderer for both bands of every kind, including the Pit Assist.
         for(int kind=0;kind<OverlayCount;++kind) {
             auto& o=First(kind); const Bands bands=o.bands;
             o.bands.header=true; o.bands.footer.enabled=true;
@@ -480,6 +480,17 @@ int RunDiagnostics() {
         report<<"Gap signs switch per table, off by default: "<<(signsOk?"PASS":"FAIL")<<"\n"; ok=signsOk && ok;
     }
     {
+        // The Relative counts places within each car's class by default, overall when chosen, and keeps the choice.
+        const auto savedTables=Tables(); auto& relative=First(RelativeKind);
+        Row row; row.car.position=5; row.car.classPosition=2; Cell inClass{{},Ink::White}, overall{{},Ink::White};
+        bool positionOk=relative.table.classPositions; CellRenderers[PositionColumn](row,relative,inClass);
+        relative.table.classPositions=false; SettingChanged(); CellRenderers[PositionColumn](row,relative,overall);
+        positionOk=inClass.text==L"2" && overall.text==L"5" && positionOk;
+        Load(); positionOk=!First(RelativeKind).table.classPositions && positionOk;
+        RestoreTables(savedTables); Save();
+        report<<"Relative positions in class by default, overall on request: "<<(positionOk?"PASS":"FAIL")<<"\n"; ok=positionOk && ok;
+    }
+    {
         const auto savedTables=Tables(); const auto savedFrame=app.frame; bool flagsOk=true;
         app.frame.cars[0].sessionFlags=0x10000u; app.frame.cars[1].sessionFlags=0x80000u; app.frame.cars[2].sessionFlags=0x100000u; app.frame.cars[3].sessionFlags=0x190000u;
         for(int kind=0;kind<2;++kind) {
@@ -664,8 +675,20 @@ int RunDiagnostics() {
         wchar_t left[8]{}; GetPrivateProfileStringW((L"Layout "+std::to_wstring(second)+L": Relative").c_str(),L"X",L"",left,8,app.config.c_str());
         layoutOk=app.layouts.size()==1 && app.layout==1 && !left[0] && InstanceCount(WeatherKind)==1 && First(RelativeKind).place.x==place.x && layoutOk;
         Load(); layoutOk=app.layouts.size()==1 && layoutOk;
+        // A single In car layout: hidden in the garage, shown once driving, and a hand choice shows it anyway.
+        const bool savedHidden=app.hidden, savedEdit=app.edit; app.hidden=app.edit=false;
+        app.preview=false; app.frame.connected=app.frame.garage=true; app.frame.onTrack=app.frame.replay=false;
+        app.layouts[0].condition=InCarCondition; ReconsiderLayout();
+        app.now+=100; AutoLayout(); app.now+=1100; AutoLayout(); UpdateOverlays();
+        layoutOk=app.layoutIdle && !IsWindowVisible(First(RelativeKind).window) && layoutOk;
+        SwitchLayout(1); UpdateOverlays(); layoutOk=!app.layoutIdle && IsWindowVisible(First(RelativeKind).window) && layoutOk;
+        app.now+=100; AutoLayout(); app.now+=1100; AutoLayout(); layoutOk=!app.layoutIdle && layoutOk; // The situation has not changed.
+        app.frame.garage=false; app.frame.onTrack=true; app.now+=100; AutoLayout(); app.now+=1100; AutoLayout(); UpdateOverlays();
+        layoutOk=!app.layoutIdle && IsWindowVisible(First(RelativeKind).window) && layoutOk;
+        app.frame.onTrack=false; app.now+=100; AutoLayout(); app.now+=1100; AutoLayout(); layoutOk=app.layoutIdle && layoutOk;
+        app.layouts[0].condition=AlwaysCondition; app.layoutIdle=false; app.hidden=savedHidden; app.edit=savedEdit; Save();
         app.frame=savedFrame; app.session=savedSession; app.preview=savedPreview; app.now=savedNow; app.layoutSituation=app.pendingSituation=-1; UpdateOverlays();
-        report<<"Layouts: own overlays, places and settings, switching, reload, conditions, manual choice and removal: "<<(layoutOk?"PASS":"FAIL")<<"\n"; ok=layoutOk && ok;
+        report<<"Layouts: own overlays, places and settings, switching, reload, conditions, none applying, manual choice and removal: "<<(layoutOk?"PASS":"FAIL")<<"\n"; ok=layoutOk && ok;
     }
     {
         // The Safety and iRating badge beside License and iRating, over drivers of every license class.
@@ -766,7 +789,7 @@ int RunDiagnostics() {
         };
         ShowPage(Page::Overlays); aligned("Overlays");
         ShowPage(Page::Settings); aligned("Settings");
-        constexpr const char* pages[]={"Relative","Standings","Fuel Calculator","Pit Limiter","Weather","Track Map"};
+        constexpr const char* pages[]={"Relative","Standings","Fuel Calculator","Pit Assist","Weather","Track Map"};
         for(int kind=0;kind<OverlayCount;++kind) { OpenOverlay(First(kind)); aligned(pages[kind]); }
         ShowPage(Page::Overlays);
         report<<"Expand, sort arrows, toggle and button in order and in columns in every settings list: "<<(alignOk && toggles>40?"PASS":"FAIL")<<"\n"; ok=alignOk && toggles>40 && ok;
@@ -790,7 +813,7 @@ int RunDiagnostics() {
         report<<"Overlay rates on every telemetry rate, with jitter and pauses: "<<(ratesOk?"PASS":"FAIL")<<"\n"; ok=ratesOk && ok;
     }
     {
-        // Rings outside the overlay: red on the one whose page is open, dashed yellow while moving; none on the Pit Limiter; square corners on request.
+        // Rings outside the overlay: red on the one whose page is open, dashed yellow while moving; none on the Pit Assist; square corners on request.
         bool bordersOk=true; auto& relative=First(RelativeKind);
         auto ringAround=[](const Overlay& o) {
             RECT inner{},outer{}; GetWindowRect(o.window,&inner); GetWindowRect(o.frame,&outer); const int thick=MulDiv(FrameWidth,GetDpiForWindow(o.window),96);
@@ -806,7 +829,7 @@ int RunDiagnostics() {
         relative.place.rounded=false; Fit(relative); SettingChanged(); Load(); bordersOk=!relative.place.rounded && bordersOk;
         bordersOk=Export(relative.window,L"build\\qa\\border-square.bmp") && bordersOk;
         relative.place.rounded=true; Fit(relative); SettingChanged();
-        report<<"Overlay borders while editing and moving, Pit Limiter without border, square corners: "<<(bordersOk?"PASS":"FAIL")<<"\n"; ok=bordersOk && ok;
+        report<<"Overlay borders while editing and moving, Pit Assist without border, square corners: "<<(bordersOk?"PASS":"FAIL")<<"\n"; ok=bordersOk && ok;
     }
     {
         const auto rosterSession=app.session; const auto rosterFrame=app.frame; const auto rosterOptions=First(StandingsKind).table.standings;
@@ -1305,6 +1328,25 @@ int RunDiagnostics() {
         report<<"Fuel Last Lap and Average populated immediately after observed first race lap: "<<(ok?"PASS":"FAIL")<<"\n";
         app.session=savedSession; app.frame=savedFrame; app.preview=savedPreview; app.fuel.Reset(); app.predictor.Reset(); UpdateOverlays();
     }
+    {
+        // Practice has no finish: the targets count the laps the fuel lasts at the average, then the most per lap for more.
+        const auto savedSession=app.session; const auto savedFrame=app.frame; const bool savedPreview=app.preview;
+        app.preview=false; app.fuel.Reset(); app.predictor.Reset(); app.session.type="Practice"; app.session.number=app.frame.session;
+        app.frame.pit=app.frame.inStall=false; app.frame.onTrack=app.frame.connected=app.frame.fuelKnown=true;
+        app.frame.flags=0; app.frame.state=4; auto& own=app.frame.cars[app.frame.player]; own.surface=3; own.position=own.classPosition=1;
+        for(int lap=0;lap<=3;++lap) {
+            app.frame.time=1+lap*100.0; app.frame.lapCompleted=lap; app.frame.lapPct=0; app.frame.fuel=50-lap*3.2;
+            own.lap=lap+1; own.completed=lap; own.pct=0; own.estTime=0; if(lap) app.frame.bestLap=app.frame.lastLap=own.best=own.last=100;
+            app.fuel.Update(app.session,app.frame);
+        }
+        InvalidateModel(); UpdateOverlays();
+        // 40.4 L at 3.2 L/lap from the line: 12 laps, L4 to L15; 13 laps at most 3.11, 14 at most 2.89.
+        auto shows=[](const std::wstring& text){ const auto& scene=First(FuelKind).scene; return std::any_of(scene.begin(),scene.end(),[&](const DrawCommand& c){ return c.type==DrawCommand::Text && c.text==text; }); };
+        const bool practiceOk=shows(L"12 laps on fuel") && shows(L"L15") && shows(L"13 laps") && shows(L"max 3.11 L/lap") && shows(L"14 laps") && shows(L"max 2.89 L/lap") && shows(L"11 laps");
+        const bool exported=Export(First(FuelKind).window,L"build\\qa\\fuel-practice-targets.bmp");
+        report<<"Fuel targets in practice: laps on fuel at the average, most per lap for one and two laps more: "<<(practiceOk && exported?"PASS":"FAIL")<<"\n"; ok=practiceOk && exported && ok;
+        app.session=savedSession; app.frame=savedFrame; app.preview=savedPreview; app.fuel.Reset(); app.predictor.Reset(); InvalidateModel(); UpdateOverlays();
+    }
     const auto demoSession=app.session; const auto demoFrame=app.frame;
     app.preview=false; app.session.type="Practice"; app.session.number=app.frame.session;
     for(const auto& driver:app.session.drivers) {
@@ -1384,12 +1426,12 @@ int RunDiagnostics() {
         setupOk=Export(First(3).window,L"build\\qa\\pit-setup-changes.bmp") && setupOk;
         First(3).setupChanges=false; UpdateOverlays(); setupOk=!text(L"ABS") && client()==plain && setupOk;
         First(3).setupChanges=true; app.session.setup=savedSetup; app.session.setupUpdate=savedUpdate; app.frame.dialsKnown=0; UpdateOverlays();
-        report<<"Pit Limiter lists in-car adjustments that differ from the setup, in the pit lane: "<<(setupOk?"PASS":"FAIL")<<"\n"; ok=setupOk && ok;
+        report<<"Pit Assist lists in-car adjustments that differ from the setup, in the pit lane: "<<(setupOk?"PASS":"FAIL")<<"\n"; ok=setupOk && ok;
     }
     app.frame.pit=false; app.frame.limiter=true; app.frame.time+=1; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
     {
         // The pit lane strip through a stop at Lime Rock: box 76 m past start/finish, entry 227 m before it, exit
-        // 106 m after it, 56 km/h. Without a learned deceleration the distances are estimates.
+        // 106 m after it, 56 km/h. Without a learned deceleration the car brakes at 10 m/s².
         const auto savedFrame=app.frame; const auto savedSession=app.session; auto& limiter=First(PitLimiterKind);
         auto& s=app.session; auto& f=app.frame;
         s.trackId=353; s.trackMeters=2470; s.pitStallPct=.032; s.pitSpeedLimit=56.33/3.6;
@@ -1399,26 +1441,29 @@ int RunDiagnostics() {
             f.cars[f.player].surface=surface; f.limiter=pit; f.time+=.1; InvalidateModel(); UpdateOverlays(); return PitStrip(limiter);
         };
         auto strip=phase(.85,50,false,false,2);
-        bool stripOk=strip.shown && strip.text==L"Brake for pit entry in ~66 m" && strip.speedInk==Ink::Orange && strip.speed==L"180 / 56 km/h";
+        bool stripOk=strip.shown && strip.text==L"Brake for pit entry in 110 m" && strip.speedInk==Ink::Orange && strip.speed==L"180 / 56 km/h";
         stripOk=Export(limiter.window,L"build\\qa\\pit-strip-approach.bmp") && stripOk;
+        const double approachLeft=strip.left; limiter.pitSeconds=true;
+        strip=phase(.85,50,false,false,2); stripOk=strip.text==L"Brake for pit entry in 2.2 s" && stripOk; limiter.pitSeconds=false;
         strip=phase(.90,50,false,false,2); stripOk=strip.text==L"BRAKE NOW" && strip.brakeNow && stripOk;
-        strip=phase(.99,15.6,true,false,3); stripOk=strip.text==L"Box in ~104 m  \u00B7  brake in ~82 m" && strip.speedInk==Ink::Green && stripOk;
+        // The strip keeps where it starts through the entry instead of jumping to the lane.
+        strip=phase(.99,15.6,true,false,3); stripOk=strip.text==L"Box in 104 m  \u00B7  brake in 86 m" && strip.speedInk==Ink::Green && strip.left==approachLeft && stripOk;
         stripOk=Export(limiter.window,L"build\\qa\\pit-strip-lane.bmp") && stripOk;
         strip=phase(.032,0,true,true,1); stripOk=strip.text==L"In your box" && stripOk;
-        strip=phase(.05,15,true,false,3); stripOk=strip.text==L"Limiter off in ~62 m" && stripOk;
+        strip=phase(.05,15,true,false,3); stripOk=strip.text==L"Limiter off in 62 m" && stripOk;
         stripOk=Export(limiter.window,L"build\\qa\\pit-strip-exit.bmp") && stripOk;
-        // A learned deceleration drops the estimate mark; switched off, the strip and its height go.
-        app.braking.Seed(10); strip=phase(.85,50,false,false,2); stripOk=strip.text.find(L"~")==std::wstring::npos && stripOk;
+        // A learned deceleration counts with a small margin; switched off, the strip and its height go.
+        app.braking.Seed(10); strip=phase(.85,50,false,false,2); stripOk=strip.text==L"Brake for pit entry in 104 m" && stripOk;
         const int withStrip=HeightWithTitle(limiter); limiter.pitStrip=false; stripOk=!PitStrip(limiter).shown && HeightWithTitle(limiter)==withStrip-PitStripHeight && stripOk;
         limiter.pitStrip=true; app.braking.Reset(); app.pitEnds.Reset();
         app.frame=savedFrame; app.session=savedSession; InvalidateModel(); UpdateOverlays();
-        report<<"Pit Limiter pit lane strip: approach, brake point, lane, box, exit and estimates: "<<(stripOk?"PASS":"FAIL")<<"\n"; ok=stripOk && ok;
+        report<<"Pit Assist pit lane strip: approach, brake point, lane, box, exit and estimates: "<<(stripOk?"PASS":"FAIL")<<"\n"; ok=stripOk && ok;
     }
     {
         // Past pit exit with the limiter on: the flashing warning instead of the green bar.
         const bool warning=app.pitVisibility.Warning() && std::any_of(First(3).scene.begin(),First(3).scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::Text && c.text==L"TURN OFF PIT LIMITER"; });
         const bool exported=Export(First(3).window,L"build\\qa\\pit-turn-off-limiter.bmp");
-        report<<"Pit Limiter warns to turn off the limiter after pit exit: "<<(warning && exported?"PASS":"FAIL")<<"\n"; ok=warning && exported && ok;
+        report<<"Pit Assist warns to turn off the limiter after pit exit: "<<(warning && exported?"PASS":"FAIL")<<"\n"; ok=warning && exported && ok;
     }
     app.frame.limiter=false; app.frame.time+=1; UpdateOverlays(); ok=!IsWindowVisible(First(3).window) && ok;
     app.frame.cars[app.frame.player].surface=2; app.frame.time+=1; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;

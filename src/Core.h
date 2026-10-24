@@ -47,6 +47,8 @@ struct Session {
     double trackMeters = -1, fuelCapacity = -1;
     // DriverPitTrkPct: where the own pit box lies, as a lap fraction; TrackPitSpeedLimit in m/s. -1 while unknown.
     double pitStallPct = -1, pitSpeedLimit = -1;
+    // WeekendInfo TrackNorthOffset in radians: how the track's own frame lies to north; NaN while unknown.
+    double trackNorthOffset = std::numeric_limits<double>::quiet_NaN();
     std::vector<Driver> drivers;
     std::vector<CameraGroup> cameras;
     std::array<SessionResult, MaxCars> results{};
@@ -119,7 +121,17 @@ private:
 // Clockwise source bearing on screen: 0 is ahead, pi/2 is right.
 // While you drive, always; while you watch another car or a replay, only with headingLive: iRacing then reports in
 // YawNorth where the watched car points, but a value that stopped changing belongs to a car that is not moving.
-double RelativeWindAngle(const Frame&, bool headingLive = false);
+// Otherwise mapHeading: the watched car's compass heading from the track map, as iRacing reports no heading
+// while you watch another car live.
+double RelativeWindAngle(const Frame&, bool headingLive = false, double mapHeading = std::numeric_limits<double>::quiet_NaN());
+// Degrees (0 to 359) the official track map turns clockwise to put north up: iRacing draws it in the track's own
+// frame, TrackNorthOffset plus three quarter turns. Right for most tracks, not all (Lime Rock is a quarter turn
+// off), so the car in the pit box checks it. -1 without an offset.
+int NorthTurnFromOffset(double trackNorthOffset);
+// The same turn from a car that points along the map: its compass heading (YawNorth) less the map's direction
+// there, both in radians, the map's clockwise from its top. A car in its pit stall stands along the pit lane.
+// -1 when either is unknown.
+int NorthTurnFromHeadings(double yawNorth, double mapHeading);
 // Track and air temperature, precipitation and wetness every 30 s of session time, 20 minutes back.
 class WeatherHistory {
 public:
@@ -321,12 +333,14 @@ public:
     void Update(const Frame&);
     double Rate() const;
     int Samples() const { return static_cast<int>(samples_.size()); }
+    // Braking zones measured since the reset, also those no longer kept.
+    int Measured() const { return measured_; }
 private:
-    double startTime_=-1, startSpeed_=-1, lastTime_=-1, lastSpeed_=-1, seed_=-1;
+    double startTime_=-1, startSpeed_=-1, lastTime_=-1, lastSpeed_=-1, seed_=-1; int measured_=0;
     std::vector<double> samples_;
 };
-// Distance in metres to slow from speed to target at this deceleration, both in m/s, with 0.3 s to react.
-double BrakingDistance(double speed,double target,double deceleration);
+// Distance in metres to slow from speed to target at this deceleration, both in m/s, with reaction seconds to react.
+double BrakingDistance(double speed,double target,double deceleration,double reaction=.3);
 // Litres per second, measured while the own car is filled in its stall.
 class RefuelRate {
 public:

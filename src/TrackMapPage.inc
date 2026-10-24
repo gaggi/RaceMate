@@ -2,7 +2,7 @@ class TrackMapPage : public PageWindow {
 public:
     explicit TrackMapPage(Overlay& overlay) : PageWindow(ui.heading,ui.text), o_(overlay) {}
 private:
-    enum Key { Info, LayoutKey, WhiteTrackKey, SurroundingsKey, AllConfigsKey, Numbers, OwnClass, Pit, PitExitKey, Details, Rounded, Header, Footer, Retry, Cache, Background, PitLane, StartFinish, CornerNumbers, CornerNames, LabelSize, LabelContrast };
+    enum Key { Info, LayoutKey, WhiteTrackKey, SurroundingsKey, AllConfigsKey, NorthUpKey, Numbers, OwnClass, Pit, PitExitKey, Details, Rounded, Header, Footer, Retry, NorthKey, Cache, Background, PitLane, StartFinish, CornerNumbers, CornerNames, LabelSize, LabelContrast };
     static constexpr int ListId=100, SlotEditId=230, LabelSizeId=240;
     void OnCreate() override { list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont()); editors_.Attach(list_,Instance(),TextFont()); Refresh(); }
     void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
@@ -23,7 +23,8 @@ private:
         toggle(L"Pit lane",L"Show the official pit-lane drawing, independently of cars in the pits.",o_.map.pitLane,PitLane);
         toggle(L"Background",L"iRacing's drawing around the track, under it.",o_.map.surroundings,SurroundingsKey);
         toggle(L"All configurations",L"The track's other layouts in grey under this one; the map makes room for them.",o_.map.allConfigs,AllConfigsKey);
-        for(size_t i=rows.size()-2;i<rows.size();++i) { rows[i].muted=o_.map.layout!=MapLayout; rows[i].toggleEnabled=o_.map.layout==MapLayout; }
+        toggle(L"North up",L"iRacing turns some maps to fit the screen; this turns them back. Where north lies: North, under Map data.",o_.map.northUp,NorthUpKey);
+        for(size_t i=rows.size()-3;i<rows.size();++i) { rows[i].muted=o_.map.layout!=MapLayout; rows[i].toggleEnabled=o_.map.layout==MapLayout; }
         toggle(L"Start/finish marking",L"Show the line and direction arrow. Position mapping keeps using these data when hidden.",o_.map.startFinish,StartFinish);
         {
             static constexpr const wchar_t* texts[]={L"Car numbers",L"Position in class",L"Overall position"};
@@ -52,6 +53,17 @@ private:
         heading(L"Map data");
         RowList::Row status; status.title=L"Track detection"; status.detail=L"Exact iRacing TrackID plus internal TrackName. Unknown layouts are left empty. Preview uses Lime Rock GP with sample cars."; push(std::move(status),Info);
         RowList::Row retry; retry.title=L"Retry loading this map"; retry.detail=L"Uses valid cached geometry. Retries missing corner labels immediately; otherwise failed label requests wait six hours."; retry.button=L"Retry"; push(std::move(retry),Retry);
+        {
+            // Where north lies: iRacing's TrackNorthOffset, checked by your car in the pit box the first time on a track.
+            const int formula=NorthTurnFromOffset(app.session.trackNorthOffset);
+            RowList::Row row; row.title=L"North";
+            if(north.track.empty()) row.detail=L"From iRacing's TrackNorthOffset, checked by your car in the pit box the first time on a track. Used for North up and the wind arrow while you watch.";
+            else if(north.settled>=0 && north.settled==formula) { row.detail=std::to_wstring(north.settled)+L"\u00B0 from iRacing's TrackNorthOffset, confirmed by your car in the pit box."; row.button=L"Measure again"; }
+            else if(north.settled>=0) { row.detail=std::to_wstring(north.settled)+L"\u00B0 from your car in the pit box; iRacing's TrackNorthOffset gives "+(formula<0?std::wstring(L"none"):std::to_wstring(formula)+L"\u00B0")+L"."; row.button=L"Measure again"; }
+            else if(formula>=0) row.detail=std::to_wstring(formula)+L"\u00B0 from iRacing's TrackNorthOffset; checked the next time your car sits in the pit box here.";
+            else row.detail=L"Checked the next time your car sits in the pit box here.";
+            push(std::move(row),NorthKey);
+        }
         RowList::Row cache; cache.title=L"Map cache"; cache.detail=TrackMapCache().wstring(); cache.button=L"Open folder"; push(std::move(cache),Cache);
         RowList::Row note; note.title=L"Car positions"; note.detail=L"Start/finish and direction come from the official SVG. Lap percentages follow its prepared path length. No learned fallback or per-track corrections. SVGs download once per layout while this overlay is enabled."; push(std::move(note),Info);
         list_.SetRows(std::move(rows));
@@ -93,6 +105,7 @@ private:
             if(key==PitLane) o_.map.pitLane=on;
             if(key==SurroundingsKey) o_.map.surroundings=on;
             if(key==AllConfigsKey) o_.map.allConfigs=on;
+            if(key==NorthUpKey) o_.map.northUp=on;
             if(key==StartFinish) o_.map.startFinish=on;
             if(key==CornerNumbers) o_.map.cornerNumbers=on;
             if(key==CornerNames) o_.map.cornerNames=on;
@@ -104,6 +117,7 @@ private:
         if(code==RowList::kButton || code==RowList::kActivated || code==RowList::kIconButton) {
             if(key==Header || key==Footer || key==LabelSize) { expanded_=expanded_==key?Info:key; Refresh(); BuildEditors(); if(key==LabelSize && expanded_==LabelSize) list_.ScrollIntoView(index); }
             if(key==Retry) { RetryTrackMap(true); UpdateOverlays(); }
+            if(key==NorthKey) { ForgetNorth(); ++trackMap.revision; UpdateOverlays(); Refresh(); }
             if(key==Numbers) {
                 const int choice=ChooseFromMenu({L"Car numbers",L"Position in class",L"Overall position"},o_.map.markerText);
                 if(choice>=0 && choice!=o_.map.markerText) { o_.map.markerText=choice; SettingChanged(); Refresh(); }

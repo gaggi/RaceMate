@@ -1,11 +1,11 @@
 // Pages that list what an overlay shows: Fuel Calculator and Weather choose a layout,
 // switch and order modules (the fuel consumption module expands to its values) and set
-// header and footer. Pit Limiter shares the bands and explains when and how it shows.
+// header and footer. Pit Assist shares the bands and explains when and how it shows.
 class ElementsPage : public PageWindow {
 public:
     explicit ElementsPage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
-    enum class Key { None, Layout, Rounded, Module, Band, Info, SetupChanges, PitStrip };
+    enum class Key { None, Layout, Rounded, Module, Band, Info, SetupChanges, PitStrip, Countdown };
     static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210, CautionEditId=220, SlotEditId=230, HeaderRow=1000, FooterRow=1001;
 
     void OnCreate() override {
@@ -55,6 +55,9 @@ private:
             RowList::Row strip; strip.title=L"Pit lane progress"; strip.toggle=o_.pitStrip?1:0;
             strip.detail=L"Entry, your box and exit with your car on the way: where to brake for the speed limit and for your box, and when the limiter can go off.";
             push(std::move(strip),Key::PitStrip);
+            RowList::Row countdown; countdown.title=o_.pitSeconds?L"Countdown in seconds":L"Countdown in metres"; countdown.button=L"Choose...";
+            countdown.detail=o_.pitSeconds?L"To the brake points, your box and the exit at your current speed, in tenths of a second":L"To the brake points, your box and the exit along the lap";
+            countdown.muted=!o_.pitStrip; push(std::move(countdown),Key::Countdown);
             RowList::Row setup; setup.title=L"Setup changes"; setup.toggle=o_.setupChanges?1:0;
             setup.detail=L"Lists brake bias, ABS, TC and other in-car adjustments that no longer match the loaded setup, as long as you're in the pit lane.";
             push(std::move(setup),Key::SetupChanges);
@@ -155,6 +158,9 @@ private:
         case Key::Rounded: if(code==RowList::kToggled) { SetRounded(o_,on); Changed(); } break;
         case Key::SetupChanges: if(code==RowList::kToggled) { o_.setupChanges=on; Fit(o_); Changed(); } break;
         case Key::PitStrip: if(code==RowList::kToggled) { o_.pitStrip=on; Fit(o_); Changed(); } break;
+        case Key::Countdown:
+            if(pressed) { const int choice=ChooseFromMenu({L"Metres",L"Seconds"},o_.pitSeconds?1:0); if(choice>=0) { o_.pitSeconds=choice==1; Changed(); } }
+            break;
         case Key::Layout:
             if(pressed) { const int choice=ChooseFromMenu({L"Panel",L"Strip"},Strip()?1:0); if(choice>=0) { Strip()=choice==1; Changed(); } }
             break;

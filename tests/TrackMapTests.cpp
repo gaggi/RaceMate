@@ -103,6 +103,11 @@ void PitLaneTests() {
     Require(far.x==track.x && far.y==track.y,"far from the pit lane the car stays on the track");
     const auto plain=Prepare(Svg(Band),Svg(Stripe+Arrow));
     Require(plain && plain.geometry.PitAt(0).x==plain.geometry.At(0).x && plain.geometry.PitAt(0).y==plain.geometry.At(0).y,"without a pit drawing the track point");
+    // Where a car in its pit stall points: along the drawn pit lane, the way the track runs beside it.
+    constexpr double pi=std::numbers::pi;
+    Require(std::abs(g.PitHeading(0)-pi/2)<.02 && std::isnan(g.PitHeading(.5)) && std::isnan(plain.geometry.PitHeading(0)),"pit lane direction beside the stall");
+    const auto angled=Prepare(Svg(Band),Svg(Stripe+Arrow),Svg("<rect x=\"60\" y=\"24\" width=\"80\" height=\"2\" transform=\"rotate(10 100 25)\"/>"));
+    Require(angled && std::abs(angled.geometry.PitHeading(0)-(pi/2+10*pi/180))<.02,"a pit lane drawn at an angle gives that angle");
 }
 void UnitTests() {
     LabelTests();
@@ -141,6 +146,9 @@ void UnitTests() {
     Require(line && line.geometry.direction==1 && std::abs(line.geometry.At(0).x-100)<.1,"stroked line start marker is supported too");
     const auto stroke=Prepare(Svg("<rect x=\"10\" y=\"10\" width=\"200\" height=\"100\" fill=\"none\" stroke=\"white\"/>"),Svg(Stripe+Arrow));
     Require(stroke && !stroke.geometry.centered && stroke.geometry.direction==1,"a single closed stroked centerline needs no paired boundaries");
+    const auto band=Prepare(Svg(Band),Svg(Stripe+Arrow));
+    Require(band && std::abs(band.geometry.Heading(0)-std::numbers::pi/2)<.05 && std::abs(band.geometry.Heading(.5)-3*std::numbers::pi/2)<.05,"heading follows the direction of travel, clockwise from the top of the map");
+    Require(TrackFolder(448)=="indianapolis" && TrackFolder(253)==TrackFolder(249) && TrackFolder(999999).empty(),"layouts know their track by its CDN folder");
     const auto* source=FindSource(353);
     const std::atomic_bool cancelled=true;
     Require(!Load(*source,"unused-cache",cancelled).map,"cancelled loads perform no work");
@@ -168,7 +176,7 @@ int AssetCheck(const std::filesystem::path& directory) {
     if(!result) throw std::runtime_error(result.error);
     const auto& g=result.geometry;
     std::cout<<"centered="<<g.centered<<" bridged="<<g.bridged<<" direction="<<g.direction<<" length="<<g.length<<" start="<<g.start/g.length<<" labels="<<g.labels.size()<<"\n";
-    for(double pct:{0.,.01,.1,.25,.5,.75,.99}) { const auto p=g.At(pct); std::cout<<pct<<": "<<p.x<<", "<<p.y<<"\n"; }
+    for(double pct:{0.,.01,.1,.25,.5,.75,.99}) { const auto p=g.At(pct); std::cout<<pct<<": "<<p.x<<", "<<p.y<<"  heading "<<g.Heading(pct)*180/std::numbers::pi<<", pit "<<g.PitHeading(pct)*180/std::numbers::pi<<"\n"; }
     Require(g.direction!=0,"official start/finish arrow resolves direction");
     return 0;
 }

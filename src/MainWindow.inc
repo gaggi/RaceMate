@@ -81,7 +81,7 @@ void ShowPage(Page page,Overlay* overlay=nullptr) {
     const wchar_t* hints[]={L"Choose how many cars it shows, its columns and its header and footer.",
         L"Class leaders and the cars around you: rows, columns, header and footer.",
         L"Choose and order what it shows, and which laps count toward consumption.",
-        L"A reminder to switch the pit limiter on, and off again after pit exit, with what you changed in the car since the setup.",
+        L"The pit limiter, your way through the pit lane to your box with where to brake, and what you changed in the car since the setup.",
         L"Choose and order what it shows.",L"The official iRacing track map with every car: layout, markers, pit exit and what is drawn."};
     if(page==Page::Overlay) {
         SetWindowTextW(ui.title,Name(*ui.overlay).c_str()); SetWindowTextW(ui.hint,hints[ui.overlay->kind]);
@@ -152,6 +152,8 @@ Overlay& NewInstance(int kind) {
 // Makes another layout the active one: the current one stays saved as it is, the other's overlays take
 // their places and settings. Instances the other layout lacks go, ones it has more of are created.
 void SwitchLayout(int id) {
+    if(app.layoutIdle && id==app.layout) { app.layoutIdle=false; UpdateOverlays(); RefreshPage(); return; }
+    app.layoutIdle=false;
     if(id==app.layout || std::none_of(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==id;})) return;
     Save(); app.layout=id;
     LoadOverlays();
@@ -198,15 +200,19 @@ bool LayoutApplies(int condition,int situation) {
     }
 }
 // When the situation changes and holds for a second, the first layout in the list whose condition applies
-// becomes active. A layout chosen by hand stays until the situation changes again.
+// becomes active; with none, the overlays hide (a single In car layout shows only while driving).
+// A layout chosen by hand stays until the situation changes again.
 void AutoLayout() {
-    if(app.preview || !app.frame.connected || app.layouts.size()<2) { app.pendingSituation=-1; return; }
+    if(app.preview || !app.frame.connected) { app.pendingSituation=-1; return; }
     const int situation=CurrentSituation(app.frame);
     if(situation!=app.pendingSituation) { app.pendingSituation=situation; app.pendingSince=app.now; return; }
     if(situation==app.layoutSituation || app.now-app.pendingSince<1000) return;
     app.layoutSituation=situation;
     for(const auto& l:app.layouts) if(LayoutApplies(l.condition,situation)) { SwitchLayout(l.id); return; }
+    if(!app.layoutIdle) { app.layoutIdle=true; UpdateOverlays(); RefreshPage(); }
 }
+// After a condition or the order changed: the next tick picks the layout for the current situation again.
+void ReconsiderLayout() { app.layoutSituation=-1; }
 // Moves an ID one place up (-1) or down (+1); false at either end.
 bool MoveInOrder(std::vector<int>& order,int id,int step) {
     const auto at=std::find(order.begin(),order.end(),id); if(at==order.end()) return false;

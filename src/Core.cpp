@@ -339,6 +339,7 @@ Session ParseSession(const std::string& yaml, int sessionNumber) {
             if (key == "TrackDisplayName") s.track = value;
             if (key == "DCRuleSet") s.ruleSet = value;
             if (key == "TrackID") s.trackId = Integer(value,-1);
+            if (key == "TrackNorthOffset") s.trackNorthOffset = Number(value);
             if (key == "TrackName") s.trackName = value;
             if (key == "TrackConfigName") s.trackConfig = value;
             if (key == "SessionID") sessionId = value;
@@ -814,15 +815,26 @@ Session DemoSession() {
     for (int i = 0; i < 10; ++i) { s.drivers.push_back({i,1,2400+i*117,0xe7c451,false,false,names[i],std::to_string(12+i),"GT3"}); s.drivers.back().carPath=paths[i]; s.drivers.back().brand=CarBrand(paths[i],""); }
     return s;
 }
-double RelativeWindAngle(const Frame& f,bool headingLive) {
+int NorthTurnFromOffset(double offset) {
+    if(!std::isfinite(offset)) return -1;
+    const int turn=static_cast<int>(std::lround(offset*180/3.141592653589793+270))%360;
+    return turn<0?turn+360:turn;
+}
+int NorthTurnFromHeadings(double yawNorth,double mapHeading) {
+    if(!std::isfinite(yawNorth) || !std::isfinite(mapHeading)) return -1;
+    const int turn=static_cast<int>(std::lround((yawNorth-mapHeading)*180/3.141592653589793))%360;
+    return turn<0?turn+360:turn;
+}
+double RelativeWindAngle(const Frame& f,bool headingLive,double mapHeading) {
     const bool driving=f.onTrack && !f.replay && ReferenceCar(f)==f.player;
-    if(!f.connected || !(driving || headingLive) || !std::isfinite(f.windDirection) || !std::isfinite(f.yawNorth) || !std::isfinite(f.windSpeed) || f.windSpeed<=0) return std::numeric_limits<double>::quiet_NaN();
+    const double heading=(driving || headingLive) && std::isfinite(f.yawNorth)?f.yawNorth:(driving?std::numeric_limits<double>::quiet_NaN():mapHeading);
+    if(!f.connected || !std::isfinite(heading) || !std::isfinite(f.windDirection) || !std::isfinite(f.windSpeed) || f.windSpeed<=0) return std::numeric_limits<double>::quiet_NaN();
     // WindDir (where the wind comes from) and YawNorth (where the car points) share one
     // convention, so their difference is the source bearing relative to the car.
     // Cross-checked against iRdashies, which shows WindDir - YawNorth (+ half a turn for
     // where the wind blows to). https://sajax.github.io/irsdkdocs/telemetry/yawnorth.html
     constexpr double turn=6.283185307179586;
-    double angle=std::fmod(f.windDirection-f.yawNorth,turn);
+    double angle=std::fmod(f.windDirection-heading,turn);
     return angle<0?angle+turn:angle;
 }
 Frame DemoFrame(double time) {
