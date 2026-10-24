@@ -1,5 +1,9 @@
 # Leader-stop scenarios
 
+[Documentation](README.md) · [Current fuel and pit behavior](fuel-and-pit-strategy.md)
+
+> **Design proposal:** the explicit future-stop scenario controls described below are not implemented. The current forecasts account for a leader's active pit visit, but do not assume a future competitor stop.
+
 The restored leader metrics expose the existing no-future-stop prediction. They do not automatically shorten the driver's fuel plan. The leader's total progress at time expiry, the leader's projected final-lap start clock and the player's rounded finishing lap are separate quantities.
 
 ## Available information

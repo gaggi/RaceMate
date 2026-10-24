@@ -1,40 +1,75 @@
-# Trackmap-Prototyp testen
+# Track Map validation
 
-Branch: `codex/trackmap-prototype`.
+[Documentation](README.md) · [Track Map guide](track-map.md) · [Development](development.md)
 
-1. Die bisherige RaceMate-Instanz über das Tray-Menü beenden. Es kann nur eine Instanz laufen.
-2. Die Test-EXE starten und unter **Overlays → Track Map** einschalten. Größe, Position, Transparenz und Aktualisierungsrate funktionieren wie bei den anderen Overlays.
-3. Für den ersten Aufruf eines Layouts ist Internet nötig. Danach liegen die offiziellen SVGs unter `%LOCALAPPDATA%\RaceMate\trackmaps\v1\<TrackID>`. Die Vorschau zeigt Lime Rock GP mit Beispieldaten.
-4. In iRacing das gewünschte Layout laden. Im Overlay stehen Streckenname, Konfiguration und ID. Lime Rock GP ist 353, Chicanes 354; Okayama Full ist 166, Short 167.
-5. Zunächst an Start/Ziel prüfen, ob der Marker beim Überqueren der Linie ebenfalls über die weiße Linie geht. Danach Fahrtrichtung und Position in mehreren Kurven prüfen. Auch den Übergang von 99,x % auf 0 % ansehen.
-6. Ohne RaceMate-Neustart das Layout oder die Strecke wechseln. Die alte Karte muss verschwinden und die zum neuen TrackID passende Karte erscheinen. **Retry** in den Track-Map-Einstellungen lädt nach einem Fehler erneut.
+This checklist is for validating the experimental official-Map projection in the simulator. For normal settings and usage, read the Track Map guide. Automated geometry tests do not replace these spatial checks.
 
-**Background and frame** ausschalten zeigt nur die Karte mit Fahrzeugen auf transparentem Hintergrund. Rand, Überschriften, Legende sowie Header/Footer verschwinden dabei; ihre Einstellungen bleiben für den Modus mit Hintergrund erhalten. **Pit lane** und **Start/finish marking** schalten die gezeichnete Boxengasse beziehungsweise Linie mit Richtungspfeil unabhängig voneinander um. Das Ausblenden beeinflusst die Positionsberechnung nicht. **Cars in the pits** steuert separat die Fahrzeugmarker in der Box.
+## Prepare the test
 
-**Corner numbers** und **Corner names** blenden die offiziellen Kurvenbeschriftungen getrennt ein. **Label size** stellt ihre Größe zwischen 75 und 200 Prozent ein; **Label contrast outline** gibt der Schrift einen dunklen Rand. Die Beschriftungen funktionieren auch ohne Hintergrund und werden mit der statischen Karte zwischengespeichert. Beide sind standardmäßig ausgeschaltet.
+1. Build the version you want to test and quit the existing RaceMate instance through the tray menu. Only one normal instance runs at a time.
+2. Start the intended executable, enable **Overlays → Track Map**, and choose **Map**. Configure size, position, opacity and refresh rate as usual.
+3. Allow the first download for that layout, or use a valid existing cache under `%LOCALAPPDATA%\RaceMate\trackmaps\v1\<TrackID>`. Preview uses Lime Rock GP with sample cars.
+4. Join the exact layout to be checked. Enable **Projection details** to record track ID, cache source and projection status. **Track and layout** is also available as a header metric.
 
-Die zusätzliche `turns.svg` wird erst bei aktivierten Beschriftungen geladen und ergänzt auch vorhandene Karten-Caches. Fehlende Beschriftungen lassen die Karte weiter nutzbar; fehlgeschlagene Abrufe werden sechs Stunden zwischengespeichert. **Retry** versucht fehlende Beschriftungen sofort erneut. iRacing liefert je nach Strecke unterschiedliche Daten: Suzuka GP hat Nummern, Lime Rock GP und Okayama Full auch Namen. Fehlende Namen werden nicht erfunden.
+Useful identity cases:
 
-Für Rückmeldungen helfen TrackID/Layout und konkrete Stellen: zum Beispiel „Okayama Full, Marker an der Hairpin schon 30 m zu weit, an Start/Ziel passend“. So lässt sich ein Startversatz von einer Abweichung der gezeichneten Streckenlänge unterscheiden.
+| Track/layout | TrackID |
+| --- | --- |
+| Lime Rock GP | 353 |
+| Lime Rock Chicanes | 354 |
+| Okayama Full | 166 |
+| Okayama Short | 167 |
+| Suzuka GP | 168 |
 
-## Was der Prototyp macht
+## On-track checklist
 
-- Exakter ID-Abgleich mit zusätzlicher Prüfung des internen Streckennamens; keine Suche nach ähnlich klingenden Namen.
-- Einmalige SVG-Aufbereitung auf einem Worker. Fahrbahnflächen werden als solche gezeichnet. Für Positionen wird aus den Randlinien ein Verlauf mit vorberechneter Länge erzeugt.
-- Die statische Karte und die geglätteten Fahrzeugsymbole werden als Bitmaps wiederverwendet. Die laufenden Updates ändern Positionen und Beschriftungen.
-- Startpunkt aus der Start/Ziel-Markierung und Richtung aus dem Richtungspfeil derselben Datei. Keine streckenspezifischen Richtungslisten oder Korrekturen.
-- Brücken mit einer gezeichneten Unterbrechung, etwa in Suzuka: Bei einer einzelnen geschlossenen Fahrbahnfläche wird einmalig die Mittellinie bestimmt. Eine kleine Lücke mit zusammenpassenden Endrichtungen wird nur für die Positionsberechnung geschlossen. Das SVG bleibt unverändert; Fahrzeuge laufen über die Unterführung weiter, statt an der Straßenkante zurückzufahren.
-- `CarIdxLapDistPct` wird entlang dieses Verlaufs abgebildet. Ungültige Positionen, Zuschauer und Pace Car werden ausgeblendet. Der weiße Ring folgt beim Zuschauen dem beobachteten Fahrzeug.
-- Unbekannte oder nicht eindeutig aufbereitbare Layouts zeigen einen Hinweis. Es gibt kein Selbstlernen und keinen Ersatz durch eine andere Karte.
+- Cross start/finish and confirm that the car marker crosses the visible line at the same time.
+- Check driving direction, then compare the marker in several separated corners and straights.
+- Inspect the wrap from just below 100% to 0% lap progress.
+- Change layouts and tracks without restarting RaceMate. The previous geometry must disappear, and the new map must match the new TrackID.
+- Observe a pit visit. Toggle **Pit lane** and **Cars in the pits** independently: hollow markers should use the drawn pit lane when enabled and the circuit when disabled.
+- On a bridge layout, follow both branches of the crossing. Cars should continue through a valid prepared gap rather than reverse along the road outline.
+- Compare driving, live spectating, replay and paused playback. The focused ring should follow the appropriate reference car.
+- Disconnect and reconnect. Confirm expected hiding and map identity after reconnection.
 
-## Bewusste Grenzen
+Use **Retry** after a loading error. Unknown or ambiguous official layouts should report the limitation rather than display a guessed replacement.
 
-Die Länge einer schematischen SVG muss nicht an jeder Stelle proportional zur realen Fahrstrecke sein. Genau diese Abweichung soll jetzt im Simulator geprüft werden. Bisher sind keine manuellen Korrekturen eingebaut. Offene Strecken und mehrdeutige, getrennte Fahrbahnverläufe werden abgelehnt; bei fehlender Richtung bleiben die Fahrzeugmarker ausgeblendet.
+## Presentation checklist
 
-Fahrzeuge in der Box werden hohl an ihrer Rundenposition auf der Hauptstrecke dargestellt. Eine genaue Zuordnung zur gezeichneten Boxengasse ist noch nicht enthalten. Dicht beieinander liegende Nummern können sich überlagern; **Car numbers** lässt sich für kleinere Punkte abschalten.
+Turn **Background and frame** off. Only map content should remain over the simulator; captions, frame and header/footer disappear while their settings are retained. The checkerboard in diagnostic screenshots is only a transparency preview.
 
-## Technische Prüfung
+Toggle **Pit lane** and **Start/finish marking** independently. Hiding these drawings must not alter the prepared position mapping. Toggle **Background** surroundings and **All configurations** in the Map layout; the view should expand to include other configurations without changing lap alignment.
 
-`RaceMateTrackMapTests` prüft Layout-Identität, SVG-Kurven und Transformationen, Start/Ziel, beide Richtungen, Rundenumbruch sowie fehlende, übergroße und unpassende Dateien. Eine eigene Achterstrecke prüft die Brückenlücke, beide Kreuzungsdurchfahrten, die Rundenlänge und das Ausbleiben einer Umkehr. Mit `--assets <Ordner>` lassen sich lokal vorhandene `active.svg`, `start-finish.svg` und optional `pitroad.svg` und `turns.svg` aufbereiten. Der Diagnosemodus prüft außerdem Filter, Einstellungsspeicherung, Bitmap-Wiederverwendung, Kurvennummern/-namen mit Schriftgröße und transparenter Darstellung sowie das Leeren der alten Karte bei unbekanntem Layout. Echte SVG-Dateien für diese Sichtprüfung liegen ausschließlich im ignorierten Build-/Cache-Verzeichnis.
+Enable **Corner numbers** and **Corner names** separately. Check **Label size** from 75% to 200%, the contrast outline, and transparent presentation. Suzuka GP provides numbers; Lime Rock GP and Okayama Full can also supply names. Missing official names must not be invented.
 
-Den Quellenindex aktualisiert `tools/UpdateTrackMapIndex.ps1`; alternativ kann eine lokale Metadatendatei mit `-MetadataPath` übergeben werden. Die App selbst lädt weder den Index aus dem Drittanbieter-Repository noch benötigt sie einen iRacing-Login.
+Corner labels request `turns.svg` only when enabled and can extend an existing cache. Missing labels should leave the map usable. Failed label requests wait six hours before another automatic attempt; **Retry** attempts them immediately.
+
+Switch **Text in markers** between car numbers, class positions, overall positions and off. Check crowded groups for acceptable readability. Then test **Circle** and **Line**: these use lap percentage directly and require no SVG download.
+
+## How projection works
+
+The runtime selects the source by exact ID and validates the internal name. It prepares SVG geometry on a worker, extracts start/finish and driving direction from the official marking, and maps `CarIdxLapDistPct` along a length-based path. No manual direction table, learned map or per-track calibration is used.
+
+Bridge gaps can be closed in the position path when their endpoints and directions are compatible; the original SVG drawing remains unchanged. Ambiguous disconnected branches or incompatible open ends are rejected. Missing direction can leave the drawing visible without car markers.
+
+A schematic SVG need not preserve distance uniformly. Alignment at the line with a repeatable error at a hairpin is therefore different from a constant start offset. Pit-lane marker placement is approximate, beside the car's lap position; it is not a precise telemetry position along the pit road.
+
+## Automated checks
+
+`RaceMateTrackMapTests` covers identity, SVG curves/transforms, start/finish, direction, lap wrap, invalid/oversized files and projection edge cases. A synthetic figure-eight checks the bridge gap, crossing traversal, route length and absence of reversal.
+
+To inspect existing official assets:
+
+```powershell
+.\build\x64\Release\RaceMateTrackMapTests.exe --assets C:\path\to\map-assets
+```
+
+The folder contains `active.svg`, `start-finish.svg`, and optionally `pitroad.svg` and `turns.svg`. GUI diagnostics additionally check filters, saved settings, bitmap reuse, labels, transparency and clearing an unknown layout. Their real-map checks use `build/qa/trackmaps/v1`, separately from the normal application's cache, and report when skipped. See [cache preparation](development.md#documentation-screenshots); no official SVG files are committed for these tests.
+
+The source index is regenerated with `tools/UpdateTrackMapIndex.ps1`, optionally using `-MetadataPath`. At runtime RaceMate does not retrieve that third-party metadata repository; it uses its built-in index and official asset URLs. See [third-party notices](third-party.md).
+
+## Report a useful result
+
+Include the RaceMate version/build, TrackID, internal layout name if available, source/cache state, display mode and screenshots at known points. Describe line alignment, direction and locations where the marker diverges. For example: “Okayama Full, marker matches start/finish but is already past the hairpin while the car is at the apex.”
+
+Also note the reference car, live/replay state and whether the error repeats every lap. This separates geometry/projection errors from delayed telemetry, reference selection and wrong-layout identity.
