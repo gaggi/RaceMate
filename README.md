@@ -6,7 +6,7 @@ RaceMate puts nearby traffic, standings, fuel planning, weather, pit-limiter war
 
 [**Download releases**](https://github.com/gaggi/RaceMate/releases) · [**Documentation**](docs/README.md) · [**First setup**](docs/getting-started.md) · [**Build from source**](docs/development.md)
 
-> These guides describe **version 0.3.0**. Screenshots show the real application with diagnostic sample data and selected optional features enabled.
+> These guides describe **version 0.2.1**. Screenshots show the real application with diagnostic sample data and selected optional features enabled.
 >
 > Reading this README from a release ZIP? Open the [full documentation on GitHub](https://github.com/gaggi/RaceMate/tree/main/docs).
 

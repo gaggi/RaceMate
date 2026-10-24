@@ -2,7 +2,7 @@
 
 [Project home](../README.md) · [Download releases](https://github.com/gaggi/RaceMate/releases)
 
-These guides describe the implementation in **RaceMate 0.3.0**. Screenshots show the real Windows interface with diagnostic sample data. Some screenshots deliberately enable optional modules and columns; they do not represent the factory defaults or a live race.
+These guides describe the implementation in **RaceMate 0.2.1**. Screenshots show the real Windows interface with diagnostic sample data. Some screenshots deliberately enable optional modules and columns; they do not represent the factory defaults or a live race.
 
 ## User guides
 
