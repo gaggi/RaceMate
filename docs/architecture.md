@@ -65,7 +65,9 @@ Model histories distinguish driving, live spectating and historical replay. Fuel
 
 ## Rendering and scheduling
 
-Each overlay has an independent refresh deadline and selectable rate. The background telemetry rate is 5–20 Hz, raised when a visible overlay needs more frequent data. While disconnected, the application attempts to reconnect about once per second.
+`TelemetryPump` reads iRacing on a thread of its own. It waits for iRacing's data-valid event (`Local\IRSDKDataValidEvent`), so it reads each of iRacing's 60 frames a second as it appears, copies it and posts a message to the main window; the main thread takes the newest frame, never a queue, and runs the analyses on it. Session YAML is parsed on that thread too. A window timer would only fire in steps of about 15.6 ms: a 50 ms timer gave 16 ticks a second, not 20.
+
+Each overlay has its own rate and refreshes on whole iRacing frames, every `60 / rate` frames, so a 15 Hz overlay is drawn every 66.7 ms exactly. In the preview, a window timer at the fastest overlay rate sets the pace instead. Without iRacing, the thread looks for it about once a second; when frames pause, a 250 ms timer keeps the window current.
 
 Overlay content becomes a list of draw commands. RaceMate compares scenes, retains buffers and repaints changed areas. Windows handles normal click-through overlay windows without activation; Move mode changes hit testing so the user can drag them. Separate borders identify content selection and movement.
 

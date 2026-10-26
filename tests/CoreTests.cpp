@@ -641,6 +641,22 @@ void TelemetryTests() {
   h->varsOffset=128; h->buffers[1].offset=65530; Require(!reader.Read(f,s),"buffer bounds");
   h->buffers[1].offset=13000; h->sessionOffset=65530; Require(!reader.Read(f,s),"session bounds");
  }
+ h->sessionOffset=18000;
+ {
+  // The reading thread: woken by the data-valid event, it hands over each new frame once, the session when it
+  // changed, and a lost connection.
+  const std::wstring eventName=name+L".DataValid"; HANDLE event=CreateEventW(nullptr,TRUE,FALSE,eventName.c_str());
+  TelemetryPump pump(name.c_str(),eventName.c_str()); pump.Start(nullptr,0);
+  Frame f; Session s; bool sessionChanged=false;
+  auto next=[&]{ for(int i=0;i<400;++i) { if(pump.Take(f,s,sessionChanged)) return true; Sleep(5); } return false; };
+  Require(next() && f.connected && sessionChanged && s.type=="Race","telemetry thread connects and hands over the session");
+  const int first=f.tick; ++h->buffers[1].tick; PulseEvent(event);
+  Require(next() && f.tick==first+1 && !sessionChanged,"telemetry thread hands over a new frame, the session only when changed");
+  Require(!pump.Take(f,s,sessionChanged),"telemetry thread hands over no frame twice");
+  h->status=0; PulseEvent(event);
+  Require(next() && !f.connected,"telemetry thread reports a lost connection");
+  pump.Stop(); CloseHandle(event); h->status=1;
+ }
  UnmapViewOfFile(memory); CloseHandle(map);
 }
 void WindTests() {

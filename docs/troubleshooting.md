@@ -96,7 +96,7 @@ That is normal when a tray icon is available. Choose **Exit** in the tray menu t
 
 ## Unexpected CPU usage
 
-Check per-overlay rates and the background rate. A 20 Hz map raises the telemetry rate, and more visible instances mean more rendering work. Try lower rates for slowly changing panels, and disable unused instances.
+Check per-overlay rates. Drawing costs far more than reading iRacing, which happens 60 times a second regardless, and more visible instances mean more rendering work. Try lower rates for slowly changing panels, and disable unused instances.
 
 To record a short profile, quit RaceMate and start its executable with:
 

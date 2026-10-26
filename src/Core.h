@@ -89,6 +89,8 @@ struct Frame {
     int cameraGroup = 1, replaySession = -1;
     // ReplayFrameNumEnd: frames (60 per second) behind the live point; -1 when not reported.
     int replayFramesBehind = -1;
+    // iRacing's frame counter and frames per second (60): overlays refresh on whole frames.
+    int tick = -1, tickRate = 0;
     double replayTime = -1;
     unsigned flags = 0;
     double time = 0, timeLeft = -1, lapsLeft = -1, fuel = 0, lapPct = 0, lastLap = -1, bestLap = -1;

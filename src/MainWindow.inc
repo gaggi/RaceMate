@@ -38,7 +38,7 @@ void UpdateStatus() {
     else if(app.frame.connected) {
         tone=Tone::Active; title=L"Connected to iRacing";
         detail=Wide(app.session.track); if(!app.session.type.empty()) detail+=L"  \u00B7  "+Wide(app.session.type);
-        detail+=L"  \u00B7  "+std::to_wstring(ReadRate())+L" Hz"; button=L"Move overlays";
+        detail+=L"  \u00B7  "+std::to_wstring(app.frame.tickRate>0?app.frame.tickRate:60)+L" Hz"; button=L"Move overlays";
     }
     else { title=L"Waiting for iRacing"; detail=L"RaceMate connects as soon as a session is loaded."; button=L"Preview"; }
     std::wstring problems;

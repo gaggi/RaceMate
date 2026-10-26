@@ -92,7 +92,7 @@ bool Telemetry::Read(Frame& f, Session& s) {
         if(before==live->buffers[latest].tick && (live->status&1)) { tick_=before; copied=true; break; }
     }
     if(!copied) return f.connected;
-    Frame next; next.connected=true;
+    Frame next; next.connected=true; next.tick=tick_; next.tickRate=h.tickRate;
     next.player=static_cast<int>(Value(PlayerCarIdx,-1));
     next.cameraGroup=static_cast<int>(Value(CamGroupNumber,1));
     next.replaySession=static_cast<int>(Value(ReplaySessionNum,-1)); next.replayTime=Value(ReplaySessionTime,-1);
@@ -164,5 +164,69 @@ bool Telemetry::Read(Frame& f, Session& s) {
         player.surface=static_cast<int>(Value(PlayerTrackSurface,player.surface));
     }
     f=next; return true;
+}
+
+void TelemetryPump::Start(HWND window, UINT message) {
+    if (thread_) return;
+    window_ = window; message_ = message; posted_ = false;
+    stop_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    thread_ = stop_ ? CreateThread(nullptr, 0, Thread, this, 0, nullptr) : nullptr;
+    if (!thread_ && stop_) { CloseHandle(stop_); stop_ = nullptr; }
+}
+void TelemetryPump::Stop() {
+    if (!thread_) return;
+    SetEvent(stop_); WaitForSingleObject(thread_, INFINITE);
+    CloseHandle(thread_); CloseHandle(stop_); thread_ = stop_ = nullptr;
+    AcquireSRWLockExclusive(&lock_);
+    frame_ = {}; session_ = {}; fresh_ = sessionFresh_ = false;
+    ReleaseSRWLockExclusive(&lock_);
+}
+void TelemetryPump::Rename(const wchar_t* mappingName, const wchar_t* eventName) {
+    Stop(); telemetry_.Rename(mappingName); eventName_ = eventName;
+}
+void TelemetryPump::Publish(const Frame& frame, const Session* session) {
+    AcquireSRWLockExclusive(&lock_);
+    frame_ = frame; fresh_ = true;
+    if (session) { session_ = *session; sessionFresh_ = true; }
+    ReleaseSRWLockExclusive(&lock_);
+    if (!posted_.exchange(true)) PostMessageW(window_, message_, 0, 0);
+}
+bool TelemetryPump::Take(Frame& frame, Session& session, bool& sessionChanged) {
+    // Cleared first: a frame published while this runs posts again rather than going unnoticed.
+    posted_ = false;
+    AcquireSRWLockExclusive(&lock_);
+    const bool fresh = fresh_;
+    if (fresh) { frame = frame_; fresh_ = false; }
+    sessionChanged = sessionFresh_;
+    if (sessionFresh_) { session = std::move(session_); session_ = {}; sessionFresh_ = false; }
+    ReleaseSRWLockExclusive(&lock_);
+    return fresh;
+}
+void TelemetryPump::Run() {
+    // The work per frame is a few microseconds; reading it promptly keeps the data fresh.
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+    HANDLE event = nullptr; Frame frame; Session session;
+    bool connected = false; int lastTick = -1, parses = telemetry_.sessionParses, idle = 0;
+    for (;;) {
+        if (!event) event = OpenEventW(SYNCHRONIZE, FALSE, eventName_.c_str());
+        const HANDLE handles[2] = {stop_, event};
+        // Without the event (no iRacing) it looks once a second; with it, a missed signal costs at most 200 ms.
+        const DWORD wait = WaitForMultipleObjects(event ? 2 : 1, handles, FALSE, event && connected ? 200 : 1000);
+        if (wait == WAIT_OBJECT_0) break;
+        if (wait == WAIT_FAILED) { if (event) CloseHandle(event); event = nullptr; Sleep(100); continue; }
+        const bool was = connected;
+        connected = telemetry_.Read(frame, session);
+        if (!connected) frame = {};
+        parseTicks_ = telemetry_.sessionParseTicks; parses_ = telemetry_.sessionParses;
+        const bool sessionChanged = telemetry_.sessionParses != parses; parses = telemetry_.sessionParses;
+        const bool newFrame = connected && frame.tick != lastTick;
+        if (newFrame || connected != was || sessionChanged) { lastTick = frame.tick; Publish(frame, sessionChanged ? &session : nullptr); }
+        // An event left signalled must not keep the thread spinning.
+        if (wait == WAIT_OBJECT_0 + 1 && !newFrame) { if (++idle > 3) Sleep(5); } else idle = 0;
+        // iRacing makes its event anew when it starts again.
+        if (!connected && event) { CloseHandle(event); event = nullptr; }
+    }
+    if (event) CloseHandle(event);
+    telemetry_.Close();
 }
 }

@@ -85,14 +85,13 @@ See the [metric reference](overlays.md#header-and-footer-metrics) for which valu
 | --- | --- |
 | Start with Windows | Adds RaceMate to the current user's Windows Run key; administrator rights are not needed |
 | Start minimized | Starts in the tray when the tray icon is available |
-| Background rate | 5, 10, 15 or 20 Hz; default 10 Hz |
 | Headers on all overlays | Changes header visibility across overlays |
 | Additional laps with fuel saving | 0–10, default +3; shared opponent SAVE allowance |
 | Pit lane loss | Learned or manually fixed per track |
 | Service times | Four-tire time and refuel rate per car and rule set |
 | Check for updates on startup | Checks GitHub and reports availability in the interface |
 
-The background rate drives telemetry sampling for event recording, pit histories, consumption learning and finish forecasts. A visible overlay with a faster rate raises the sampling rate to meet its needs. Enabling the Track Map at its default 20 Hz therefore raises telemetry sampling to 20 Hz.
+RaceMate reads every frame iRacing publishes, 60 a second, so event recording, pit histories, consumption learning and finish forecasts see every frame. Each overlay is drawn only at its own rate, always on whole iRacing frames: 15 Hz is exactly every fourth frame, 66.7 ms apart. Rates of 1, 2, 5, 10, 15 and 20 Hz all divide 60, so every overlay refreshes at even intervals.
 
 ## Keyboard shortcuts
 

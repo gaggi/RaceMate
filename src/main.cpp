@@ -219,6 +219,7 @@ struct Overlay {
     std::array<HFONT,FontCount> fonts{}; int width=0,height=0,dpi=0;
     std::vector<DrawCommand> scene;
     ULONGLONG due=0; // Next scheduled refresh, in app.now time.
+    long long slot=-1; // While iRacing's frames set the pace: the last frame group this overlay refreshed in.
     struct Width { FontId font; std::wstring text; int width; };
     mutable std::vector<Width> widths; // Measured text widths for the current fonts.
     struct Logo { int index, size; HBITMAP bitmap; };
@@ -265,7 +266,7 @@ struct App {
     // Layouts in priority order and the active one; automatic switching follows a situation once it held for a second.
     // layoutIdle: no layout applies to the situation, so the overlays stay hidden until one does or one is chosen by hand.
     std::vector<Layout> layouts{Layout{}}; int layout=1, layoutSituation=-1, pendingSituation=-1; ULONGLONG pendingSince=0; bool layoutIdle=false;
-    Frame frame; Session session; Telemetry telemetry; FuelCalculator fuel;
+    Frame frame; Session session; TelemetryPump pump; FuelCalculator fuel;
     EventRecorder events; PitHistory pitHistory; PitLimiterVisibility pitVisibility; SetupDials setupDials;
     RacePredictor predictor; FuelPlan fuelPlan;
     std::wstring config;
@@ -277,7 +278,9 @@ struct App {
     // Values Save() last wrote, keyed "section\nkey"; Save() only writes what differs.
     std::map<std::wstring,std::wstring> savedSettings; unsigned settingsWrites=0;
     std::array<WORD,HotkeyCount> hotkeys{}; bool hotkeysEnabled=false; std::wstring hotkeyError;
-    int rate=10,timerMs=0; ULONGLONG now=0;
+    int timerMs=0; ULONGLONG now=0;
+    // For the live benchmark: ticks, telemetry frames processed, and a call after each overlay refresh.
+    unsigned long long ticks=0, framesProcessed=0; double lastFrameTime=-1; void(*refreshHook)(const Overlay&)=nullptr;
     int opponentFuelExtraLaps=3;
     // Pit stop estimate: lane loss learned per track or fixed by the user, service times per car (CarPath).
     PitLaneLoss pitLane; RefuelRate refuel; PitLaneEnds pitEnds; BrakingRate braking;
@@ -300,7 +303,7 @@ bool HeadingLive() { return app.preview || app.now-app.yawChanged<3000; }
 // Off, each measured spot costs one check of a flag.
 struct Profiler {
     struct Entry { std::string name; LONGLONG ticks=0; long long calls=0; };
-    bool on=false; ULONGLONG start=0; ULONGLONG cpuStart=0; long long ticks=0; LONGLONG sessionStart=0; int parsesStart=0;
+    bool on=false, autoWrite=true; ULONGLONG start=0; ULONGLONG cpuStart=0; long long ticks=0; LONGLONG sessionStart=0; int parsesStart=0;
     std::deque<Entry> entries; // A deque keeps entries in place while nested scopes hold them.
     Entry& At(const std::string& name) { for(auto& e:entries) if(e.name==name) return e; entries.push_back({name}); return entries.back(); }
 } profiler;
@@ -642,7 +645,6 @@ void Load() {
     LoadLayouts(); LoadOverlays();
     app.showTitleBar=ReadBool(L"General",L"ShowTitleBar",false);
     app.checkUpdates=ReadBool(L"General",L"CheckForUpdates",true);
-    app.rate=std::clamp(ReadInt(L"General",L"RefreshHz",10),5,20);
     app.opponentFuelExtraLaps=std::clamp(ReadInt(L"General",L"OpponentFuelExtraLaps",3),0,10);
     app.startWithWindows=ReadBool(L"General",L"StartWithWindows",false);
     app.startMinimized=ReadBool(L"General",L"StartMinimized",false);
@@ -723,7 +725,7 @@ void Save() {
             number(section,L"CornerLabelContrast",o.map.labelContrast); number(section,L"CornerLabelScale",o.map.labelScale); number(section,L"ShowPitExit",o.map.pitExit); number(section,L"MapLayout",o.map.layout);
         }
     }
-    number(L"General",L"ShowTitleBar",app.showTitleBar); number(L"General",L"RefreshHz",app.rate);
+    number(L"General",L"ShowTitleBar",app.showTitleBar);
     number(L"General",L"OpponentFuelExtraLaps",app.opponentFuelExtraLaps);
     number(L"General",L"StartWithWindows",app.startWithWindows); number(L"General",L"StartMinimized",app.startMinimized); number(L"General",L"CheckForUpdates",app.checkUpdates);
     if(app.windowRect.right>app.windowRect.left) {
@@ -2191,6 +2193,17 @@ int RefreshRate(const Overlay& o) {
     const bool windArrow=o.kind==WeatherKind && d[WindModule] && d[WindRose] && d[WindRelative] && std::isfinite(RelativeWindAngle(app.frame,HeadingLive(),MapHeading()));
     return (o.kind==PitLimiterKind && app.pitVisibility.Warning()) || windArrow?std::max(o.place.rate,10):o.place.rate;
 }
+// While iRacing's frames set the pace, an overlay refreshes on every n-th frame (n = 60 / rate), so 15 Hz is
+// every 66.7 ms exactly; in the preview, by the timer.
+bool OverlayDue(Overlay& o,int rate) {
+    const auto& f=app.frame;
+    if(!app.preview && f.connected && f.tick>=0 && f.tickRate>0 && f.tickRate%rate==0) {
+        const long long slot=f.tick/(f.tickRate/rate);
+        if(o.due!=0 && slot==o.slot) return false;
+        o.slot=slot; o.due=1; return true;
+    }
+    return RefreshDue(o.due,app.now,1000/rate,app.timerMs/2);
+}
 // Ticks refresh each overlay at its own rate; everything else (settings, hide, diagnostics) forces a refresh.
 void UpdateOverlays(bool force=true) {
     if(!app.overlayClass) return;
@@ -2211,20 +2224,22 @@ void UpdateOverlays(bool force=true) {
             RECT client{}; GetClientRect(o.window,&client);
             const int rate=RefreshRate(o);
             if(force) o.due=app.now+1000/rate;
-            else if(!RefreshDue(o.due,app.now,1000/rate,app.timerMs/2)) continue;
+            else if(!OverlayDue(o,rate)) continue;
             if(client.bottom!=MulDiv(BaseHeight(o),dpi*o.place.scale,9600) || client.right!=MulDiv(OverlayWidth(o),dpi*o.place.scale,9600)) { Fit(o); InvalidateModel(); }
             RefreshOverlay(o);
+            if(app.refreshHook) app.refreshHook(o);
         }
     }
 }
-// Telemetry is read at the chosen rate, or faster when an enabled overlay refreshes faster.
+// The preview's pace: the fastest enabled overlay, at least 10 Hz. Live, iRacing's frames set it.
 int ReadRate() {
-    int rate=app.rate;
+    int rate=10;
     for(const auto& o:app.overlays) if(o.place.enabled) rate=std::max(rate,RefreshRate(o));
     return rate;
 }
 void Timer() {
-    const int ms=app.preview || app.frame.connected?1000/ReadRate():1000;
+    // Live, every iRacing frame ticks; the timer only keeps the window current when frames pause.
+    const int ms=app.preview?1000/ReadRate():(app.frame.connected?250:1000);
     if(app.timerMs!=ms) { KillTimer(app.main,1); SetTimer(app.main,1,ms,nullptr); app.timerMs=ms; }
 }
 // Sample weather for the preview and diagnostics: light rain, the track cooling over the last 20 minutes.
@@ -2273,10 +2288,13 @@ void RefreshPage();
 void PollUpdates();
 // Posted to the main window when the banner and the current page should show new state.
 constexpr UINT RefreshUiMessage=WM_APP+2;
+// Posted by the telemetry thread when iRacing has a new frame.
+constexpr UINT TelemetryMessage=WM_APP+3;
 void ProcessFrame(bool connected) {
     if(app.frame.yawNorth!=app.lastYaw && std::isfinite(app.frame.yawNorth)) { app.lastYaw=app.frame.yawNorth; app.yawChanged=app.now; }
     if(!connected) { SaveBraking(); app.frame={}; app.events.Update(app.session,app.frame); app.session={}; app.pitLane.Reset(); app.refuel.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.weatherHistory.Reset(); }
     else {
+        if(app.frame.time!=app.lastFrameTime) { app.lastFrameTime=app.frame.time; ++app.framesProcessed; }
         { ProfileScope p("analysis: pit history"); app.pitHistory.Update(app.session,app.frame); }
         { ProfileScope p("analysis: pit stop estimate"); UpdatePitStop(); }
         { ProfileScope p("analysis: race control events"); app.events.Update(app.session,app.frame); }
@@ -2290,12 +2308,17 @@ void AutoLayout();
 void Tick() {
     {
         ProfileScope total("tick (everything below)");
-        app.now=GetTickCount64();
+        app.now=GetTickCount64(); ++app.ticks;
         if(app.preview) PreviewData(app.diagnostics?0:app.now/1000.0);
         else {
-            bool connected=false;
-            { ProfileScope p("telemetry read (session YAML included)"); connected=app.telemetry.Read(app.frame,app.session); }
-            ProcessFrame(connected);
+            Frame frame; Session session; bool sessionChanged=false;
+            bool fresh=false;
+            { ProfileScope p("telemetry take (read on its own thread)"); fresh=app.pump.Take(frame,session,sessionChanged); }
+            if(fresh) {
+                const bool was=app.frame.connected;
+                app.frame=frame; if(sessionChanged) app.session=std::move(session);
+                if(frame.connected || was) ProcessFrame(frame.connected);
+            }
             AutoLayout();
         }
         { ProfileScope p("status"); UpdateStatus(); }
@@ -2303,7 +2326,7 @@ void Tick() {
         { ProfileScope p("race control window"); UpdateRaceControl(); }
         PollUpdates(); Timer();
     }
-    if(profiler.on) { ++profiler.ticks; if(app.now-profiler.start>=10000) WriteProfile(); }
+    if(profiler.on) { ++profiler.ticks; if(profiler.autoWrite && app.now-profiler.start>=10000) WriteProfile(); }
 }
 // The last 10 s: process CPU against what was measured, then each part per second and per call.
 void WriteProfile() {
@@ -2318,15 +2341,19 @@ void WriteProfile() {
     out<<"  ms/s     us/call   calls/s  part\n";
     auto row=[&](double perSecond,double perCall,double calls,const std::string& name){ std::snprintf(line,sizeof(line),"%7.3f  %9.1f  %8.1f  %s\n",perSecond,perCall,calls,name.c_str()); out<<line; };
     for(const auto& e:profiler.entries) row(ms(e.ticks),e.calls?e.ticks*1e6/frequency.QuadPart/e.calls:0,e.calls/seconds,e.name);
-    const int parses=app.telemetry.sessionParses-profiler.parsesStart; const LONGLONG parseTicks=app.telemetry.sessionParseTicks-profiler.sessionStart;
-    row(ms(parseTicks),parses?parseTicks*1e6/frequency.QuadPart/parses:0,parses/seconds,"  of which session YAML parsing");
+    const int parses=app.pump.Parses()-profiler.parsesStart; const LONGLONG parseTicks=app.pump.ParseTicks()-profiler.sessionStart;
+    row(ms(parseTicks),parses?parseTicks*1e6/frequency.QuadPart/parses:0,parses/seconds,"session YAML parsing, on the telemetry thread");
     // The next window.
     for(auto& e:profiler.entries) { e.ticks=0; e.calls=0; }
     profiler.start=app.now; profiler.cpuStart=ProcessCpuMicroseconds(); profiler.ticks=0;
-    profiler.sessionStart=app.telemetry.sessionParseTicks; profiler.parsesStart=app.telemetry.sessionParses;
+    profiler.sessionStart=app.pump.ParseTicks(); profiler.parsesStart=app.pump.Parses();
 }
 void ShowSettings() { ShowWindow(app.main,IsIconic(app.main)?SW_RESTORE:SW_SHOW); SetForegroundWindow(app.main); UpdateOverlays(); }
-void TogglePreview() { app.preview=!app.preview; app.pitLane.Reset(); app.refuel.Reset(); app.frame={}; app.session={}; app.weatherHistory.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.telemetry.Close(); app.events.Reset(); Tick(); RefreshPage(); }
+void TogglePreview() { app.preview=!app.preview; app.pitLane.Reset(); app.refuel.Reset(); app.frame={}; app.session={}; app.weatherHistory.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.events.Reset();
+    // The preview reads nothing; afterwards the thread starts afresh and sends the session again.
+    if(app.preview) app.pump.Stop(); else app.pump.Start(app.main,TelemetryMessage);
+    Tick(); RefreshPage();
+}
 void ToggleEdit() { app.edit=!app.edit; Tick(); UpdateOverlays(); RefreshPage(); }
 void ToggleHidden() { app.hidden=!app.hidden; UpdateOverlays(); RefreshPage(); }
 LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
@@ -2410,6 +2437,7 @@ LRESULT CALLBACK MainProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     case TrayMessage: if(lp==WM_LBUTTONDBLCLK || lp==WM_LBUTTONUP) ShowSettings(); else if(lp==WM_RBUTTONUP || lp==WM_CONTEXTMENU) TrayMenu(); return 0;
     case WM_HOTKEY: if(wp==1) ToggleEdit(); if(wp==2) ToggleHidden(); if(wp==3) ShowSettings(); if(wp==4 || wp==5) StepRaceEventByHotkey(wp==5?1:-1); return 0;
     case RefreshUiMessage: UpdateStatus(); RefreshPage(); return 0;
+    case TelemetryMessage: Tick(); return 0;
     case WM_COMMAND:
         switch(LOWORD(wp)) {
         case NavOverlaysId: ShowPage(Page::Overlays); break;
@@ -2429,7 +2457,7 @@ LRESULT CALLBACK MainProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
         ApplyUiDpi(); return 0;
     }
     case WM_DESTROY:
-        trackMap.task.Cancel();
+        trackMap.task.Cancel(); app.pump.Stop();
         if(!app.diagnostics) { RememberWindowPlacement(); Save(); SaveBraking(); }
         CloseRaceControl();
         KillTimer(w,1); Shell_NotifyIconW(NIM_DELETE,&app.tray);
@@ -2483,7 +2511,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
     if(diagnostics) {
         // One instance per kind with known settings, as the checks expect.
         for(auto it=app.overlays.begin();it!=app.overlays.end();) it=it->number>1?app.overlays.erase(it):std::next(it);
-        app.rate=10; app.startWithWindows=app.startMinimized=false;
+        app.startWithWindows=app.startMinimized=false;
         for(auto& o:app.overlays) {
             o.weather.display.fill(true); o.bands=DefaultBands(o.kind); o.table.columnHeaders=false; o.table.rows=9; o.table.standings={}; o.fuel.figures.fill(true); o.fuel.display.fill(true);
             auto& p=o.place; p={}; p.x=DefaultPositions[o.kind].x; p.y=DefaultPositions[o.kind].y;
@@ -2504,8 +2532,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
 #ifdef RACEMATE_DIAGNOSTICS
     if(diagnostics) return RunDiagnostics();
     if(wcsstr(args,L"--benchmark-tick")) return RunTickBenchmark();
+    if(wcsstr(args,L"--benchmark-live")) return RunLiveBenchmark();
 #endif
     if(benchmark) {
+        app.pump.Start(app.main,TelemetryMessage);
         app.hidden=true; Tick(); SetTimer(app.main,2,10000,nullptr);
         MSG message{};
         while(GetMessageW(&message,nullptr,0,0)>0) { TranslateMessage(&message); DispatchMessageW(&message); }
@@ -2515,6 +2545,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
     app.trayAvailable=Shell_NotifyIconW(NIM_ADD,&app.tray)!=FALSE;
     if(app.startWithWindows && !RegisterStartup(true)) MessageBoxW(app.main,L"Could not refresh the Windows startup path. Select Start with Windows again to retry.",L"RaceMate",MB_OK|MB_ICONWARNING);
     app.hotkeysEnabled=true; RegisterHotkeys();
+    app.pump.Start(app.main,TelemetryMessage);
     Tick(); RestoreWindowPlacement(StartupShowCommand(app.trayAvailable,show)); UpdateWindow(app.main);
     if(!app.hotkeyError.empty()) ShowPage(Page::Settings);
     if(app.checkUpdates) StartUpdateCheck(true);

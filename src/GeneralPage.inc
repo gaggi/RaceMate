@@ -3,11 +3,10 @@ class GeneralPage : public PageWindow {
 public:
     GeneralPage() : PageWindow(ui.heading,ui.text) {}
 private:
-    enum class Key { None, StartWithWindows, StartMinimized, RefreshRate, TitleBar, OpponentFuel, PitLane, PitService, Hotkey, CheckUpdates, Version };
+    enum class Key { None, StartWithWindows, StartMinimized, TitleBar, OpponentFuel, PitLane, PitService, Hotkey, CheckUpdates, Version };
     static constexpr int ListId=100, HotkeyId=200, LaneEditId=202, TiresEditId=203, RateEditId=204;
     static constexpr int LaneRow=10, ServiceRow=11;
     // Below 5 Hz short offtracks and pit timing get lost.
-    static constexpr int Rates[]={5,10,15,20};
 
     void OnCreate() override {
         list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont());
@@ -55,8 +54,6 @@ private:
         if(!startupError_.empty()) { rows.back().pill=L"Not changed"; rows.back().pillTone=RowList::Tone::Warning; }
         toggle(Key::StartMinimized,L"Start minimized",L"Starts in the tray; enabled overlays work as usual.",app.startMinimized);
         header(L"Overlays");
-        RowList::Row rate; rate.title=L"Background rate"; rate.detail=std::to_wstring(app.rate)+L" Hz  \u00B7  for Race Control events and pit stops; overlays have their own rate, a faster one raises it"; rate.button=L"Choose...";
-        push(std::move(rate),Key::RefreshRate);
         toggle(Key::TitleBar,L"Headers on all overlays",L"Switches the header of every overlay at once; each overlay's page also sets its own header and footer.",app.showTitleBar);
         header(L"Opponent fuel estimate");
         RowList::Row fuel; fuel.title=L"Additional laps with fuel saving";
@@ -143,12 +140,6 @@ private:
         Refresh(); BuildEditors();
         if(const int row=ExpandedRow(); row>=0) list_.ScrollIntoView(row);
     }
-    void ChooseRate() {
-        std::vector<std::wstring> items; int checked=-1;
-        for(int i=0;i<static_cast<int>(std::size(Rates));++i) { items.push_back(std::to_wstring(Rates[i])+L" Hz"); if(Rates[i]==app.rate) checked=i; }
-        const int choice=ChooseFromMenu(items,checked); if(choice<0) return;
-        app.rate=Rates[choice]; Timer(); Save(); Refresh(); UpdateStatus();
-    }
     bool OnCommand(int id,int code,HWND control) override {
         if(id==PageRefreshId) { Refresh(); return true; }
         if(id==HotkeyId) {
@@ -171,7 +162,6 @@ private:
             if(code==RowList::kToggled) { startupError_=SetStartWithWindows(on)?L"":L"Windows startup could not be changed; the previous setting is kept."; Refresh(); }
             break;
         case Key::StartMinimized: if(code==RowList::kToggled) { SetStartMinimized(on); Refresh(); } break;
-        case Key::RefreshRate: if(pressed) ChooseRate(); break;
         case Key::TitleBar: if(code==RowList::kToggled) { SetShowTitleBar(on); Refresh(); } break;
         case Key::OpponentFuel:
             if(pressed) {

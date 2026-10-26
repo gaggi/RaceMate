@@ -807,10 +807,18 @@ int RunDiagnostics() {
             for(int tick=0;tick<3;++tick) burst+=RefreshDue(due,resume+tick,period,timer/2);
             ratesOk=burst==1 && ratesOk;
         }
-        // A background rate saved below 5 Hz, from earlier versions, loads as 5 Hz.
-        const int savedRate=app.rate; WritePrivateProfileStringW(L"General",L"RefreshHz",L"2",app.config.c_str()); Load();
-        ratesOk=app.rate==5 && ratesOk; app.rate=savedRate; Save(); Timer();
-        report<<"Overlay rates on every telemetry rate, with jitter and pauses: "<<(ratesOk?"PASS":"FAIL")<<"\n"; ok=ratesOk && ok;
+        // Paced by iRacing's 60 frames a second, every rate refreshes on whole frames at even intervals.
+        const Frame savedFrame=app.frame; const bool savedPreview=app.preview; Overlay& paced=First(RelativeKind);
+        app.preview=false; app.frame.connected=true; app.frame.tickRate=60;
+        for(int rate:OverlayRates) {
+            paced.due=1; paced.slot=-1; std::vector<int> at;
+            for(int tick=1200;tick<1320;++tick) { app.frame.tick=tick; if(OverlayDue(paced,rate)) at.push_back(tick); }
+            bool even=at.size()==static_cast<size_t>(2*rate);
+            for(size_t i=1;i<at.size();++i) even=at[i]-at[i-1]==60/rate && even;
+            if(!even) { ratesOk=false; report<<"  rate "<<rate<<" Hz on iRacing frames: "<<at.size()<<" refreshes in 2 s\n"; }
+        }
+        app.frame=savedFrame; app.preview=savedPreview; paced.due=0;
+        report<<"Overlay rates on every telemetry rate, with jitter and pauses, and on iRacing frames: "<<(ratesOk?"PASS":"FAIL")<<"\n"; ok=ratesOk && ok;
     }
     {
         // Rings outside the overlay: red on the one whose page is open, dashed yellow while moving; none on the Pit Assist; square corners on request.
@@ -1525,8 +1533,8 @@ int RunDiagnostics() {
     }
     ok=cornersOk && ok;
     report<<"Fixed corner: all four corners on every overlay, resize/shrink, no jump on selection and persisted anchors: "<<(cornersOk?"PASS":"FAIL")<<"\n";
-    Frame liveFrame; Session liveSession;
-    if(app.telemetry.Read(liveFrame,liveSession)) {
+    Frame liveFrame; Session liveSession; Telemetry liveTelemetry;
+    if(liveTelemetry.Read(liveFrame,liveSession)) {
         app.preview=false; app.frame=liveFrame; app.session=liveSession; First(StandingsKind).table.standings={}; raceControl.message.clear();
         OpenRaceControl(); UpdateRaceControl(true); ok=Export(raceControl.window,L"build\\qa\\race-control-live.bmp") && ok;
         int counters=0; for(const auto& d:liveSession.drivers) counters+=d.incidentCount>=0;
@@ -1657,3 +1665,6 @@ int RunTickBenchmark() {
     report<<"Track map off, other rates as above: "<<(ticks(kernelBefore,kernelAfter)+ticks(userBefore,userAfter))/1000/seconds<<" ms CPU per second, SVG task "<<(trackMap.task.Running()?"running":"idle")<<std::endl;
     return 0;
 }
+// The pump reads the benchmark's stand-in for iRacing instead of iRacing.
+void ConnectBenchmarkTelemetry(const wchar_t* mapping,const wchar_t* event) { app.pump.Rename(mapping,event); app.pump.Start(app.main,TelemetryMessage); }
+#include "LiveBenchmark.inc"
