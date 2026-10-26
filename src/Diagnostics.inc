@@ -1511,6 +1511,14 @@ int RunDiagnostics() {
         SetWindowPos(side.window,nullptr,left.left+40,left.top+60,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
         RECT moved{}; GetWindowRect(side.window,&moved); GetWindowRect(side.mirror,&right);
         sideOk=moved.left==left.left && moved.top==left.top+60 && right.top==left.top+60 && right.right==monitorInfo.rcMonitor.right && sideOk;
+        {
+            // Dragging the right bar takes the left one along, onto the monitor under the mouse.
+            POINT cursor{}; GetCursorPos(&cursor); MONITORINFO under{sizeof(under)}; GetMonitorInfoW(MonitorFromPoint(cursor,MONITOR_DEFAULTTONEAREST),&under);
+            side.mirrorDragging=true; SetWindowPos(side.mirror,nullptr,right.left-200,right.top+30,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE); side.mirrorDragging=false;
+            RECT dragged{}; GetWindowRect(side.window,&moved); GetWindowRect(side.mirror,&dragged);
+            sideOk=moved.top==right.top+30 && dragged.top==right.top+30 && moved.left==under.rcMonitor.left && dragged.right==under.rcMonitor.right && sideOk;
+            SetWindowPos(side.window,nullptr,left.left,left.top,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
+        }
         // 60 % apart: centred on the monitor, the outer edges 60 % of its width apart; kept when saved.
         side.sideApart=60; Fit(side); Save(); side.sideApart=100; Load(); Fit(side);
         GetWindowRect(side.window,&moved); GetWindowRect(side.mirror,&right);

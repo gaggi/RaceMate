@@ -51,7 +51,7 @@ private:
             apart.detail=std::to_wstring(o_.sideApart)+(o_.sideApart==100?L" % of the screen width: at its edges":L" % of the screen width, centred on it");
             push(std::move(apart),Key::SideApart);
             push(RoundedRow(o_),Key::Rounded);
-            info(L"Placement",L"Drag the bars up or down, or onto another monitor; they stay centred on it. Size and opacity under Overlays.");
+            info(L"Placement",L"Drag either bar up or down, or onto another monitor; they stay centred on the one under the mouse. Size and opacity under Overlays.");
             header(L"When it shows");
             info(L"A car beside you",L"While you drive and iRacing's spotter reports a car on that side. Both bars show while overlays are moved.");
             header(L"On the bars");

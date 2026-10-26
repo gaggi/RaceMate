@@ -195,7 +195,7 @@ Two narrow bars, by default at the left and right edge of the screen, light up w
 
 The spotter tells the side, but not which car is there. RaceMate takes the nearest car within 10 m along the lap as the one beside you. With cars on both sides their lap distance cannot tell which is where, so neither bar shows a block then. **Where the car beside you is** switches the block off.
 
-The bars stay centred on their monitor. **Distance apart** sets how far apart their outer edges are, as a share of the screen width: 100 % puts them at its edges, down to 20 % for bars close beside the middle of the screen. Drag the left bar up or down, or onto another monitor; the right bar follows at the same height. Size, opacity and rounded corners apply to both, and both get the same frame while overlays are moved or the page is open. Both bars show while overlays are moved, in grey when nobody is beside you. The Side Warning has no header or footer, and only one instance.
+The bars stay centred on their monitor. **Distance apart** sets how far apart their outer edges are, as a share of the screen width: 100 % puts them at its edges, down to 20 % for bars close beside the middle of the screen. Drag either bar up or down, or onto another monitor: they go over as soon as the mouse is on it, and the other bar follows at the same height. Size, opacity and rounded corners apply to both, and both get the same frame while overlays are moved or the page is open. Both bars show while overlays are moved, in grey when nobody is beside you. The Side Warning has no header or footer, and only one instance.
 
 ## Weather
 

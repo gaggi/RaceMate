@@ -227,6 +227,8 @@ struct Overlay {
     // Side Warning: the right bar, mirrored across the monitor's centre. It shows the right half of the buffer,
     // which holds both bars side by side.
     HWND mirror=nullptr;
+    // Side Warning: a bar is being dragged, the left one or the mirror; then the monitor under the mouse holds them.
+    bool dragging=false, mirrorDragging=false;
     HDC dc=nullptr; HBITMAP bitmap=nullptr; HGDIOBJ original=nullptr, originalFont=nullptr;
     HWND frame=nullptr; int frameState=-1; RECT frameRect{}; // The ring around it while edited or movable.
     HWND mirrorFrame=nullptr; int mirrorFrameState=-1; RECT mirrorFrameRect{}; // The Side Warning's right bar's ring.
@@ -2270,6 +2272,12 @@ void ApplyOpacity(const Overlay& o) {
     else SetLayeredWindowAttributes(o.window,0,static_cast<BYTE>(o.place.opacity*255/100),LWA_ALPHA);
     if(o.mirror) SetLayeredWindowAttributes(o.mirror,0,static_cast<BYTE>(o.place.opacity*255/100),LWA_ALPHA);
 }
+// The monitor the Side Warning's bars go on: while one is dragged, the one under the mouse, so they move over as
+// soon as it gets there; otherwise the one where they are.
+HMONITOR SideMonitor(const Overlay& o,const RECT& at) {
+    POINT cursor{};
+    return (o.dragging || o.mirrorDragging) && GetCursorPos(&cursor)?MonitorFromPoint(cursor,MONITOR_DEFAULTTONEAREST):MonitorFromRect(&at,MONITOR_DEFAULTTONEAREST);
+}
 // The Side Warning's right bar: as far from the right edge of the monitor as the left bar is from its left edge.
 void PlaceMirror(const Overlay& o) {
     RECT r{}; GetWindowRect(o.window,&r); MONITORINFO info{sizeof(info)};
@@ -2312,18 +2320,35 @@ void CreateOverlayWindow(Overlay& o) {
     }
     Fit(o,true);
 }
-// The Side Warning's right bar shows the right half of its overlay's buffer; it is moved with the left bar, never itself.
+void UpdateFrame(Overlay& o);
+// The Side Warning's right bar shows the right half of its overlay's buffer. Dragged while overlays are moved, it
+// takes the left bar along, which keeps the place.
 LRESULT CALLBACK MirrorProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
-    const auto* o=reinterpret_cast<const Overlay*>(GetWindowLongPtrW(w,GWLP_USERDATA));
+    auto* o=reinterpret_cast<Overlay*>(GetWindowLongPtrW(w,GWLP_USERDATA));
+    if(!o) return DefWindowProcW(w,m,wp,lp);
     switch(m) {
+    case WM_ENTERSIZEMOVE: o->mirrorDragging=true; break;
+    case WM_EXITSIZEMOVE: o->mirrorDragging=false; CaptureOverlayCorner(*o); Save(); UpdateFrame(*o); return 0;
+    case WM_WINDOWPOSCHANGING:
+        // Mirrored on the monitor under the mouse, at the height it is dragged to; the left bar goes to the other side.
+        if(auto* p=reinterpret_cast<WINDOWPOS*>(lp); o->mirrorDragging && !(p->flags&SWP_NOMOVE)) {
+            RECT now{}; GetWindowRect(w,&now); const int width=now.right-now.left; MONITORINFO info{sizeof(info)};
+            if(GetMonitorInfoW(SideMonitor(*o,now),&info)) {
+                const int left=SideBarLeft(info.rcMonitor,o->sideApart);
+                p->x=info.rcMonitor.left+info.rcMonitor.right-left-width;
+                SetWindowPos(o->window,nullptr,left,p->y,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
+            }
+        }
+        break;
+    case WM_WINDOWPOSCHANGED: if(o->mirrorDragging) UpdateFrame(*o); break;
     case WM_PAINT: {
         PAINTSTRUCT p{}; HDC dc=BeginPaint(w,&p); const RECT& r=p.rcPaint;
-        if(o && o->dc) BitBlt(dc,r.left,r.top,r.right-r.left,r.bottom-r.top,o->dc,o->width/2+r.left,r.top,SRCCOPY);
+        if(o->dc) BitBlt(dc,r.left,r.top,r.right-r.left,r.bottom-r.top,o->dc,o->width/2+r.left,r.top,SRCCOPY);
         EndPaint(w,&p); return 0;
     }
-    case WM_PRINTCLIENT: if(o && o->dc) BitBlt(reinterpret_cast<HDC>(wp),0,0,o->width/2,o->height,o->dc,o->width/2,0,SRCCOPY); return 0;
+    case WM_PRINTCLIENT: if(o->dc) BitBlt(reinterpret_cast<HDC>(wp),0,0,o->width/2,o->height,o->dc,o->width/2,0,SRCCOPY); return 0;
     case WM_ERASEBKGND: return 1;
-    case WM_NCHITTEST: return HTTRANSPARENT;
+    case WM_NCHITTEST: return app.edit?HTCAPTION:HTTRANSPARENT;
     case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
     }
     return DefWindowProcW(w,m,wp,lp);
@@ -2431,6 +2456,10 @@ void UpdateOverlays(bool force=true) {
         auto style=GetWindowLongPtrW(o.window,GWL_EXSTYLE);
         const auto desired=app.edit?(style&~WS_EX_TRANSPARENT):(style|WS_EX_TRANSPARENT);
         if(style!=desired) SetWindowLongPtrW(o.window,GWL_EXSTYLE,desired);
+        if(o.mirror) {
+            const auto mirror=GetWindowLongPtrW(o.mirror,GWL_EXSTYLE), wanted=app.edit?(mirror&~WS_EX_TRANSPARENT):(mirror|WS_EX_TRANSPARENT);
+            if(mirror!=wanted) SetWindowLongPtrW(o.mirror,GWL_EXSTYLE,wanted);
+        }
         // The Side Warning shows a bar while a car is beside you on its side, both while overlays are moved.
         bool shown=visible, mirrored=false;
         if(o.kind==SideWarningKind) {
@@ -2617,16 +2646,17 @@ LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     case WM_ERASEBKGND: return 1;
     case WM_NCHITTEST: return app.edit?HTCAPTION:HTTRANSPARENT;
     case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
-    case WM_EXITSIZEMOVE: CaptureOverlayCorner(*o); Save(); return 0;
+    case WM_ENTERSIZEMOVE: o->dragging=true; break;
+    case WM_EXITSIZEMOVE: o->dragging=false; CaptureOverlayCorner(*o); Save(); return 0;
     case WM_WINDOWPOSCHANGING:
         // The Side Warning's bars are dragged up or down, or onto another monitor; across they keep their distance apart.
         if(auto* p=reinterpret_cast<WINDOWPOS*>(lp); o->kind==SideWarningKind && !(p->flags&SWP_NOMOVE)) {
             RECT now{}; GetWindowRect(w,&now); const int width=p->flags&SWP_NOSIZE?now.right-now.left:p->cx, height=p->flags&SWP_NOSIZE?now.bottom-now.top:p->cy;
             const RECT at{p->x,p->y,p->x+width,p->y+height}; MONITORINFO info{sizeof(info)};
-            if(GetMonitorInfoW(MonitorFromRect(&at,MONITOR_DEFAULTTONEAREST),&info)) p->x=SideBarLeft(info.rcMonitor,o->sideApart);
+            if(GetMonitorInfoW(SideMonitor(*o,at),&info)) p->x=SideBarLeft(info.rcMonitor,o->sideApart);
         }
         break;
-    case WM_WINDOWPOSCHANGED: if(o->mirror) PlaceMirror(*o); UpdateFrame(*o); break; // The mirror and the rings follow while it is dragged or resized.
+    case WM_WINDOWPOSCHANGED: if(o->mirror && !o->mirrorDragging) PlaceMirror(*o); UpdateFrame(*o); break; // The mirror and the rings follow while it is dragged or resized.
     case WM_DPICHANGED: Fit(*o); return 0;
     case WM_DISPLAYCHANGE: Fit(*o,true); return 0;
     case WM_DESTROY: o->Free(); for(HWND window:{o->frame,o->mirror,o->mirrorFrame}) if(window) DestroyWindow(window); o->frame=o->mirror=o->mirrorFrame=nullptr; return 0;
