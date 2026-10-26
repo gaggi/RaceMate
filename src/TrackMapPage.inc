@@ -2,7 +2,7 @@ class TrackMapPage : public PageWindow {
 public:
     explicit TrackMapPage(Overlay& overlay) : PageWindow(ui.heading,ui.text), o_(overlay) {}
 private:
-    enum Key { Info, LayoutKey, WhiteTrackKey, SurroundingsKey, AllConfigsKey, NorthUpKey, Numbers, OwnClass, Pit, PitExitKey, Details, Rounded, Header, Footer, Retry, NorthKey, Cache, Background, PitLane, StartFinish, CornerNumbers, CornerNames, LabelSize, LabelContrast };
+    enum Key { Info, LayoutKey, WhiteTrackKey, SurroundingsKey, AllConfigsKey, NorthUpKey, Numbers, OwnClass, Pit, PitExitKey, Details, Rounded, Header, Footer, Retry, NorthKey, StartKey, Cache, Background, PitLane, StartFinish, CornerNumbers, CornerNames, LabelSize, LabelContrast };
     static constexpr int ListId=100, SlotEditId=230, LabelSizeId=240;
     void OnCreate() override { list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont()); editors_.Attach(list_,Instance(),TextFont()); Refresh(); }
     void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
@@ -64,8 +64,18 @@ private:
             else row.detail=L"Checked the next time your car sits in the pit box here.";
             push(std::move(row),NorthKey);
         }
+        {
+            // Where iRacing starts the lap: the drawn line until your car has driven a lap on this layout.
+            RowList::Row row; row.title=L"Start/finish";
+            if(lapStart.layout<0) row.detail=L"Where iRacing starts the lap on the drawing, measured once per layout from your car's heading around a lap. Until then the drawn line counts.";
+            else if(lapStart.settled) {
+                wchar_t text[96]; swprintf(text,96,L"%+.1f %% of the lap from the drawn line, measured from your car's heading around a lap.",lapStart.shift*100);
+                row.detail=text; row.button=L"Measure again";
+            } else row.detail=L"The drawn line, until your car has driven a lap on this layout; then measured from its heading.";
+            push(std::move(row),StartKey);
+        }
         RowList::Row cache; cache.title=L"Map cache"; cache.detail=TrackMapCache().wstring(); cache.button=L"Open folder"; push(std::move(cache),Cache);
-        RowList::Row note; note.title=L"Car positions"; note.detail=L"Start/finish and direction come from the official SVG. Lap percentages follow its prepared path length. No learned fallback or per-track corrections. SVGs download once per layout while this overlay is enabled."; push(std::move(note),Info);
+        RowList::Row note; note.title=L"Car positions"; note.detail=L"Start/finish and direction come from the official SVG; where iRacing starts the lap is measured once per layout, as above. Lap percentages follow the drawing's path length. SVGs download once per layout while this overlay is enabled."; push(std::move(note),Info);
         list_.SetRows(std::move(rows));
     }
     void BuildEditors() {
@@ -118,6 +128,7 @@ private:
             if(key==Header || key==Footer || key==LabelSize) { expanded_=expanded_==key?Info:key; Refresh(); BuildEditors(); if(key==LabelSize && expanded_==LabelSize) list_.ScrollIntoView(index); }
             if(key==Retry) { RetryTrackMap(true); UpdateOverlays(); }
             if(key==NorthKey) { ForgetNorth(); ++trackMap.revision; UpdateOverlays(); Refresh(); }
+            if(key==StartKey) { ForgetStart(); UpdateTrackMap(); UpdateOverlays(); Refresh(); }
             if(key==Numbers) {
                 const int choice=ChooseFromMenu({L"Car numbers",L"Position in class",L"Overall position"},o_.map.markerText);
                 if(choice>=0 && choice!=o_.map.markerText) { o_.map.markerText=choice; SettingChanged(); Refresh(); }

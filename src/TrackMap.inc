@@ -15,23 +15,83 @@ void RetryTrackMap(bool retryLabels=false) {
     trackMap.task.Cancel(); trackMap.identity.clear();
     if(retryLabels && trackMap.id>=0) { std::error_code error; std::filesystem::remove(TrackMapCache()/std::to_wstring(trackMap.id)/L"turns-attempt.txt",error); }
 }
+void RefreshPage();
+// What your car measured about the official maps, beside the SVGs: north per track, the lap start per layout.
+// North used to have north.ini of its own; its entries move over once.
+std::wstring MeasuredFile() {
+    const auto cache=TrackMapCache(), file=cache/L"measured.ini", old=cache/L"north.ini";
+    static bool moved=false; std::error_code error;
+    if(!moved && std::filesystem::exists(old,error)) {
+        std::vector<wchar_t> section(32768);
+        const DWORD size=GetPrivateProfileSectionW(L"North",section.data(),static_cast<DWORD>(section.size()),old.c_str());
+        for(const wchar_t* entry=section.data();entry<section.data()+size && *entry;entry+=wcslen(entry)+1) {
+            const std::wstring line(entry); const auto equals=line.find(L'=');
+            if(equals!=std::wstring::npos) WritePrivateProfileStringW(L"North",line.substr(0,equals).c_str(),line.substr(equals+1).c_str(),file.c_str());
+        }
+        std::filesystem::remove(old,error);
+    }
+    moved=true;
+    return file.wstring();
+}
 // Where north lies on the official map: TrackNorthOffset from the session info, until your car in its pit stall
-// settles it. A settled turn is kept per track (all its layouts are drawn alike) in north.ini beside the SVGs.
+// settles it. A settled turn is kept per track (all its layouts are drawn alike).
 struct NorthState { std::string track; int settled=-1; } north;
-std::wstring NorthFile() { return (TrackMapCache()/L"north.ini").wstring(); }
 void ForgetNorth() {
-    if(!north.track.empty()) WritePrivateProfileStringW(L"North",Wide(north.track).c_str(),nullptr,NorthFile().c_str());
+    if(!north.track.empty()) WritePrivateProfileStringW(L"North",Wide(north.track).c_str(),nullptr,MeasuredFile().c_str());
     north.settled=-1;
 }
+// Where iRacing starts the lap on the drawing: some maps draw the start line where the timing line is not (COTA).
+// Your car's compass heading around a lap, against the drawing's direction of travel, settles it per layout; until
+// then the drawn stripe counts. Headings are summed in 500 parts of the lap while you drive on track.
+struct StartState {
+    int layout=-1; bool settled=false; double shift=0;
+    std::vector<trackmap::Point> headings; int samples=0, evaluated=0;
+} lapStart;
+constexpr int StartParts=500;
+void ForgetStart() {
+    if(lapStart.layout>=0) WritePrivateProfileStringW(L"Start",std::to_wstring(lapStart.layout).c_str(),nullptr,MeasuredFile().c_str());
+    lapStart.settled=false; lapStart.shift=0; lapStart.headings.assign(StartParts,{}); lapStart.samples=lapStart.evaluated=0;
+}
+void UpdateStart() {
+    const int layout=trackMap.ready?trackMap.id:-1;
+    if(layout!=lapStart.layout) {
+        lapStart={}; lapStart.layout=layout; lapStart.headings.assign(StartParts,{});
+        if(layout>=0) {
+            wchar_t text[32]{}; GetPrivateProfileStringW(L"Start",std::to_wstring(layout).c_str(),L"",text,32,MeasuredFile().c_str());
+            wchar_t* end=nullptr; const double shift=std::wcstod(text,&end);
+            if(end!=text && std::isfinite(shift) && std::abs(shift)<.5) { lapStart.settled=true; lapStart.shift=shift; }
+        }
+    }
+    if(layout<0) return;
+    if(trackMap.geometry.shift!=lapStart.shift) { trackMap.geometry.shift=lapStart.shift; ++trackMap.revision; }
+    if(lapStart.settled || trackMap.preview || !trackMap.geometry.direction || trackMap.id!=app.session.trackId) return;
+    // Only your own car driving on track, live: its heading is where it goes.
+    const auto& f=app.frame;
+    if(!f.onTrack || f.replay || f.player<0 || f.player>=MaxCars || ReferenceCar(f)!=f.player || !std::isfinite(f.yawNorth)) return;
+    const auto& c=f.cars[f.player];
+    if(c.surface!=3 || c.pit || c.speed<10 || c.pct<0 || c.pct>=1) return;
+    auto& part=lapStart.headings[std::min(StartParts-1,static_cast<int>(c.pct*StartParts))];
+    part.x+=std::cos(f.yawNorth); part.y+=std::sin(f.yawNorth);
+    // Evaluated once nearly a lap is covered, then after every further 500 samples until it settles.
+    if(++lapStart.samples<lapStart.evaluated+StartParts) return;
+    lapStart.evaluated=lapStart.samples;
+    const auto covered=std::count_if(lapStart.headings.begin(),lapStart.headings.end(),[](const trackmap::Point& p){return p.x!=0 || p.y!=0;});
+    if(covered<StartParts*9/10) return;
+    const auto fit=trackmap::FitStart(trackMap.geometry,lapStart.headings);
+    if(!fit.found) return;
+    lapStart.settled=true; lapStart.shift=fit.shift;
+    wchar_t text[32]; swprintf(text,32,L"%.4f",fit.shift);
+    WritePrivateProfileStringW(L"Start",std::to_wstring(layout).c_str(),text,MeasuredFile().c_str());
+    trackMap.geometry.shift=fit.shift; ++trackMap.revision; RefreshPage();
+}
 int MapNorthTurn() { return north.settled>=0?north.settled:NorthTurnFromOffset(app.session.trackNorthOffset); }
-void RefreshPage();
 // Your car in its pit stall stands along the pit lane: its YawNorth against the drawn pit lane beside the stall
 // (the track there, without a pit drawing) settles north. Once settled, nothing more is measured on this track.
 void UpdateNorth() {
     const std::string track=app.preview?std::string():trackmap::TrackFolder(app.session.trackId);
     if(track!=north.track) {
         north={}; north.track=track;
-        if(!track.empty()) { std::error_code error; std::filesystem::create_directories(TrackMapCache(),error); north.settled=static_cast<int>(GetPrivateProfileIntW(L"North",Wide(track).c_str(),-1,NorthFile().c_str())); }
+        if(!track.empty()) { std::error_code error; std::filesystem::create_directories(TrackMapCache(),error); north.settled=static_cast<int>(GetPrivateProfileIntW(L"North",Wide(track).c_str(),-1,MeasuredFile().c_str())); }
     }
     if(track.empty() || north.settled>=0 || !trackMap.ready || trackMap.preview || trackMap.id!=app.session.trackId) return;
     const auto& f=app.frame;
@@ -44,7 +104,7 @@ void UpdateNorth() {
     // Within 2 degrees of the session info, that stays; otherwise the pit box.
     const int formula=NorthTurnFromOffset(app.session.trackNorthOffset), apart=formula<0?360:std::abs(measured-formula)%360;
     north.settled=std::min(apart,360-apart)<=2?formula:measured;
-    WritePrivateProfileStringW(L"North",Wide(track).c_str(),std::to_wstring(north.settled).c_str(),NorthFile().c_str());
+    WritePrivateProfileStringW(L"North",Wide(track).c_str(),std::to_wstring(north.settled).c_str(),MeasuredFile().c_str());
     ++trackMap.revision; RefreshPage();
 }
 // A wind arrow while you watch another car live takes its heading from the official map, when its north is known.
@@ -99,7 +159,7 @@ void UpdateTrackMap() {
             trackMap.message=trackMap.geometry.direction?L"SVG distance projection":L"Direction unresolved; car positions hidden";
         } else trackMap.message=result?Wide(result->map.error):L"SVG loader failed; retry in settings";
     }
-    UpdateNorth();
+    UpdateStart(); UpdateNorth();
 }
 struct MapTransform {
     double scale=1,x=0,y=0;

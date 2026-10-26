@@ -148,6 +148,30 @@ void UnitTests() {
     Require(stroke && !stroke.geometry.centered && stroke.geometry.direction==1,"a single closed stroked centerline needs no paired boundaries");
     const auto band=Prepare(Svg(Band),Svg(Stripe+Arrow));
     Require(band && std::abs(band.geometry.Heading(0)-std::numbers::pi/2)<.05 && std::abs(band.geometry.Heading(.5)-3*std::numbers::pi/2)<.05,"heading follows the direction of travel, clockwise from the top of the map");
+    {
+        // An L-shaped centerline: no turn of it looks like another. Headings as a car reports them around a lap that
+        // iRacing starts 6 % after the drawn stripe, on a compass turned 70 degrees from the drawing, a few degrees off.
+        const auto l=Prepare(Svg("<path d=\"M10 10H210V110H120V60H10Z\" fill=\"none\" stroke=\"white\"/>"),Svg(Stripe+Arrow));
+        Require(l && l.geometry.direction==1,"L-shaped centerline prepares");
+        auto headings=[&](double shift,double coverage) {
+            std::vector<Point> parts(500);
+            for(int i=0;i<static_cast<int>(parts.size()*coverage);++i) {
+                const double heading=l.geometry.Heading((i+.5)/parts.size()+shift)+70*std::numbers::pi/180+.08*std::sin(i*1.7);
+                parts[i]={3*std::cos(heading),3*std::sin(heading)};
+            }
+            return parts;
+        };
+        const auto fit=FitStart(l.geometry,headings(.06,1));
+        Require(fit.found && std::abs(fit.shift-.06)<.002,"a lap of headings finds where iRacing starts the lap");
+        Require(FitStart(l.geometry,headings(-.03,1)).found && std::abs(FitStart(l.geometry,headings(-.03,1)).shift+.03)<.002,"a start before the stripe is a negative shift");
+        Require(!FitStart(l.geometry,headings(.06,.8)).found,"part of a lap settles nothing");
+        auto shifted=l.geometry; shifted.shift=fit.shift;
+        Require(std::abs(FitStart(shifted,headings(.06,1)).shift)<.002 && std::hypot(shifted.At(0).x-l.geometry.At(.06).x,shifted.At(0).y-l.geometry.At(.06).y)<.5,"the shift moves the lap start along the drawing");
+        const auto ring=Prepare(Svg(Band),Svg(Stripe+Arrow));
+        std::vector<Point> round(500);
+        for(size_t i=0;i<round.size();++i) { const double heading=ring.geometry.Heading((i+.5)/round.size()); round[i]={std::cos(heading),std::sin(heading)}; }
+        Require(!FitStart(ring.geometry,round).found,"a track that looks alike half a lap on stays unresolved");
+    }
     Require(TrackFolder(448)=="indianapolis" && TrackFolder(253)==TrackFolder(249) && TrackFolder(999999).empty(),"layouts know their track by its CDN folder");
     const auto* source=FindSource(353);
     const std::atomic_bool cancelled=true;

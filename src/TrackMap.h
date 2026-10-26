@@ -25,6 +25,8 @@ struct Geometry {
     std::vector<double> distances;
     Point low, high;
     double length=0, start=0;
+    // How far iRacing's lap starts after the drawn start stripe, as a lap fraction; measured by FitStart.
+    double shift=0;
     int direction=0;
     bool centered=false, bridged=false;
     Point At(double fraction, int directionOverride=0, double offset=0) const;
@@ -43,6 +45,12 @@ struct Result {
     std::string error;
     explicit operator bool() const { return error.empty() && geometry.length>0; }
 };
+// Where iRacing starts the lap on the drawing, from your car's compass heading around a lap: headings[i] sums
+// {cos, sin} of YawNorth while the car was in the i-th of headings.size() equal parts of the lap. The shift, added
+// to the geometry's, lines the drawing's direction of travel, turned by one common angle, up with the car's.
+// Found only when nearly the whole lap is covered, the headings agree and no other shift fits nearly as well.
+struct StartFit { double shift=0, agreement=0, runnerUp=0, coverage=0; bool found=false; };
+StartFit FitStart(const Geometry& geometry, const std::vector<Point>& headings);
 // SVGs are parsed once on a worker. No telemetry learning or track-specific corrections.
 Result Prepare(std::string active, std::string finish, std::string pit={}, std::string turns={}, std::string background={}, std::string inactive={});
 struct Source { int id; const char* slug; const char* folder; };

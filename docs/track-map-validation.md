@@ -48,7 +48,7 @@ Switch **Text in markers** between car numbers, class positions, overall positio
 
 ## How projection works
 
-The runtime selects the source by exact ID and validates the internal name. It prepares SVG geometry on a worker, extracts start/finish and driving direction from the official marking, and maps `CarIdxLapDistPct` along a length-based path. No manual direction table, learned map or per-track calibration is used.
+The runtime selects the source by exact ID and validates the internal name. It prepares SVG geometry on a worker, extracts start/finish and driving direction from the official marking, and maps `CarIdxLapDistPct` along a length-based path. No manual direction table, learned map or manual per-track calibration is used; where iRacing starts the lap is measured once per layout from your car's heading ([Start/finish](track-map.md#startfinish)).
 
 Bridge gaps can be closed in the position path when their endpoints and directions are compatible; the original SVG drawing remains unchanged. Ambiguous disconnected branches or incompatible open ends are rejected. Missing direction can leave the drawing visible without car markers.
 

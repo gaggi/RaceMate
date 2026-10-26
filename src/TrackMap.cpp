@@ -282,7 +282,43 @@ const Source* FindSource(int trackId,std::string_view name) {
 Point Geometry::At(double fraction,int overrideDirection,double offset) const {
     if(route.size()<2 || length<=0 || !std::isfinite(fraction) || !std::isfinite(offset)) return {};
     const int sign=overrideDirection?overrideDirection:direction;
-    return Sample(route,distances,Wrap(start/length+sign*(fraction+offset))*length);
+    return Sample(route,distances,Wrap(start/length+sign*(fraction+offset+shift))*length);
+}
+StartFit FitStart(const Geometry& g,const std::vector<Point>& headings) {
+    StartFit fit; if(!g.direction || g.length<=0 || headings.empty()) return fit;
+    // The car's mean heading per part of the lap, and the drawing's direction of travel every 1/4000 of it.
+    // Both as unit vectors, so that comparing them takes no trigonometry.
+    std::vector<std::pair<double,Point>> parts;
+    for(size_t i=0;i<headings.size();++i) if(Length(headings[i])>0) parts.emplace_back((i+.5)/headings.size(),Unit(headings[i]));
+    fit.coverage=static_cast<double>(parts.size())/headings.size();
+    constexpr int Table=4000; std::vector<Point> drawn(Table);
+    for(int j=0;j<Table;++j) { const double h=g.Heading(static_cast<double>(j)/Table); if(!std::isfinite(h)) return fit; drawn[j]={std::cos(h),std::sin(h)}; }
+    // How well the headings agree with the drawing moved on by this shift, under the best common turn: 1 when exactly.
+    auto agreement=[&](double shift) {
+        double x=0,y=0;
+        for(const auto& [at,car]:parts) {
+            // The angle from the drawn heading to the car's, as a unit vector.
+            const Point d=drawn[static_cast<size_t>(Wrap(at+shift)*Table)%Table];
+            x+=Dot(car,d); y+=Cross(d,car);
+        }
+        return parts.empty()?0:std::hypot(x,y)/parts.size();
+    };
+    constexpr int Steps=1000; std::vector<double> score(Steps);
+    int best=0; for(int i=0;i<Steps;++i) { score[i]=agreement(static_cast<double>(i)/Steps); if(score[i]>score[best]) best=i; }
+    // The next best peak: a track that looks alike when turned, as an oval, stays unresolved. The best peak's own
+    // slopes do not count, however wide it is along a straight.
+    // Its slopes run down from it either way, over bumps of less than .05.
+    std::vector<unsigned char> slope(Steps); slope[best]=1;
+    for(int way:{1,Steps-1}) {
+        double low=score[best];
+        for(int i=(best+way)%Steps;i!=best && score[i]<=low+.05;i=(i+way)%Steps) { slope[i]=1; low=std::min(low,score[i]); }
+    }
+    for(int i=0;i<Steps;++i) if(!slope[i]) fit.runnerUp=std::max(fit.runnerUp,score[i]);
+    double shift=static_cast<double>(best)/Steps; fit.agreement=score[best];
+    for(int i=-10;i<=10;++i) { const double s=(best+i/10.)/Steps, a=agreement(s); if(a>fit.agreement) { fit.agreement=a; shift=s; } }
+    fit.shift=shift>.5?shift-1:shift;
+    fit.found=fit.coverage>=.9 && fit.agreement>=.8 && fit.runnerUp<fit.agreement-.15;
+    return fit;
 }
 double Geometry::Heading(double fraction) const {
     if(!direction) return std::numeric_limits<double>::quiet_NaN();

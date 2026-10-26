@@ -41,7 +41,7 @@ Additional surroundings/configuration layers support **Background** and **All co
 %LOCALAPPDATA%\RaceMate\trackmaps\v1\<TrackID>
 ```
 
-After a successful download, valid cached assets can be used offline. There are no bundled official SVGs, learned maps or per-track manual projection corrections. Preview uses the official **Lime Rock Park Grand Prix** map with sample cars.
+After a successful download, valid cached assets can be used offline. There are no bundled official SVGs, learned maps or manual per-track corrections; only north and the lap start are measured by your car (see [North](#north) and [Start/finish](#startfinish)). Preview uses the official **Lime Rock Park Grand Prix** map with sample cars.
 
 Use **Map cache → Open folder** to inspect the cache. **Retry loading this map → Retry** retries a failed load and missing labels immediately; it can reuse valid cached geometry.
 
@@ -87,7 +87,13 @@ Turning **Background and frame** off hides captions, the frame, header/footer an
 
 iRacing draws some maps turned to fit the screen. **North up** turns them back, and the wind arrow uses the same north while you watch another car live, where iRacing reports no heading. North comes from the session info: iRacing's `TrackNorthOffset` plus three quarter turns, which fits most tracks to within a degree.
 
-Where it does not (Lime Rock is a quarter turn off), your car settles it: when it sits in its pit stall, it stands along the pit lane, so its compass heading (`YawNorth`) against the drawn pit lane beside the stall gives the map's turn exactly, also for pit boxes behind a bend. Without a pit drawing, the track beside the stall is used. A result more than 2° from the session info replaces it. It is stored per track, for all its layouts, in `north.ini` in the map cache, and nothing is measured on that track again. **Map data › North** shows where the current north comes from; **Measure again** forgets it, and the next time in the pit box measures anew.
+Where it does not (Lime Rock is a quarter turn off), your car settles it: when it sits in its pit stall, it stands along the pit lane, so its compass heading (`YawNorth`) against the drawn pit lane beside the stall gives the map's turn exactly, also for pit boxes behind a bend. Without a pit drawing, the track beside the stall is used. A result more than 2° from the session info replaces it. It is stored per track, for all its layouts, in `measured.ini` in the map cache, and nothing is measured on that track again. (Earlier versions kept it in `north.ini`; its entries move over once.) **Map data › North** shows where the current north comes from; **Measure again** forgets it, and the next time in the pit box measures anew.
+
+## Start/finish
+
+Some drawings place the start line where iRacing does not start the lap. On COTA it lies about 5 % of a lap before iRacing's line, so every car appeared that far ahead. Where iRacing starts the lap is therefore measured once per layout: while you drive on track, RaceMate collects your car's compass heading (`YawNorth`) in 500 parts of the lap and finds the shift at which the drawing's direction of travel, turned by one common angle, lines up with it. North does not need to be known for this.
+
+The result is used only when nearly the whole lap is covered, the headings agree with the drawing and no other shift fits nearly as well. A track that looks alike half a lap on, such as an oval, therefore keeps the drawn line. Until it is settled, which takes about one lap, the drawn line counts. It is stored per layout in `measured.ini` in the map cache, and nothing more is measured on that layout. **Map data › Start/finish** shows the shift; **Measure again** forgets it and measures on the next lap. The drawn start/finish marking stays where iRacing drew it.
 
 ## Corner labels
 
@@ -97,7 +103,7 @@ Labels use official SVG positions and remain available in transparent mode. Miss
 
 ## Projection and experimental limits
 
-Start/finish and driving direction are extracted from the official SVG. `CarIdxLapDistPct` is placed along a prepared path between track boundaries. The schematic drawing's arc length can differ from the simulator's distance around the lap, so a marker may align at start/finish and drift in particular corners.
+Start/finish and driving direction are extracted from the official SVG, with the lap start measured as described under [Start/finish](#startfinish). `CarIdxLapDistPct` is placed along a prepared path between track boundaries. The schematic drawing's arc length can differ from the simulator's distance around the lap, so a marker may align at start/finish and drift in particular corners.
 
 Bridge layouts such as Suzuka receive a prepared centerline. A small gap with consistent endpoint directions can be closed for the position path while the original bridge gap remains in the drawing. Ambiguous branches and incompatible open paths are rejected.
 
