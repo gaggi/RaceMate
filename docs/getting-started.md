@@ -21,7 +21,7 @@ You can configure and preview RaceMate without an active iRacing session. Circle
 3. Place the executable in a folder you can write to, such as a dedicated RaceMate folder under your user account. Extract the ZIP first if you chose it.
 4. Launch RaceMate. There is no installer wizard.
 
-Release assets use names such as `RaceMate-v0.2.1-windows-x64.exe`. Locally built packages omit the `v`, for example `dist/x64/RaceMate-0.2.1-windows-x64.exe`.
+Release assets use names such as `RaceMate-v0.2.2-windows-x64.exe`. Locally built packages omit the `v`, for example `dist/x64/RaceMate-0.2.2-windows-x64.exe`.
 
 Keep the executable in a stable location if you enable **Start with Windows**. In-app updates need permission to replace that file; a user-writable folder avoids a manual replacement step.
 
