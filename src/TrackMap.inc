@@ -343,8 +343,20 @@ void PaintMapCar(Overlay& o,const DrawCommand& c,const DrawCommand* label) {
     const int width=c.r.right-c.r.left,height=c.r.bottom-c.r.top,stroke=std::max(1,static_cast<int>(c.shape[0]));
     const bool hollow=c.shape[1]!=0; HBITMAP bitmap=nullptr; const std::uint32_t* pixels=nullptr;
     const COLORREF textColor=label?label->color:0;
-    for(auto& marker:o.mapMarkers) if(marker.width==width && marker.height==height && marker.stroke==stroke && marker.color==c.color && marker.hollow==hollow
-        && marker.textColor==textColor && (label?marker.text==label->text:marker.text.empty())) { bitmap=marker.bitmap; pixels=marker.bits; marker.used=o.mapPass; break; }
+#ifdef RACEMATE_DIAGNOSTICS
+    const LONGLONG started=commandTiming?DiagnosticTicks():0; long long compared=0;
+#endif
+    for(auto& marker:o.mapMarkers) {
+#ifdef RACEMATE_DIAGNOSTICS
+        ++compared;
+#endif
+        if(marker.width==width && marker.height==height && marker.stroke==stroke && marker.color==c.color && marker.hollow==hollow
+            && marker.textColor==textColor && (label?marker.text==label->text:marker.text.empty())) { bitmap=marker.bitmap; pixels=marker.bits; marker.used=o.mapPass; break; }
+    }
+#ifdef RACEMATE_DIAGNOSTICS
+    const LONGLONG searched=commandTiming?DiagnosticTicks():0;
+    if(commandTiming) { ++markerStats.calls; markerStats.compared+=compared; markerStats.lookup+=searched-started; }
+#endif
     if(!bitmap) {
         // Draw each antialiased symbol once into premultiplied pixels. GDI+ / GDI
         // transitions for every moving car are much more expensive than AlphaBlend.
@@ -370,6 +382,16 @@ void PaintMapCar(Overlay& o,const DrawCommand& c,const DrawCommand* label) {
         }
         GdiFlush(); pixels=static_cast<const std::uint32_t*>(bits);
         o.mapMarkers.push_back({width,height,stroke,c.color,hollow,label?label->text:std::wstring(),textColor,bitmap,pixels,o.mapPass});
+#ifdef RACEMATE_DIAGNOSTICS
+        if(commandTiming) { ++markerStats.created; markerStats.create+=DiagnosticTicks()-searched; }
+#endif
     }
+#ifdef RACEMATE_DIAGNOSTICS
+    const LONGLONG blending=commandTiming?DiagnosticTicks():0;
+    if(commandTiming) { markerStats.direct+=o.direct; markerStats.pixels+=static_cast<double>(width)*height; }
+#endif
     PutMapBitmap(o,c.r,bitmap,pixels,width,height);
+#ifdef RACEMATE_DIAGNOSTICS
+    if(commandTiming) { GdiFlush(); markerStats.blend+=DiagnosticTicks()-blending; }
+#endif
 }

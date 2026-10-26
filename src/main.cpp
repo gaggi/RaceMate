@@ -1221,6 +1221,21 @@ const CellRenderer CellRenderers[]={
 };
 static_assert(std::size(CellRenderers)==ColumnCount);
 bool Editing(const Overlay& o); // Its own page is open in the visible main window.
+#ifdef RACEMATE_DIAGNOSTICS
+// Time per draw command type and overlay kind, GDI flushed after each so batched work lands on its command.
+constexpr int CommandTypes=DrawCommand::MapLabel+1;
+std::array<std::array<LONGLONG,CommandTypes>,OverlayCount> commandTicks{};
+std::array<std::array<long long,CommandTypes>,OverlayCount> commandCalls{};
+bool commandTiming=false;
+struct RepaintStats { long long full=0, partial=0; double pixels=0, area=0; std::array<long long,CommandTypes> changed{}; };
+std::array<RepaintStats,OverlayCount> repaintStats{};
+// The screen copy in its steps, with the area BeginPaint hands over.
+struct CopyStats { LONGLONG begin=0, blit=0, end=0; long long calls=0; double pixels=0, region=0; };
+std::array<CopyStats,OverlayCount> copyStats{};
+// Track map markers: finding the cached bitmap, drawing a new one, blending it.
+struct MarkerStats { LONGLONG lookup=0, create=0, blend=0; long long calls=0, created=0, compared=0, direct=0; double pixels=0; } markerStats;
+LONGLONG DiagnosticTicks() { LARGE_INTEGER now{}; QueryPerformanceCounter(&now); return now.QuadPart; }
+#endif
 // Describes an overlay in physical pixels. Comparing it with the previous scene yields the exact changed areas.
 #include "TrackMap.inc"
 void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCommand>& out) {
@@ -1908,6 +1923,10 @@ void PaintScene(Overlay& o,HRGN dirty) {
     int font=-1; bool numbered=false;
     for(const auto& c:o.scene) {
         if(dirty && !RectInRegion(dirty,&c.r)) continue;
+#ifdef RACEMATE_DIAGNOSTICS
+        LARGE_INTEGER commandStart{}; if(commandTiming) { GdiFlush(); QueryPerformanceCounter(&commandStart); }
+        struct CommandTimer { const Overlay& o; const DrawCommand& c; LARGE_INTEGER start; ~CommandTimer() { if(!commandTiming) return; GdiFlush(); LARGE_INTEGER now{}; QueryPerformanceCounter(&now); commandTicks[o.kind][c.type]+=now.QuadPart-start.QuadPart; ++commandCalls[o.kind][c.type]; } } commandTimer{o,c,commandStart};
+#endif
         switch(c.type) {
         case DrawCommand::Fill:
             if(o.pixels && (c.color==TrackMapTransparentKey || c.color==TrackMapMoveKey)) {
@@ -2063,6 +2082,8 @@ void RefreshOverlay(Overlay& o) {
         // The old and new areas of what changed. Many small areas, such as cars moving on the track map,
         // cost more to combine and to clip against than repainting the whole scene once.
         // Past the limit, one rectangle around everything that changed: unchanged header and footer stay.
+        // Measured on the track map: only the cars' own places as the copied region (ExtCreateRegion) quartered
+        // the area copied, but building it and the clipped copy cost more than the larger copy saved.
         constexpr size_t MaxChanges=24; size_t changed[MaxChanges]; size_t count=0; bool many=false; RECT bounds{};
         for(size_t i=0;i<app.sceneBuffer.size();++i) if(!(app.sceneBuffer[i]==o.scene[i])) {
             UnionRect(&bounds,&bounds,&app.sceneBuffer[i].r); UnionRect(&bounds,&bounds,&o.scene[i].r);
@@ -2079,9 +2100,22 @@ void RefreshOverlay(Overlay& o) {
             if(!dirty) dirty=part; else { CombineRgn(dirty,dirty,part,RGN_OR); DeleteObject(part); }
         }
     }
+#ifdef RACEMATE_DIAGNOSTICS
+    if(commandTiming) {
+        // Repaints whole or in part, the area painted, and which command types changed.
+        auto& s=repaintStats[o.kind]; ++(full?s.full:s.partial);
+        RECT box{0,0,client.right,client.bottom}; if(dirty) GetRgnBox(dirty,&box);
+        s.pixels+=static_cast<double>(box.right-box.left)*(box.bottom-box.top); s.area+=static_cast<double>(client.right)*client.bottom;
+        if(!full) for(size_t i=0;i<app.sceneBuffer.size();++i) if(!(app.sceneBuffer[i]==o.scene[i])) ++s.changed[app.sceneBuffer[i].type];
+    }
+#endif
     std::swap(o.scene,app.sceneBuffer);
     { ProfileScope p(true,[&]{ return ProfileName(o,"  drawing"); }); PaintScene(o,dirty); }
     if(o.layeredAlpha) { PresentLayered(o); if(dirty) DeleteObject(dirty); return; }
+#ifdef RACEMATE_DIAGNOSTICS
+    // RACEMATE_FULL_COPY=1: every refresh copies the whole window, to separate the copy's fixed cost from its area.
+    if(dirty && GetEnvironmentVariableW(L"RACEMATE_FULL_COPY",nullptr,0)) { DeleteObject(dirty); dirty=nullptr; }
+#endif
     if(dirty) { InvalidateRgn(o.window,dirty,FALSE); DeleteObject(dirty); }
     else InvalidateRect(o.window,nullptr,FALSE);
 }
@@ -2364,6 +2398,29 @@ LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     case WM_PAINT: {
         if(!o->dc) RefreshOverlay(*o);
         ProfileScope profile(true,[&]{ return ProfileName(*o,"screen copy (WM_PAINT)"); });
+#ifdef RACEMATE_DIAGNOSTICS
+        if(commandTiming) {
+            auto& s=copyStats[o->kind];
+            // The update region's own area, which may be far less than its bounding rectangle.
+            if(HRGN update=CreateRectRgn(0,0,0,0)) {
+                if(GetUpdateRgn(w,update,FALSE)>NULLREGION) {
+                    std::vector<BYTE> data(GetRegionData(update,0,nullptr));
+                    if(!data.empty() && GetRegionData(update,static_cast<DWORD>(data.size()),reinterpret_cast<RGNDATA*>(data.data()))) {
+                        const auto* header=reinterpret_cast<const RGNDATA*>(data.data()); const auto* rects=reinterpret_cast<const RECT*>(header->Buffer);
+                        for(DWORD i=0;i<header->rdh.nCount;++i) s.region+=static_cast<double>(rects[i].right-rects[i].left)*(rects[i].bottom-rects[i].top);
+                    }
+                }
+                DeleteObject(update);
+            }
+            const LONGLONG t0=DiagnosticTicks();
+            PAINTSTRUCT p{}; HDC dc=BeginPaint(w,&p); const RECT& r=p.rcPaint; const LONGLONG t1=DiagnosticTicks();
+            if(o->dc) BitBlt(dc,r.left,r.top,r.right-r.left,r.bottom-r.top,o->dc,r.left,r.top,SRCCOPY);
+            GdiFlush(); const LONGLONG t2=DiagnosticTicks();
+            EndPaint(w,&p); const LONGLONG t3=DiagnosticTicks();
+            s.begin+=t1-t0; s.blit+=t2-t1; s.end+=t3-t2; ++s.calls; s.pixels+=static_cast<double>(r.right-r.left)*(r.bottom-r.top);
+            return 0;
+        }
+#endif
         PAINTSTRUCT p{}; HDC dc=BeginPaint(w,&p); const RECT& r=p.rcPaint;
         if(o->dc) BitBlt(dc,r.left,r.top,r.right-r.left,r.bottom-r.top,o->dc,r.left,r.top,SRCCOPY);
         EndPaint(w,&p); return 0;

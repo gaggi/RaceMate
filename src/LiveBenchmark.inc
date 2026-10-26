@@ -54,6 +54,7 @@ int RunLiveBenchmark() {
     const bool connected=app.frame.connected;
     for(auto& log:liveLog) { log.at.clear(); log.age.clear(); }
     for(auto& e:profiler.entries) { e.ticks=0; e.calls=0; }
+    for(auto& k:commandTicks) k.fill(0); for(auto& k:commandCalls) k.fill(0); repaintStats={}; copyStats={}; markerStats={}; commandTiming=GetEnvironmentVariableW(L"RACEMATE_COMMAND_TIMING",nullptr,0)!=0;
     const ULONG64 processBefore=ProcessCycles(), threadBefore=MainThreadCycles();
     const unsigned long long ticksBefore=app.ticks, framesBefore=app.framesProcessed;
     const double startTime=QpcSeconds(); liveLogging=true;
@@ -89,6 +90,32 @@ int RunLiveBenchmark() {
     report<<"\nMain thread, wall time per part:\n    ms/s     us/call   calls/s  part\n";
     for(const auto& e:profiler.entries) {
         std::snprintf(line,sizeof(line),"%8.3f  %10.1f  %8.1f  %s\n",e.ticks*1000.0/frequency.QuadPart/seconds,e.calls?e.ticks*1e6/frequency.QuadPart/e.calls:0,e.calls/seconds,e.name.c_str()); report<<line;
+    }
+    if(commandTiming) {
+        static constexpr const char* types[]={"Fill","Text","DottedLine","WindRing","Outline","RoundFill","Ring","Hatch","Sparkline","Logo","Map","MapCar","MapLabel"};
+        report<<"\nDrawing per command type (GDI flushed per command), "<<(GetEnvironmentVariableW(L"RACEMATE_DDB",nullptr,0)?"device bitmaps":"DIBs")<<":\n    ms/s     us/call   calls/s  overlay / type\n";
+        for(const auto& o:app.overlays) {
+            if(o.number!=1 || !o.place.enabled) continue;
+            char name[32]; WideCharToMultiByte(CP_UTF8,0,Titles[o.kind],-1,name,32,nullptr,nullptr);
+            const auto& s=repaintStats[o.kind];
+            std::snprintf(line,sizeof(line),"  %s: %lld full, %lld partial repaints; painted %.0f %% of the area\n",name,s.full,s.partial,s.area>0?100*s.pixels/s.area:0.0); report<<line;
+            for(int t=0;t<CommandTypes;++t) if(commandCalls[o.kind][t] || s.changed[t]) {
+                std::snprintf(line,sizeof(line),"%8.3f  %10.1f  %8.1f  %s / %s (changed %.1f /s)\n",commandTicks[o.kind][t]*1000.0/frequency.QuadPart/seconds,
+                    commandCalls[o.kind][t]?commandTicks[o.kind][t]*1e6/frequency.QuadPart/commandCalls[o.kind][t]:0,commandCalls[o.kind][t]/seconds,name,types[t],s.changed[t]/seconds); report<<line;
+            }
+        }
+        const double us=1e6/frequency.QuadPart;
+        report<<"\nScreen copy (WM_PAINT) in steps, GDI flushed after the copy"<<(GetEnvironmentVariableW(L"RACEMATE_FULL_COPY",nullptr,0)?", whole window every time":"")<<":\n  overlay           copies/s  kpx/copy (box, region)   BeginPaint us  BitBlt us  EndPaint us  total us\n";
+        for(const auto& o:app.overlays) {
+            const auto& s=copyStats[o.kind]; if(o.number!=1 || !s.calls) continue;
+            char name[32]; WideCharToMultiByte(CP_UTF8,0,Titles[o.kind],-1,name,32,nullptr,nullptr);
+            std::snprintf(line,sizeof(line),"  %-16s %8.1f  %8.1f %8.1f  %17.1f  %9.1f  %11.1f  %8.1f\n",name,s.calls/seconds,s.pixels/s.calls/1000,s.region/s.calls/1000,s.begin*us/s.calls,s.blit*us/s.calls,s.end*us/s.calls,(s.begin+s.blit+s.end)*us/s.calls); report<<line;
+        }
+        if(const auto& m=markerStats; m.calls) {
+            std::snprintf(line,sizeof(line),"\nTrack map markers: %.1f /s, %.0f px each, %.0f %% blended straight into the pixels, %.1f cached markers compared per lookup, %lld drawn new\n  lookup %.2f us, blend %.2f us per marker; drawing new ones %.1f us each (%.3f ms/s)\n",
+                m.calls/seconds,m.pixels/m.calls,100.0*m.direct/m.calls,static_cast<double>(m.compared)/m.calls,m.created,m.lookup*us/m.calls,m.blend*us/m.calls,m.created?m.create*us/m.created:0.0,m.create*us/1000/seconds); report<<line;
+        }
+        commandTiming=false;
     }
     app.refreshHook=nullptr; profiler.on=false;
     WaitForSingleObject(process.hProcess,15000); TerminateProcess(process.hProcess,0);
