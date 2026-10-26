@@ -1939,10 +1939,16 @@ bool EnsureBuffer(Overlay& o,int width,int height,int dpi) {
     o.Free();
     HDC screen=GetDC(o.window);
     o.dc=CreateCompatibleDC(screen);
-    if(o.kind==TrackMapKind) {
-        // A DIB the cars can be written into; other overlays keep the faster device bitmap for ClearType text.
+    // A DIB for every overlay: GDI+ antialiasing on a device bitmap takes about twice as long, GDI text the same.
+    // Only the track map writes its cars straight into the pixels.
+    bool dib=true;
+#ifdef RACEMATE_DIAGNOSTICS
+    // RACEMATE_DDB=1: the other overlays draw into a device bitmap again, for comparison.
+    if(o.kind!=TrackMapKind && GetEnvironmentVariableW(L"RACEMATE_DDB",nullptr,0)) dib=false;
+#endif
+    if(dib) {
         BITMAPINFO info{}; info.bmiHeader={sizeof(BITMAPINFOHEADER),width,-height,1,32,BI_RGB}; void* bits=nullptr;
-        o.bitmap=CreateDIBSection(screen,&info,DIB_RGB_COLORS,&bits,nullptr,0); o.pixels=static_cast<std::uint32_t*>(bits);
+        o.bitmap=CreateDIBSection(screen,&info,DIB_RGB_COLORS,&bits,nullptr,0); o.pixels=o.kind==TrackMapKind?static_cast<std::uint32_t*>(bits):nullptr;
     }
     if(!o.bitmap) { o.bitmap=CreateCompatibleBitmap(screen,width,height); o.pixels=nullptr; }
     o.original=SelectObject(o.dc,o.bitmap);
