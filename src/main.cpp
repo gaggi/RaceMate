@@ -118,14 +118,14 @@ constexpr int FuelBasis=static_cast<int>(FuelMetric::Average10);
 // Weather modules, top to bottom; the last two switch trend arrows and the wind relative to the car.
 enum WeatherModule {
     ConditionModule, RainModule, TemperatureModule, TemperatureHistoryModule, WindModule, DetailsModule, UsageModule,
-    TrendArrows, WindRelative, WindRose, WindText
+    TrendArrows, WindRelative, WindRose, WindText, TemperatureHumidity, HistoryAir, HistoryHumidity
 };
-constexpr int WeatherModuleCount=WindText+1, WeatherPanelCount=UsageModule+1;
+constexpr int WeatherModuleCount=HistoryHumidity+1, WeatherPanelCount=UsageModule+1;
 constexpr ModuleInfo WeatherModules[]={
     {L"ShowTrackWetness",L"Track condition",L"iRacing's seven levels from dry to extremely wet",true},
     {L"ShowPrecipitation",L"Precipitation",L"Rain at the start/finish line",true},
     {L"ShowTemperatures",L"Temperatures",L"Track and air",true},
-    {L"ShowTemperatureHistory",L"Track temperature history",L"The last 20 minutes",true},
+    {L"ShowTemperatureHistory",L"Temperature history",L"The last 20 minutes",true},
     {L"ShowWind",L"Wind",L"Speed and compass direction around the wind ring",true},
     {L"ShowDetails",L"Details",L"Humidity, sky and fog",false},
     {L"ShowTrackUsage",L"Track usage",L"How much rubber is on the track",false},
@@ -133,7 +133,11 @@ constexpr ModuleInfo WeatherModules[]={
     {L"ShowWindDirection",L"Wind relative to the car",L"Arrow on the ring and crosswind text, for the car you drive or watch",true},
     // Parts of the wind module, switched in its expanded row.
     {L"ShowWindRose",L"Wind rose",L"The ring with the speed inside",true},
-    {L"ShowWindText",L"Wind text",L"Speed, compass direction and crosswind",true}};
+    {L"ShowWindText",L"Wind text",L"Speed, compass direction and crosswind",true},
+    // Switched in the expanded Temperatures and Temperature history rows.
+    {L"ShowHumidity",L"Humidity",L"Beside track and air",false},
+    {L"ShowAirTemperatureHistory",L"Air temperature",L"A second line in the history",true},
+    {L"ShowHumidityHistory",L"Humidity",L"A dashed line on its own scale",false}};
 static_assert(std::size(WeatherModules)==WeatherModuleCount);
 // Modules in their default order; the page moves them, the rest are display options.
 const std::vector<int> FuelOrder{TankModule,FiguresModule,LeaderDistanceModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,WindowCard,TimelineModule,PitExitModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow};
@@ -150,7 +154,7 @@ enum FontId : unsigned char { Regular, Bold, Large, Small, Hero, SmallBold, Font
 struct DrawCommand {
     enum Type : unsigned char { Fill, Text, DottedLine, WindRing, Outline, RoundFill, Ring, Hatch, Sparkline, Logo, Map, MapCar, MapLabel };
     Type type=Fill; FontId font=Regular; UINT align=DT_LEFT; RECT r{}; COLORREF color=0;
-    std::array<float,5> shape{}; // Wind ring: center x/y, radius, scale, bearing (negative without direction). Outline: corner radius, line width (1 when 0), dashed when 1. RoundFill: corner radius. Ring: stroke width. Hatch: background color. Sparkline: stroke width; its text holds the points, 1 + 0..1000 from bottom to top. Logo: atlas cell.
+    std::array<float,5> shape{}; // Wind ring: center x/y, radius, scale, bearing (negative without direction). Outline: corner radius, line width (1 when 0), dashed when 1. RoundFill: corner radius. Ring: stroke width. Hatch: background color. Sparkline: stroke width, dashed when 1; its text holds the points, 1 + 0..1000 from bottom to top. Logo: atlas cell.
     std::wstring text;
     bool operator==(const DrawCommand& o) const {
         return type==o.type && font==o.font && align==o.align && r.left==o.r.left && r.top==o.r.top && r.right==o.r.right && r.bottom==o.r.bottom
@@ -172,6 +176,8 @@ struct TableSettings {
     // classPositions: the Position column counts within each car's class instead of overall (the Standings follow their class view).
     StandingsOptions standings; bool interval=false, laps=false, gained=false, progress=true, pitExit=false; // Standings.
     int pitExitAhead=2, pitExitBehind=2; // Cars shown around the pit exit row.
+    // The class header in separate classes: cars, SOF, average iRating and the class's best lap.
+    std::array<bool,4> classHeader{true,true,true,false};
 };
 // Every overlay uses the same selectable header/footer metrics.
 struct Bands { bool header=false; Slots headerMetrics=DefaultHeader; FooterSettings footer; };
@@ -389,7 +395,7 @@ int StintCellCount() {
     return std::isfinite(average) && average>0 && std::isfinite(capacity) && capacity>0?static_cast<int>(std::clamp(std::ceil(capacity/average),1.0,10000.0)):0;
 }
 // Cells in the weather strip: condition, rain, both temperatures and wind (two cells wide).
-int WeatherStripCount(const Overlay& o) { const auto& d=o.weather.display; return d[ConditionModule]+d[RainModule]+2*d[TemperatureModule]+2*d[WindModule]; }
+int WeatherStripCount(const Overlay& o) { const auto& d=o.weather.display; return d[ConditionModule]+d[RainModule]+2*d[TemperatureModule]+(d[TemperatureModule] && d[TemperatureHumidity])+2*d[WindModule]; }
 constexpr int WeatherPanelWidth=360, WeatherStripCell=112, WindRoseWidth=124;
 // Only the wind rose: the overlay shrinks to the ring, small enough to sit in the middle of the screen.
 bool WindRoseOnly(const Overlay& o) {
@@ -562,6 +568,8 @@ void ReadTable(const wchar_t* section,int kind,TableSettings& t) {
         standings.leaders=std::clamp(ReadInt(section,L"Leaders",3),0,MaxCars);
         standings.ahead=std::clamp(ReadInt(section,L"Ahead",2),0,MaxCars);
         standings.behind=std::clamp(ReadInt(section,L"Behind",2),0,MaxCars);
+        standings.otherClasses=std::clamp(ReadInt(section,L"OtherClasses",3),0,MaxCars);
+        t.classHeader={ReadBool(section,L"ClassHeaderCars",true),ReadBool(section,L"ClassHeaderSof",true),ReadBool(section,L"ClassHeaderAverageIRating",true),ReadBool(section,L"ClassHeaderBestLap",false)};
         t.progress=ReadBool(section,L"ShowProgress",true); t.pitExit=ReadBool(section,L"ShowPitExitRow",false);
         t.pitExitAhead=std::clamp(ReadInt(section,L"PitExitAhead",2),0,MaxCars); t.pitExitBehind=std::clamp(ReadInt(section,L"PitExitBehind",2),0,MaxCars);
         t.laps=ReadBool(section,L"ShowLaps",false);
@@ -702,6 +710,9 @@ void Save() {
                 number(section,L"SeparateClasses",standings.separateClasses); number(section,L"OwnClass",standings.ownClass);
                 number(section,L"LiveGaps",standings.liveGaps); number(section,L"FallbackByIRating",standings.fallbackByRating);
                 number(section,L"Leaders",standings.leaders); number(section,L"Ahead",standings.ahead); number(section,L"Behind",standings.behind);
+                number(section,L"OtherClasses",standings.otherClasses);
+                number(section,L"ClassHeaderCars",t.classHeader[0]); number(section,L"ClassHeaderSof",t.classHeader[1]);
+                number(section,L"ClassHeaderAverageIRating",t.classHeader[2]); number(section,L"ClassHeaderBestLap",t.classHeader[3]);
                 number(section,L"ShowProgress",t.progress); number(section,L"ShowPitExitRow",t.pitExit);
                 number(section,L"PitExitAhead",t.pitExitAhead); number(section,L"PitExitBehind",t.pitExitBehind); number(section,L"ShowLaps",t.laps); number(section,L"ShowPositionsGained",t.gained);
             }
@@ -869,6 +880,7 @@ constexpr COLORREF Panel=RGB(12,15,19), Band=RGB(22,25,28), Line=RGB(27,29,33), 
 constexpr COLORREF White=RGB(232,237,242), Muted=RGB(154,166,178), Label=RGB(135,148,161), Accent=RGB(77,163,255);
 constexpr COLORREF Yellow=RGB(232,184,58), Orange=RGB(255,176,103), Red=RGB(255,122,107), Green=RGB(61,220,132), Purple=RGB(192,132,252), Wet=RGB(111,182,255);
 constexpr COLORREF LapsAhead=RGB(255,138,125), LapsBehind=RGB(127,191,255);
+constexpr COLORREF AirLine=RGB(255,176,103), HumidityLine=RGB(118,214,186); // Temperature history beside the track's Wet blue.
 constexpr COLORREF Value=RGB(195,204,213), Frame=RGB(46,49,53), IconBack=RGB(36,38,42), NeutralBadge=RGB(37,40,44), Brand=RGB(170,181,192);
 constexpr COLORREF BarBack=RGB(29,31,35), HatchFore=RGB(131,96,66), HatchBack=RGB(52,45,42), HatchGrey=RGB(78,82,88), Missing=RGB(158,111,69);
 constexpr COLORREF ChartBar=RGB(80,82,85), CautionBar=RGB(122,99,38), PitBar=RGB(40,43,47), WindowOpen=RGB(46,160,92), LapAhead=RGB(34,37,40), LapDone=RGB(52,55,60);
@@ -1261,7 +1273,9 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         if(!o.dc || text.empty()) return 0;
         for(const auto& [cachedFont,cachedText,width]:o.widths) if(cachedFont==font && cachedText==text) return width;
         SIZE size{}; SelectObject(o.dc,o.fonts[font]); GetTextExtentPoint32W(o.dc,text.c_str(),static_cast<int>(text.size()),&size);
-        if(o.widths.size()>=32) o.widths.erase(o.widths.begin());
+        // Room for a number or name per car on the map and in the tables: with fewer, a full field pushes out the
+        // widths of the previous refresh and every one is measured again.
+        if(o.widths.size()>=(o.kind==TrackMapKind || IsTable(o.kind)?MaxCars+32:32)) o.widths.erase(o.widths.begin());
         o.widths.push_back({font,text,static_cast<int>(size.cx)}); return static_cast<int>(size.cx);
     };
     // Header and footer metrics: the first on the left, the others right-aligned in order; labels muted, values bright.
@@ -1383,11 +1397,27 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         }
         else for(const auto& group:groups) {
             if(o.table.standings.separateClasses) {
-                fill({0,px(y),width,px(y+25)},Ink::ClassBand); fill(rect(0,y,3,25),ColorOf(group.color));
-                int cars=0; const int sof=ClassSof(group.classId,cars);
-                auto name=Wide(group.name); const int nameWidth=measure(name,Bold);
-                label(std::move(name),{px(12),px(y),std::min(px(12)+nameWidth+1,width-px(12)),px(y+25)},ColorOf(group.color),Bold);
-                label(std::to_wstring(cars)+(cars==1?L" car":L" cars")+(sof>0?L"  \u00B7  SOF "+std::to_wstring(sof):L""),{px(12)+nameWidth+px(10),px(y),width-px(12),px(y+25)},Ink::Label,Small);
+                // A band in the darkened class color; the class name on the full color, then the chosen values.
+                const COLORREF color=ColorOf(group.color);
+                auto mix=[](COLORREF a,COLORREF b,double t){ return RGB(std::lround(GetRValue(a)*(1-t)+GetRValue(b)*t),std::lround(GetGValue(a)*(1-t)+GetGValue(b)*t),std::lround(GetBValue(a)*(1-t)+GetBValue(b)*t)); };
+                fill({0,px(y),width,px(y+25)},mix(Ink::Panel,color,.18));
+                auto name=Wide(group.name); const int tagWidth=std::min(measure(name,Bold)+px(24),width/2);
+                fill({0,px(y),tagWidth,px(y+25)},color);
+                const bool light=299*GetRValue(color)+587*GetGValue(color)+114*GetBValue(color)>140000;
+                label(std::move(name),{px(12),px(y),tagWidth-px(6),px(y+25)},light?Ink::Panel:RGB(255,255,255),Bold);
+                int cars=0; const int sof=ClassSof(group.classId,cars), average=ClassAverageRating(group.classId);
+                std::vector<std::pair<std::wstring,std::wstring>> values; // Label and value, either may be empty.
+                const auto& show=o.table.classHeader;
+                if(show[0]) values.push_back({L"",std::to_wstring(cars)+(cars==1?L" car":L" cars")});
+                if(show[1] && sof>0) values.push_back({L"SOF ",std::to_wstring(sof)});
+                if(show[2] && average>0) values.push_back({L"\u00D8 iR ",std::to_wstring(average)});
+                if(show[3] && group.best>0) values.push_back({L"Best ",Lap(group.best)});
+                int x=tagWidth+px(12);
+                for(size_t i=0;i<values.size() && x<width-px(12);++i) {
+                    if(i) { const std::wstring dot=L"  \u00B7  "; const int w=measure(dot,Small); label(dot,{x,px(y),std::min(x+w+1,width-px(12)),px(y+25)},Ink::Label,Small); x+=w; }
+                    if(!values[i].first.empty()) { const int w=measure(values[i].first,Small); label(values[i].first,{x,px(y),std::min(x+w+1,width-px(12)),px(y+25)},Ink::Label,Small); x+=w; }
+                    const int w=measure(values[i].second,SmallBold); label(values[i].second,{x,px(y),std::min(x+w+1,width-px(12)),px(y+25)},Ink::White,SmallBold); x+=w;
+                }
                 y+=25;
             }
             int previous=0;
@@ -1640,6 +1670,8 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         const Trend wetTrend=!trends || !std::isfinite(wetChange)?Trend{}:(wetChange>=1?Trend{L"↗ getting wetter",wetInk}:(wetChange<=-1?Trend{L"↘ drying",Ink::Value}:Trend{L"→ steady",Ink::Muted}));
         const Trend rainTrend=trend(history.Change(&WeatherHistory::Sample::rain)*100,2,0,L" %",wetInk,Ink::Muted);
         const Trend trackTrend=trend(history.Change(&WeatherHistory::Sample::track),.3,1,L"",Ink::Orange,Ink::Wet), airTrend=trend(history.Change(&WeatherHistory::Sample::air),.3,1,L"",Ink::Orange,Ink::Wet);
+        const Trend humidityTrend=trend(history.Change(&WeatherHistory::Sample::humidity)*100,2,0,L" %",wetInk,Ink::Muted);
+        auto arrowOnly=[](const Trend& t){ return t.first.empty()?Trend{}:Trend{t.first.substr(0,1),t.second}; };
         // Wind: compass direction it comes from, and where it hits the car.
         static constexpr const wchar_t* Compass[]={L"N",L"NE",L"E",L"SE",L"S",L"SW",L"W",L"NW"};
         static constexpr const wchar_t* Sides[]={L"Headwind",L"From front right",L"Crosswind from the right",L"From rear right",L"Tailwind",L"From rear left",L"Crosswind from the left",L"From front left"};
@@ -1662,6 +1694,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             case TemperatureModule:
                 item(L"TRACK °C",degrees(f.trackTemperature),white,trackTrend.first.empty()?Trend{}:Trend{trackTrend.first.substr(0,1),trackTrend.second});
                 item(L"AIR °C",degrees(f.airTemperature),white,airTrend.first.empty()?Trend{}:Trend{airTrend.first.substr(0,1),airTrend.second});
+                if(on[TemperatureHumidity]) item(L"HUMIDITY",percent(f.humidity),white,arrowOnly(humidityTrend));
                 break;
             case WindModule: item(L"WIND",speed+L" km/h"+(side.empty()?(from.empty()?L"":L" from "+from):L" · "+side),Ink::Yellow,{},2); break;
             default: break;
@@ -1696,24 +1729,73 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                     y+=36;
                 }
                 if(id==TemperatureModule) {
-                    fill(rect(0,y,W,1),Ink::Line); fill(rect(W/2,y,1,62),Ink::Line);
-                    label(L"TRACK",rect(16,y+9,W/2-32,16),Ink::Label,Small); valueWithTrend(16,y+26,28,degrees(f.trackTemperature),Hero,white,trackTrend,W/2-8);
-                    label(L"AIR",rect(W/2+16,y+9,W/2-32,16),Ink::Label,Small); valueWithTrend(W/2+16,y+26,28,degrees(f.airTemperature),Hero,white,airTrend,W-8);
+                    fill(rect(0,y,W,1),Ink::Line);
+                    // Two halves, or thirds with humidity; in thirds the trends keep only their arrows.
+                    const bool humidity=on[TemperatureHumidity]; const int cells=humidity?3:2, cell=W/cells;
+                    const std::pair<const wchar_t*,std::pair<std::wstring,Trend>> values[]={{L"TRACK",{degrees(f.trackTemperature),trackTrend}},{L"AIR",{degrees(f.airTemperature),airTrend}},{L"HUMIDITY",{percent(f.humidity),humidityTrend}}};
+                    for(int i=0;i<cells;++i) {
+                        const int x=i*cell; if(i) fill(rect(x,y,1,62),Ink::Line);
+                        label(values[i].first,rect(x+16,y+9,cell-32,16),Ink::Label,Small);
+                        valueWithTrend(x+16,y+26,28,values[i].second.first,Hero,white,humidity?arrowOnly(values[i].second.second):values[i].second.second,x+cell-8);
+                    }
                     y+=62;
                 }
                 if(id==TemperatureHistoryModule) {
                     fill(rect(0,y,W,1),Ink::Line);
                     const int minutes=history.Count()>1?static_cast<int>(std::lround((history.At(history.Count()-1).time-history.At(0).time)/60)):0;
-                    label(L"TRACK TEMP  ·  LAST "+std::to_wstring(std::clamp(minutes,1,20))+L" MIN",rect(16,y+8,W-32,16),Ink::Label,Small);
-                    double low=1e9,high=-1e9; int count=0;
-                    for(int i=0;i<history.Count();++i) if(const double t=history.At(i).track; std::isfinite(t)) { low=std::min(low,t); high=std::max(high,t); ++count; }
-                    if(count<2) label(L"Collecting the first minutes …",rect(16,y+28,W-32,36),Ink::Muted,Regular,DT_CENTER);
+                    const bool air=on[HistoryAir], humid=on[HistoryHumidity];
+                    using Sample=WeatherHistory::Sample;
+                    struct Range { double low=1e9, high=-1e9; int count=0; };
+                    auto range=[&](double Sample::* value) { Range r; for(int i=0;i<history.Count();++i) if(const double v=history.At(i).*value; std::isfinite(v)) { r.low=std::min(r.low,v); r.high=std::max(r.high,v); ++r.count; } return r; };
+                    const Range track=range(&Sample::track), airRange=air?range(&Sample::air):Range{}, humidRange=humid?range(&Sample::humidity):Range{};
+                    // The title is the legend, each name in its line's color.
+                    std::vector<std::pair<const wchar_t*,COLORREF>> legend{{L"TRACK",Ink::Wet}};
+                    if(air) legend.push_back({L"AIR",Ink::AirLine});
+                    if(humid) legend.push_back({L"HUMIDITY",Ink::HumidityLine});
+                    int lx=px(16);
+                    for(size_t i=0;i<legend.size();++i) {
+                        if(i) { const std::wstring dot=L"  ·  "; const int w=measure(dot,Small); label(dot,{lx,px(y+8),lx+w+1,px(y+24)},Ink::Label,Small); lx+=w; }
+                        const std::wstring name=legend[i].first; const int w=measure(name,Small); label(name,{lx,px(y+8),std::min(lx+w+1,px(W-16)),px(y+24)},legend[i].second,Small); lx+=w;
+                    }
+                    label(L"LAST "+std::to_wstring(std::clamp(minutes,1,20))+L" MIN",rect(W/2,y+8,W/2-16,16),Ink::Label,Small,DT_RIGHT);
+                    if(track.count<2) label(L"Collecting the first minutes …",rect(16,y+28,W-32,36),Ink::Muted,Regular,DT_CENTER);
                     else {
-                        // At least 1 °C of height, so sensor noise stays flat.
-                        const double span=std::max(1.0,high-low), base=(low+high)/2-span/2; std::wstring points;
-                        for(int i=0;i<history.Count();++i) if(const double t=history.At(i).track; std::isfinite(t)) points+=static_cast<wchar_t>(1+std::lround(1000*(t-base)/span));
-                        out.push_back({DrawCommand::Sparkline,Regular,0,{px(18),px(y+30)-titleOffset,px(W-64),px(y+64)-titleOffset},Ink::Wet,{std::max(1.f,2.f*px(100)/100.f)},std::move(points)});
-                        label(degrees(high),rect(W-60,y+24,44,16),Ink::Label,Small,DT_RIGHT); label(degrees(low),rect(W-60,y+54,44,16),Ink::Label,Small,DT_RIGHT);
+                        // Every line over the same samples, so the minutes line up; a missing value repeats its neighbour.
+                        // Returns where the line ends, 0 at the bottom to 1 at the top.
+                        constexpr int top=30, bottom=64;
+                        auto line=[&](double Sample::* value,double base,double span,double scale,COLORREF ink,bool dashed) {
+                            double last=std::numeric_limits<double>::quiet_NaN();
+                            for(int i=0;i<history.Count() && !std::isfinite(last);++i) last=history.At(i).*value;
+                            std::wstring points; long level=0;
+                            for(int i=0;i<history.Count();++i) {
+                                if(const double v=history.At(i).*value; std::isfinite(v)) last=v;
+                                level=std::clamp(std::lround(1000*(last*scale-base)/span),0L,1000L); points+=static_cast<wchar_t>(1+level);
+                            }
+                            out.push_back({DrawCommand::Sparkline,Regular,0,{px(18),px(y+top)-titleOffset,px(W-64),px(y+bottom)-titleOffset},ink,{std::max(1.f,2.f*px(100)/100.f),dashed?1.f:0.f},std::move(points)});
+                            return level/1000.0;
+                        };
+                        // At least 1 °C and 5 % of height, so sensor noise stays flat.
+                        auto scaled=[](const Range& r,double scale,double least) { const double span=std::max(least,(r.high-r.low)*scale); return std::pair{(r.low+r.high)*scale/2-span/2,span}; };
+                        if(airRange.count<2 && humidRange.count<2) {
+                            // One line: its highest and lowest value beside it.
+                            const auto [base,span]=scaled(track,1,1);
+                            line(&Sample::track,base,span,1,Ink::Wet,false);
+                            label(degrees(base+span),rect(W-60,y+24,44,16),Ink::Label,Small,DT_RIGHT); label(degrees(base),rect(W-60,y+54,44,16),Ink::Label,Small,DT_RIGHT);
+                        } else {
+                            // Several lines, each on its own scale so each shows its trend; the current values sit at the line ends.
+                            struct End { double at; std::wstring text; COLORREF ink; };
+                            std::vector<End> ends;
+                            if(humidRange.count>=2) { const auto [base,span]=scaled(humidRange,100,5); ends.push_back({line(&Sample::humidity,base,span,100,Ink::HumidityLine,true),percent(history.At(history.Count()-1).humidity),Ink::HumidityLine}); }
+                            if(airRange.count>=2) { const auto [base,span]=scaled(airRange,1,1); ends.push_back({line(&Sample::air,base,span,1,Ink::AirLine,false),degrees(history.At(history.Count()-1).air),Ink::AirLine}); }
+                            { const auto [base,span]=scaled(track,1,1); ends.push_back({line(&Sample::track,base,span,1,Ink::Wet,false),degrees(history.At(history.Count()-1).track),Ink::Wet}); }
+                            // Labels in line order from the top, at least a line of text apart and inside the chart.
+                            constexpr int textHeight=13; const int count=static_cast<int>(ends.size());
+                            std::sort(ends.begin(),ends.end(),[](const End& a,const End& b){ return a.at>b.at; });
+                            std::vector<int> centers(count);
+                            for(int i=0;i<count;++i) centers[i]=std::max(static_cast<int>(std::lround(y+bottom-(bottom-top)*ends[i].at)),i?centers[i-1]+textHeight:y+top-4);
+                            for(int i=count-1;i>=0;--i) centers[i]=std::min(centers[i],i<count-1?centers[i+1]-textHeight:y+bottom+4);
+                            for(int i=0;i<count;++i) label(ends[i].text,rect(W-60,centers[i]-8,44,16),ends[i].ink,Small,DT_RIGHT);
+                        }
                     }
                     y+=76;
                 }
@@ -1989,7 +2071,8 @@ void PaintScene(Overlay& o,HRGN dirty) {
             for(int i=0;i<count;++i) points[i]={c.r.left+w*i/(count-1),c.r.bottom-h*(c.text[i]-1)/1000.f};
             Gdiplus::Graphics graphics(dc); graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
             const Gdiplus::Color ink(255,GetRValue(c.color),GetGValue(c.color),GetBValue(c.color));
-            Gdiplus::Pen pen(ink,c.shape[0]); pen.SetLineJoin(Gdiplus::LineJoinRound); graphics.DrawLines(&pen,points.data(),count);
+            Gdiplus::Pen pen(ink,c.shape[0]); pen.SetLineJoin(Gdiplus::LineJoinRound); if(c.shape[1]>0) pen.SetDashStyle(Gdiplus::DashStyleDash);
+            graphics.DrawLines(&pen,points.data(),count);
             Gdiplus::SolidBrush dot(ink); const float r=c.shape[0]*1.5f; graphics.FillEllipse(&dot,points.back().X-r,points.back().Y-r,2*r,2*r); break;
         }
         case DrawCommand::Hatch: {
@@ -2283,6 +2366,7 @@ void PreviewWeather() {
     Frame sample=f; sample.replay=false; sample.connected=true;
     for(int i=0;i<WeatherHistory::Size;++i) {
         sample.time=f.time-1170+i*30; sample.trackTemperature=34.3-1.9*i/39; sample.precipitation=.25+.1*i/39; sample.trackWetness=i<24?3:4;
+        sample.airTemperature=21.9-.6*i/39; sample.humidity=.74+.08*i/39;
         app.weatherHistory.Update(app.session,sample);
     }
 }

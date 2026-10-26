@@ -109,7 +109,8 @@ void SortKnownProgress(std::vector<Row>& rows, bool onlyUnranked = false) {
     // Preserve the original ordering when progress is missing or exactly tied.
     // Missing telemetry must not displace known cars or synthesize an overtake.
     std::vector<size_t> slots; std::vector<Row> known;
-    for(size_t i=0;i<rows.size();++i) if((!onlyUnranked || rows[i].car.position<=0) && OnCircuit(rows[i].car) && (rows[i].car.completed>=0 || rows[i].car.lap>=0)) { slots.push_back(i); known.push_back(rows[i]); }
+    slots.reserve(rows.size()); known.reserve(rows.size());
+    for(size_t i=0;i<rows.size();++i) if((!onlyUnranked || rows[i].car.position<=0) && OnCircuit(rows[i].car) && (rows[i].car.completed>=0 || rows[i].car.lap>=0)) { slots.push_back(i); known.push_back(std::move(rows[i])); }
     std::stable_sort(known.begin(),known.end(),[](const Row& a,const Row& b){return Progress(a.car)>Progress(b.car);});
     for(size_t i=0;i<slots.size();++i) rows[slots[i]]=std::move(known[i]);
 }
@@ -451,7 +452,7 @@ void WeatherHistory::Update(const Session& s,const Frame& f) {
     if(!f.connected || View(f)==ViewMode::Replay) return;
     if(key_!=s.key || session_!=f.session || (count_ && f.time<At(count_-1).time)) { Reset(); key_=s.key; session_=f.session; }
     if(count_ && f.time-At(count_-1).time<30) return;
-    samples_[cursor_]={f.time,f.trackTemperature,f.airTemperature,f.precipitation,f.trackWetness>0?static_cast<double>(f.trackWetness):std::numeric_limits<double>::quiet_NaN()};
+    samples_[cursor_]={f.time,f.trackTemperature,f.airTemperature,f.precipitation,f.trackWetness>0?static_cast<double>(f.trackWetness):std::numeric_limits<double>::quiet_NaN(),f.humidity};
     cursor_=(cursor_+1)%Size; count_=std::min(Size,count_+1);
 }
 double WeatherHistory::Change(double Sample::* value) const {
@@ -467,6 +468,7 @@ double WeatherHistory::Change(double Sample::* value) const {
 int RelativeRowCount(int requested) { int count=std::clamp(requested,1,MaxCars-1); return count%2?count:count+1; }
 std::vector<Row> Relative(const Session& s, const Frame& f, int count, bool ownClass, bool hidePit) {
     std::vector<Row> rows;
+    rows.reserve(s.drivers.size());
     const Driver* me = Player(s,f);
     const int reference=ReferenceCar(f);
     if (!me || reference < 0 || reference >= MaxCars) return rows;
@@ -506,7 +508,7 @@ std::vector<Row> Relative(const Session& s, const Frame& f, int count, bool ownC
     // Select each side independently so a crowded side cannot displace the reference.
     const int half=RelativeRowCount(count)/2;
     auto distance=[&](const Row& row) { double value=row.car.pct-mine.pct; return value-std::floor(value+.5); };
-    std::vector<Row> ahead,behind; Row referenceRow; bool found=false;
+    std::vector<Row> ahead,behind; ahead.reserve(rows.size()); behind.reserve(rows.size()); Row referenceRow; bool found=false;
     for(auto& row:rows) {
         if(row.player) { referenceRow=std::move(row); found=true; }
         else if(distance(row)>0 || (distance(row)==0 && row.driver.index<reference)) ahead.push_back(std::move(row));
@@ -524,6 +526,7 @@ std::vector<Row> Relative(const Session& s, const Frame& f, int count, bool ownC
 }
 std::vector<Row> Standings(const Session& s, const Frame& f, int count, bool ownClass, bool fallbackByRating) {
     std::vector<Row> rows;
+    rows.reserve(s.drivers.size());
     count = std::max(1,count);
     const Driver* me = Player(s,f);
     for (const auto& d : s.drivers) {
@@ -600,8 +603,11 @@ std::vector<StandingsGroup> SelectStandings(const Session& s, const Frame& f, co
         }
         group->rows.push_back(row);
     }
+    const bool anyReference=std::any_of(field.begin(),field.end(),[](const auto& r){return r.player;});
     for(auto& group:groups) {
         auto& rows=group.rows;
+        group.cars=static_cast<int>(rows.size());
+        for(const auto& row:rows) if(row.car.best>0 && (group.best<0 || row.car.best<group.best)) group.best=row.car.best;
         for(size_t i=0;i<rows.size();++i) if(rows[i].car.classPosition<=0) rows[i].car.classPosition=static_cast<int>(i)+1;
         if(options.separateClasses && !rows.empty()) {
             const auto leader=rows.front();
@@ -626,13 +632,16 @@ std::vector<StandingsGroup> SelectStandings(const Session& s, const Frame& f, co
         }
         const auto reference=std::find_if(rows.begin(),rows.end(),[](const auto& r){return r.player;});
         const int center=reference==rows.end()?-1:static_cast<int>(reference-rows.begin());
+        // A class without the reference car has nobody to be ahead of or behind: it shows its own number of leaders.
+        const int leaders=std::clamp(options.separateClasses && anyReference && center<0?options.otherClasses:options.leaders,0,MaxCars);
         std::vector<Row> selected;
         for(int i=0;i<static_cast<int>(rows.size());++i)
-            if(i<std::clamp(options.leaders,0,MaxCars) || (center>=0 && i>=center-std::clamp(options.ahead,0,MaxCars) && i<=center+std::clamp(options.behind,0,MaxCars)))
+            if(i<leaders || (center>=0 && i>=center-std::clamp(options.ahead,0,MaxCars) && i<=center+std::clamp(options.behind,0,MaxCars)))
                 selected.push_back(rows[i]);
         rows=std::move(selected);
     }
-    std::erase_if(groups,[](const auto& g){return g.rows.empty();});
+    // With no rows chosen a class keeps its header, so the field stays complete.
+    std::erase_if(groups,[](const auto& g){return g.cars==0;});
     return groups;
 }
 bool PitLimiterVisibility::Update(const Session& s,const Frame& f) {

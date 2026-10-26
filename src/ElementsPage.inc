@@ -6,7 +6,7 @@ public:
     explicit ElementsPage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
     enum class Key { None, Layout, Rounded, Module, Band, Info, SetupChanges, PitStrip, Countdown };
-    static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210, CautionEditId=220, SlotEditId=230, HeaderRow=1000, FooterRow=1001;
+    static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210, HumidityEditId=212, HistoryPartEditId=213, CautionEditId=220, SlotEditId=230, HeaderRow=1000, FooterRow=1001;
 
     void OnCreate() override {
         list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont());
@@ -21,7 +21,7 @@ private:
     // Display options stay in place; wind rose and wind text are switched in the wind module's expanded row.
     // Caution marks are switched in the expanded "Last 10 laps" row.
     std::vector<int> Options() const { return Fuel()?std::vector<int>{}:std::vector<int>{TrendArrows,WindRelative}; }
-    bool Expandable(int id) const { return Fuel()?id==FiguresModule || id==HistoryModule:id==WindModule; }
+    bool Expandable(int id) const { return Fuel()?id==FiguresModule || id==HistoryModule:id==WindModule || id==TemperatureModule || id==TemperatureHistoryModule; }
     bool& Shown(int id) { return Fuel()?o_.fuel.display[id]:o_.weather.display[id]; }
     bool& Strip() { return Fuel()?o_.fuel.strip:o_.weather.strip; }
     std::wstring FiguresDetail() const {
@@ -77,6 +77,11 @@ private:
         auto module=[&](int id,bool movable) {
             RowList::Row row; row.title=Modules()[id].title; row.detail=Fuel() && id==FiguresModule?FiguresDetail():Modules()[id].detail;
             if(Fuel() && id==HistoryModule && o_.fuel.display[CautionMarks]) row.detail+=L"; caution laps marked";
+            if(!Fuel() && id==TemperatureModule) row.detail=o_.weather.display[TemperatureHumidity]?L"Track, air and humidity":L"Track and air";
+            if(!Fuel() && id==TemperatureHistoryModule) {
+                const auto& d=o_.weather.display;
+                row.detail=std::wstring(L"Track")+(d[HistoryAir] && d[HistoryHumidity]?L", air and humidity":(d[HistoryAir]?L" and air":(d[HistoryHumidity]?L" and humidity":L"")))+L" over the last 20 minutes";
+            }
             if(!Fuel() && id==WindModule) row.detail=o_.weather.display[WindRose] && o_.weather.display[WindText]?L"Wind rose and text":(o_.weather.display[WindRose]?L"Wind rose":(o_.weather.display[WindText]?L"Wind text":L"Nothing chosen"));
             row.toggle=Shown(id)?1:0; row.muted=!Shown(id) || (Strip() && !InStrip(o_.kind,id));
             if(Strip() && !InStrip(o_.kind,id)) row.pill=L"Panel only";
@@ -110,6 +115,8 @@ private:
         if(expanded_==HeaderRow || expanded_==FooterRow) BandEditors(editors_,o_,expanded_==FooterRow,SlotEditId);
         else if(Fuel() && expanded_==HistoryModule) editors_.Check(CautionEditId,FuelModules[CautionMarks].title,o_.fuel.display[CautionMarks],0,10,360);
         else if(Fuel()) for(int i=0;i<FuelMetricCount;++i) editors_.Check(FuelRowEditId+i,FuelFigures[i].title,o_.fuel.figures[i],(i%2)*260,4+(i/2)*28,250);
+        else if(expanded_==TemperatureModule) editors_.Check(HumidityEditId,L"Show humidity",o_.weather.display[TemperatureHumidity],0,10,360);
+        else if(expanded_==TemperatureHistoryModule) for(int i=0;i<2;++i) editors_.Check(HistoryPartEditId+i,i?L"Humidity line":L"Air temperature line",o_.weather.display[HistoryAir+i],i*200,10,190);
         else for(int i=0;i<2;++i) editors_.Check(WindPartEditId+i,WeatherModules[WindRose+i].title,o_.weather.display[WindRose+i],i*200,10,190);
         syncing_=false; editors_.Position();
     }
@@ -127,6 +134,10 @@ private:
         }
         if(id==CautionEditId) {
             if(!syncing_ && code==BN_CLICKED) { o_.fuel.display[CautionMarks]=editors_.Checked(id); Changed(); }
+            return true;
+        }
+        if(id==HumidityEditId || id==HistoryPartEditId || id==HistoryPartEditId+1) {
+            if(!syncing_ && code==BN_CLICKED) { o_.weather.display[id==HumidityEditId?TemperatureHumidity:HistoryAir+id-HistoryPartEditId]=editors_.Checked(id); Changed(); }
             return true;
         }
         if(id==WindPartEditId || id==WindPartEditId+1) {

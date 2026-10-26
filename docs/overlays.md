@@ -61,12 +61,14 @@ The Standings show the race order. In races, cars are ranked by their progress; 
 
 | Setting | What it does |
 | --- | --- |
-| Rows (Rows per class) | **Leaders**, **Ahead** and **Behind**, 0 to 128 each: how many cars from the top, and how many directly ahead of and behind the reference car, are listed. With separate classes the numbers apply to every class. A dotted line marks where positions are skipped, so a short table still shows the leaders and your surroundings. |
+| Rows in your class | **Leaders**, **Ahead** and **Behind**, 0 to 128 each: how many cars from the top of your class, and how many directly ahead of and behind the reference car, are listed. In the combined view the same numbers apply to the whole field. A dotted line marks where positions are skipped, so a short table still shows the leaders and your surroundings. |
+| Rows in other classes | With separate classes: how many cars every other class shows from its leader, at least; default 3. With 0 a class shows only its header, so you still see how many cars it has. |
 | Classes | **Separate classes**: one section per class with its own leader, positions counted within the class, and a header with the number of cars and the class strength of field (**SOF**). **Combined overall standings**: one list for the whole field with overall positions. |
 | Only my class | Shows only the class of your car, or of the car you watch. |
 | Live positions and gaps | Updates positions, gaps and intervals continuously from track position. Off: they change only when cars cross the start/finish line, as iRacing reports them. Live values are estimates. |
 | Show + before gaps and intervals | Off by default; both always count behind the leader or the car ahead. |
 | Drivers without a lap time | Ordered by car number (default) or by iRating, highest first. |
+| Class header | With separate classes, each class starts with a band in its darkened color, the class name on the full color. Expand to choose the values beside it: **Cars**, **SOF**, **Average iRating** (on by default) and **Class best lap** (off). SOF is iRacing's weighted strength of field, which counts strong drivers more; the average is the plain mean of the class's iRatings. |
 | Class colors | As in the Relative. |
 | Session progress | A thin bar under the header that fills by elapsed time or completed laps. |
 | Pit exit row | Off by default. In races, a faded copy of your row where you would rejoin if you pitted now. |
@@ -190,8 +192,8 @@ Weather shows current observations and locally collected history. Each module ca
 | --- | --- |
 | Track condition | Dry, Mostly Dry, Very Lightly Wet, Lightly Wet, Moderately Wet, Very Wet, Extremely Wet |
 | Precipitation | Current reported rain at start/finish |
-| Temperatures | Track and air temperature |
-| Track temperature history | Up to the last 20 minutes; the panel reports how much history is available |
+| Temperatures | Track and air temperature; expand to add humidity as a third value |
+| Temperature history | Track temperature over up to the last 20 minutes, with air temperature as a second line; expand to switch the air line and add humidity as a dashed line. The panel reports how much history is available |
 | Wind | Speed, compass direction, a wind rose and relative direction when heading is available |
 | Details | Humidity, sky and fog |
 | Track usage | Track rubber/usage information |
@@ -200,11 +202,13 @@ RaceMate samples weather every 30 seconds. Trend arrows compare with ten minutes
 
 Wind can be relative to your car, or the car you watch live or in replay. iRacing reports the heading of the car you drive, and of the replayed car while it moves; for a car you watch live it reports none, so RaceMate takes its direction of travel from the official track map at its lap position, turned to north as described under [Track Map](track-map.md#north). Text such as **Crosswind from the left** describes the source relative to that heading. Without a heading, car-relative information is unavailable.
 
+With a single line, the history shows its highest and lowest value on the right. With several lines, each line has its own scale, so track, air and humidity each show their own trend even though they lie far apart; the right side then shows each line's current value in its color. The legend in the title names the lines in the same colors.
+
 Expand **Wind** to choose the wind rose, wind text or both. With only the wind rose enabled, the overlay shrinks to the ring; a second Weather instance is useful for this arrangement.
 
 ![Standalone wind rose](images/wind-rose.png)
 
-**Panel** stacks the modules. **Strip** puts track condition, rain, temperatures and wind in one line; other modules remain labeled **Panel only**. The header can show **DECLARED WET** when rain tires are allowed.
+**Panel** stacks the modules. **Strip** puts track condition, rain, temperatures (with humidity, when chosen) and wind in one line; other modules remain labeled **Panel only**. The header can show **DECLARED WET** when rain tires are allowed.
 
 ## Header and footer metrics
 

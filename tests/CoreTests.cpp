@@ -218,6 +218,10 @@ void StandingsSelectionTests() {
  auto groups=SelectStandings(s,f,options);
  Require(groups.size()==2 && groups[0].rows.size()==8 && groups[1].rows.size()==3,"leaders per class plus reference neighbours");
  Require(groups[0].rows[3].driver.index==5 && groups[0].rows.back().driver.index==9,"correct ahead and behind limits");
+ Require(groups[0].cars==10 && groups[1].cars==8,"class sizes count the whole class");
+ options.otherClasses=1; Require(SelectStandings(s,f,options)[1].rows.size()==1 && SelectStandings(s,f,options)[0].rows.size()==8,"other classes show their own number of leaders");
+ options.otherClasses=0; { const auto headerOnly=SelectStandings(s,f,options); Require(headerOnly.size()==2 && headerOnly[1].rows.empty() && headerOnly[1].cars==8,"other classes keep their header without rows"); }
+ options.otherClasses=3;
  Near(groups[1].rows[1].gap,2,"separate gap to class leader");
  Near(groups[0].rows[3].interval,2,"interval uses hidden preceding driver, not previous visible row");
  Require(!std::isfinite(groups[1].rows.front().interval),"class leader has no interval");
@@ -243,6 +247,7 @@ void StandingsSelectionTests() {
  s.type="Practice";
  for(int i=0;i<18;++i) f.cars[i].best=100+i;
  groups=SelectStandings(s,f,options); Near(groups[1].rows[1].gap,1,"practice class gap from historical merged ranking");
+ Near(groups[0].best,100,"class best lap"); Near(groups[1].best,110,"class best lap of another class");
 }
 void EarlyAndLiveGapTests() {
  const auto yaml=std::string(R"(SessionInfo:

@@ -4,8 +4,8 @@ class TablePage : public PageWindow {
 public:
     explicit TablePage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
-    enum class Key { None, Rounded, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, ClassView, OwnClass, LiveGaps, UntimedOrder, ClassColors, LapColors, Progress, PitExit, Column, Header, Footer, ColumnHeadings };
-    static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, PitAheadEditId=215, PitBehindEditId=216, NameFormatEditId=201, FlagEditId=202, ShortViewEditId=205, SlotEditId=206, BrandLogoEditId=213, BrandNameEditId=214, PositionEditId=230;
+    enum class Key { None, Rounded, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, OtherClassRows, ClassHeader, ClassView, OwnClass, LiveGaps, UntimedOrder, ClassColors, LapColors, Progress, PitExit, Column, Header, Footer, ColumnHeadings };
+    static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, PitAheadEditId=215, PitBehindEditId=216, OtherClassesEditId=217, ClassHeaderEditId=240, NameFormatEditId=201, FlagEditId=202, ShortViewEditId=205, SlotEditId=206, BrandLogoEditId=213, BrandNameEditId=214, PositionEditId=230;
     static constexpr UINT_PTR TypingTimer=1;
     struct ColumnText { const wchar_t* name; const wchar_t* detail; };
     static constexpr ColumnText ColumnTexts[]={
@@ -20,6 +20,7 @@ private:
         {L"Fuel to finish",L"Own-class estimate: green END at normal range, yellow SAVE with fuel saving. Full tank assumed; extra laps in Settings."},
         {L"Safety and iRating",L"iRating on the license color, in one badge"}};
     static constexpr const wchar_t* NameFormats[]={L"First name Last name",L"F. Last name",L"F Last name"};
+    static constexpr const wchar_t* ClassHeaderNames[]={L"Cars",L"SOF",L"Average iRating",L"Class best lap"};
     static constexpr const wchar_t* FlagNames[]={L"Black flag",L"Slowdown",L"Required repairs"};
     static_assert(std::size(ColumnTexts)==ColumnCount);
 
@@ -82,12 +83,22 @@ private:
         if(o_.kind==StandingsKind) {
             const auto& standings=o_.table.standings;
             header(L"Rows");
-            RowList::Row count; count.title=standings.separateClasses?L"Rows per class":L"Rows";
+            RowList::Row count; count.title=standings.separateClasses?L"Rows in your class":L"Rows";
             count.detail=std::to_wstring(standings.leaders)+L" leaders, "+std::to_wstring(standings.ahead)+L" ahead and "+std::to_wstring(standings.behind)+L" behind your car";
             expandable(count,Key::StandingsRows,-1,48); push(std::move(count),Key::StandingsRows);
+            // The other classes and the class header exist only with separate classes.
+            const bool classes=standings.separateClasses && !standings.ownClass;
+            RowList::Row others; others.title=L"Rows in other classes"; others.muted=!classes;
+            others.detail=standings.otherClasses?L"At least their "+std::to_wstring(standings.otherClasses)+(standings.otherClasses==1?L" leader":L" leaders"):std::wstring(L"Only their class header");
+            expandable(others,Key::OtherClassRows,-1,48); push(std::move(others),Key::OtherClassRows);
             RowList::Row view; view.title=L"Classes"; view.button=L"Choose...";
             view.detail=standings.separateClasses?L"Separate classes, each with its leader and entrants":L"Combined overall standings";
             push(std::move(view),Key::ClassView);
+            RowList::Row head; head.title=L"Class header"; head.muted=!standings.separateClasses;
+            std::wstring shown;
+            for(int i=0;i<4;++i) if(o_.table.classHeader[i]) shown+=(shown.empty()?L"":L", ")+std::wstring(ClassHeaderNames[i]);
+            head.detail=L"Class name on its color"+(shown.empty()?std::wstring():L"  ·  "+shown);
+            expandable(head,Key::ClassHeader,-1,48); push(std::move(head),Key::ClassHeader);
             RowList::Row own; own.title=L"Only my class"; own.detail=L"Your class, or the class of the car you watch."; own.toggle=standings.ownClass?1:0;
             push(std::move(own),Key::OwnClass);
             RowList::Row live; live.title=L"Live positions and gaps"; live.detail=L"Estimated from track position between start/finish crossings."; live.toggle=standings.liveGaps?1:0;
@@ -158,6 +169,13 @@ private:
                 SetWindowLongPtrW(edit,GWL_STYLE,GetWindowLongPtrW(edit,GWL_STYLE)|ES_NUMBER); SendMessageW(edit,EM_SETLIMITTEXT,3,0);
             }
             editors_.Label(L"0 to 128 each",450,10,0);
+        } else if(expandedKey_==Key::OtherClassRows) {
+            editors_.Label(L"At least",0,10,56);
+            const HWND edit=editors_.Edit(OtherClassesEditId,std::to_wstring(o_.table.standings.otherClasses),60,10,64);
+            SetWindowLongPtrW(edit,GWL_STYLE,GetWindowLongPtrW(edit,GWL_STYLE)|ES_NUMBER); SendMessageW(edit,EM_SETLIMITTEXT,3,0);
+            editors_.Label(L"cars of each other class, from its leader; 0 shows the header only",140,10,0);
+        } else if(expandedKey_==Key::ClassHeader) {
+            for(int i=0;i<4;++i) editors_.Check(ClassHeaderEditId+i,ClassHeaderNames[i],o_.table.classHeader[i],i*150,10,140);
         } else if(expandedKey_==Key::PitExit) {
             const wchar_t* labels[]={L"Ahead",L"Behind"}; const int values[]={o_.table.pitExitAhead,o_.table.pitExitBehind};
             for(int i=0;i<2;++i) {
@@ -211,6 +229,7 @@ private:
             changed=read(AheadEditId,o_.table.standings.ahead,0) | changed;
             changed=read(BehindEditId,o_.table.standings.behind,0) | changed;
         }
+        if(expandedKey_==Key::OtherClassRows) changed=read(OtherClassesEditId,o_.table.standings.otherClasses,0) | changed;
         if(expandedKey_==Key::PitExit) {
             changed=read(PitAheadEditId,o_.table.pitExitAhead,0) | changed;
             changed=read(PitBehindEditId,o_.table.pitExitBehind,0) | changed;
@@ -225,7 +244,11 @@ private:
     void OnTimer(UINT_PTR id) override { if(id==TypingTimer) ApplyRows(); }
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); return true; }
-        if(id==RowsEditId || (id>=LeadersEditId && id<=BehindEditId) || id==PitAheadEditId || id==PitBehindEditId) { if(code==EN_CHANGE && !syncing_) { typing_=true; SetTimer(Handle(),TypingTimer,500,nullptr); } return true; }
+        if(id==RowsEditId || (id>=LeadersEditId && id<=BehindEditId) || id==PitAheadEditId || id==PitBehindEditId || id==OtherClassesEditId) { if(code==EN_CHANGE && !syncing_) { typing_=true; SetTimer(Handle(),TypingTimer,500,nullptr); } return true; }
+        if(id>=ClassHeaderEditId && id<ClassHeaderEditId+4) {
+            if(!syncing_ && code==BN_CLICKED) { o_.table.classHeader[id-ClassHeaderEditId]=editors_.Checked(id); Changed(); }
+            return true;
+        }
         if(id==BrandLogoEditId || id==BrandNameEditId) {
             if(!syncing_ && code==BN_CLICKED) { (id==BrandLogoEditId?o_.table.brandLogo:o_.table.brandName)=editors_.Checked(id); Changed(); }
             return true;
@@ -257,7 +280,7 @@ private:
         case Key::GapDecimals: if(pressed) ChooseDecimals(); break;
         case Key::GapSigns: if(code==RowList::kToggled) { SetGapSigns(o_,on); Refresh(); } break;
         case Key::HidePit: if(code==RowList::kToggled) { o_.table.hidePit=on; Changed(); } break;
-        case Key::StandingsRows: if(toggleExpand) Expand(key,-1); break;
+        case Key::StandingsRows: case Key::OtherClassRows: case Key::ClassHeader: if(toggleExpand) Expand(key,-1); break;
         case Key::ClassView:
             if(pressed) { const int choice=ChooseFromMenu({L"Separate classes",L"Combined overall standings"},o_.table.standings.separateClasses?0:1); if(choice>=0) { o_.table.standings.separateClasses=choice==0; Changed(); } }
             break;

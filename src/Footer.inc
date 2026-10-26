@@ -12,6 +12,12 @@ std::wstring FooterTemperature(double value) {
     wchar_t text[40]; swprintf_s(text,L"%.0f°C",value); return text;
 }
 // Strength of field with iRacing's exponential formula; cars receives the class entrants. -1 without ratings.
+// The plain average iRating of a class's rated drivers; -1 without any.
+int ClassAverageRating(int classId) {
+    long long sum=0; int rated=0;
+    for(const auto& d:app.session.drivers) if(d.classId==classId && !d.paceCar && !d.spectator && d.rating>0) { sum+=d.rating; ++rated; }
+    return rated?static_cast<int>(std::lround(static_cast<double>(sum)/rated)):-1;
+}
 int ClassSof(int classId,int& cars) {
     double sum=0; int rated=0; const double scale=1600/std::log(2.0); cars=0;
     for(const auto& d:app.session.drivers) if(d.classId==classId && !d.paceCar && !d.spectator) {

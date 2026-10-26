@@ -140,6 +140,7 @@ public:
     struct Sample {
         double time = -1, track = std::numeric_limits<double>::quiet_NaN(), air = std::numeric_limits<double>::quiet_NaN();
         double rain = std::numeric_limits<double>::quiet_NaN(), wetness = std::numeric_limits<double>::quiet_NaN();
+        double humidity = std::numeric_limits<double>::quiet_NaN(); // Fraction 0..1.
     };
     static constexpr int Size = 40;
     void Reset() { *this = {}; }
@@ -209,12 +210,15 @@ std::vector<Row> Standings(const Session&, const Frame&, int count, bool ownClas
 struct StandingsOptions {
     bool ownClass = false, separateClasses = true, liveGaps = false, fallbackByRating = false;
     int leaders = 3, ahead = 2, behind = 2;
+    // Separate classes: the classes without the reference car show their first otherClasses cars; 0 leaves their header only.
+    int otherClasses = 3;
 };
 struct StandingsGroup {
     int classId = -1;
     std::string name;
     unsigned color = 0;
     std::vector<Row> rows;
+    int cars = 0; double best = -1; // The whole class before rows are left out: its cars and fastest lap.
 };
 std::vector<StandingsGroup> SelectStandings(const Session&, const Frame&, const StandingsOptions&);
 enum class FuelMetric { Last, Average10, Average5, Maximum, Minimum, Average, Average3, Count };

@@ -22,7 +22,7 @@
                 const int reference=ReferenceCar(app.frame);
                 const auto own=std::find_if(app.session.drivers.begin(),app.session.drivers.end(),[&](const Driver& d){return d.index==reference;});
                 // A marker, or the number on it.
-                auto drawCar=[&](const Driver& d,bool highlight,bool number) {
+                auto drawCar=[&](const Driver& d,bool highlight) {
                     if(d.index<0 || d.index>=MaxCars || d.paceCar || d.spectator) return;
                     const auto& car=app.frame.cars[d.index];
                     if(!std::isfinite(car.pct) || car.pct<0 || car.pct>=1 || car.surface<0 || (!o.map.pit && car.pit)) return;
@@ -39,12 +39,12 @@
                     const int radius=o.map.numbers?std::max(px(11),(measure(text,SmallBold)+px(7))/2):px(6), stroke=std::max(1,px(highlight?2:1));
                     const COLORREF color=highlight?Ink::Yellow:ColorOf(d.classColor);
                     const RECT bounds{x-radius,y-radius-titleOffset,x+radius+1,y+radius+1-titleOffset};
-                    if(number) { if(!text.empty()) out.push_back({DrawCommand::MapLabel,SmallBold,DT_CENTER,bounds,car.pit?color:Ink::Panel,{},std::move(text)}); return; }
                     if(highlight) {
                         RECT halo=bounds; InflateRect(&halo,px(3),px(3));
                         out.push_back({DrawCommand::MapCar,Regular,0,halo,Ink::White,{static_cast<float>(std::max(1,px(1))),1}});
                     }
                     out.push_back({DrawCommand::MapCar,Regular,0,bounds,color,{static_cast<float>(stroke),car.pit?1.f:0.f}});
+                    if(!text.empty()) out.push_back({DrawCommand::MapLabel,SmallBold,DT_CENTER,bounds,car.pit?color:Ink::Panel,{},std::move(text)});
                 };
                 // Where the own car would rejoin after a stop now: a hollow accent ring marked PIT.
                 const auto& rejoin=PitExit();
@@ -61,9 +61,9 @@
                 for(const auto& d:app.session.drivers) if(d.index!=reference && d.index>=0 && d.index<MaxCars) stack.push_back(&d);
                 auto rank=[](const Driver* d){ const int p=app.frame.cars[d->index].position; return p>0?p:MaxCars+1; };
                 std::stable_sort(stack.begin(),stack.end(),[&](const Driver* a,const Driver* b){ return rank(a)>rank(b); });
-                for(const auto* d:stack) { drawCar(*d,false,false); drawCar(*d,false,true); }
+                for(const auto* d:stack) drawCar(*d,false);
                 drawGhost(false); drawGhost(true);
-                if(own!=app.session.drivers.end()) { drawCar(*own,true,false); drawCar(*own,true,true); }
+                if(own!=app.session.drivers.end()) drawCar(*own,true);
             }
         } else label(svg?trackMap.message:L"Waiting for iRacing",line?rect(20,40,W-40,40):rect(20,MapOnly(o)?100:120,W-40,80),Ink::Muted,Regular,DT_CENTER);
         if(note) {
