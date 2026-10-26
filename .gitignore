@@ -1,3 +1,5 @@
 /build/
 /dist/
 *.user
+# --dump-vars output; can contain session and driver information
+/irsdk-dump.txt
