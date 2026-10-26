@@ -1707,7 +1707,9 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                         // Today's wind ring at 40 px radius: the arrow shows where the wind comes from relative to the car.
                         const float scale=static_cast<float>(dpi*o.place.scale)/9600, ring=scale*40/65, centerX=62*scale, centerY=(y+54)*scale-titleOffset, radius=40*scale;
                         const RECT bounds{static_cast<LONG>(centerX-radius-8*ring)-1,static_cast<LONG>(centerY-radius-8*ring)-1,static_cast<LONG>(centerX+radius+8*ring)+2,static_cast<LONG>(centerY+radius+8*ring)+2};
-                        out.push_back({DrawCommand::WindRing,Regular,0,bounds,0,{centerX,centerY,radius,ring,std::isfinite(angle)?static_cast<float>(angle):-1.f}});
+                        // Whole degrees: the arrow moves under a pixel per degree, and the ring repaints only when it does.
+                        const float bearing=std::isfinite(angle)?static_cast<float>(std::fmod(std::round(angle*180/pi)+360,360.)*pi/180):-1.f;
+                        out.push_back({DrawCommand::WindRing,Regular,0,bounds,0,{centerX,centerY,radius,ring,bearing}});
                         label(speed,rect(22,y+32,80,30),white,Hero,DT_CENTER); label(L"km/h",rect(22,y+60,80,14),Ink::Label,Small,DT_CENTER);
                         text=124; top=y+20;
                     }
@@ -1795,12 +1797,77 @@ void DrawLabel(HDC dc,const DrawCommand& c) {
     const int x=c.align==DT_CENTER?(r.left+r.right-size.cx)/2:(c.align==DT_RIGHT?r.right-size.cx:r.left);
     ExtTextOutW(dc,x,(r.top+r.bottom-size.cy)/2,ETO_CLIPPED,&r,c.text.c_str(),length,nullptr);
 }
+// The closed wind ring, antialiased once per size and sub-pixel position: rasterizing it took three quarters of the
+// ring's time, and the bearing changes it on nearly every refresh. Only its few hundred covered pixels are kept,
+// premultiplied, each with its bearing from the center so the gap at the arrow can be left out.
+struct WindRingPixel { int x, y; std::uint32_t color; float bearing; };
+struct WindRingTile { float radius=0, scale=0, fractionX=0, fractionY=0; std::vector<WindRingPixel> pixels; };
+std::array<WindRingTile,2> windRingTiles; // Two sizes cover a second Weather overlay at another scale.
+const WindRingTile& WindRing(float centerX,float centerY,float radius,float scale) {
+    const float fractionX=centerX-std::floor(centerX), fractionY=centerY-std::floor(centerY);
+    for(const auto& t:windRingTiles) if(!t.pixels.empty() && t.radius==radius && t.scale==scale && t.fractionX==fractionX && t.fractionY==fractionY) return t;
+    auto& t=windRingTiles[windRingTiles[0].pixels.empty()?0:1];
+    t={radius,scale,fractionX,fractionY};
+    // The tile's corner sits on whole pixels, offsets relative to the center's pixel; the fractions keep the ring where it was.
+    const int half=static_cast<int>(std::ceil(radius+2*scale))+2, size=2*half+1;
+    Gdiplus::Bitmap target(size,size,PixelFormat32bppPARGB);
+    {
+        Gdiplus::Graphics graphics(&target); graphics.Clear(Gdiplus::Color(0,0,0,0));
+        graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias); graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+        Gdiplus::Pen ring(Gdiplus::Color(255,232,234,237),4*scale);
+        graphics.DrawEllipse(&ring,half+fractionX-radius,half+fractionY-radius,2*radius,2*radius);
+    }
+    Gdiplus::BitmapData data{}; const Gdiplus::Rect all(0,0,size,size);
+    if(target.LockBits(&all,Gdiplus::ImageLockModeRead,PixelFormat32bppPARGB,&data)!=Gdiplus::Ok) return t;
+    for(int y=0;y<size;++y) for(int x=0;x<size;++x) {
+        const std::uint32_t color=static_cast<const std::uint32_t*>(data.Scan0)[y*data.Stride/4+x];
+        if(color>>24) t.pixels.push_back({x-half,y-half,color,static_cast<float>(std::atan2(x+.5-half-fractionX,half+fractionY-y-.5))});
+    }
+    target.UnlockBits(&data);
+    return t;
+}
+// Blends the cached ring straight into the overlay's DIB, leaving out the gap. False when the DC is no DIB or
+// the clip region cuts into the ring: blending again over pixels not repainted would darken their edges.
+// Overlay DIBs are top-down (EnsureBuffer); GetObject reports a positive height for those too, so it cannot tell.
+bool BlendWindRing(HDC dc,const DrawCommand& c,const WindRingTile& tile) {
+    const auto [centerX,centerY,radius,scale,angle]=c.shape;
+    DIBSECTION dib{};
+    if(tile.pixels.empty() || GetObjectW(GetCurrentObject(dc,OBJ_BITMAP),sizeof(dib),&dib)!=sizeof(dib) || !dib.dsBm.bmBits || dib.dsBm.bmBitsPixel!=32) return false;
+    HRGN clip=CreateRectRgn(0,0,0,0); bool whole=true;
+    if(GetClipRgn(dc,clip)==1) { HRGN outside=CreateRectRgnIndirect(&c.r); whole=CombineRgn(outside,outside,clip,RGN_DIFF)==NULLREGION; DeleteObject(outside); }
+    DeleteObject(clip);
+    if(!whole) return false;
+    GdiFlush();
+    constexpr double turn=6.283185307179586;
+    const int originX=static_cast<int>(std::floor(centerX)), originY=static_cast<int>(std::floor(centerY)), width=dib.dsBm.bmWidth, height=dib.dsBm.bmHeight;
+    auto* bits=static_cast<std::uint32_t*>(dib.dsBm.bmBits);
+    for(const auto& p:tile.pixels) {
+        const int x=originX+p.x, y=originY+p.y;
+        if(x<0 || y<0 || x>=width || y>=height) continue;
+        if(angle>=0) { double off=std::fmod(p.bearing-angle,turn); if(off<-turn/2) off+=turn; else if(off>turn/2) off-=turn; if(std::abs(off)<.3) continue; }
+        std::uint32_t& to=bits[y*width+x]; const std::uint32_t keep=255-(p.color>>24);
+        std::uint32_t mixed=0;
+        for(int shift=0;shift<32;shift+=8) mixed|=std::min<std::uint32_t>(255,((p.color>>shift)&255)+((to>>shift)&255)*keep/255)<<shift;
+        to=mixed;
+    }
+    return true;
+}
 void DrawWind(HDC dc,const DrawCommand& c) {
     const auto [centerX,centerY,radius,scale,angle]=c.shape;
+    constexpr double pi=3.141592653589793;
+    // The cached ring less the gap at the arrow; two round caps close the cut ends as the arc's round caps did.
+    const bool cached=BlendWindRing(dc,c,WindRing(centerX,centerY,radius,scale));
+    if(cached && angle<0) return;
     Gdiplus::Graphics graphics(dc); graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias); graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
-    Gdiplus::Pen ring(Gdiplus::Color(255,232,234,237),4*scale); ring.SetStartCap(Gdiplus::LineCapRound); ring.SetEndCap(Gdiplus::LineCapRound);
-    if(angle<0) { graphics.DrawEllipse(&ring,centerX-radius,centerY-radius,2*radius,2*radius); return; }
-    graphics.DrawArc(&ring,centerX-radius,centerY-radius,2*radius,2*radius,static_cast<float>((angle+.3)*180/3.141592653589793-90),static_cast<float>(360-.6*180/3.141592653589793));
+    const Gdiplus::Color ringInk(255,232,234,237);
+    if(!cached) {
+        Gdiplus::Pen ring(ringInk,4*scale); ring.SetStartCap(Gdiplus::LineCapRound); ring.SetEndCap(Gdiplus::LineCapRound);
+        if(angle<0) { graphics.DrawEllipse(&ring,centerX-radius,centerY-radius,2*radius,2*radius); return; }
+        graphics.DrawArc(&ring,centerX-radius,centerY-radius,2*radius,2*radius,static_cast<float>((angle+.3)*180/pi-90),static_cast<float>(360-.6*180/pi));
+    } else {
+        Gdiplus::SolidBrush cap(ringInk); const float r=2*scale;
+        for(double end:{angle-.3,angle+.3}) graphics.FillEllipse(&cap,centerX+static_cast<float>(std::sin(end)*radius)-r,centerY-static_cast<float>(std::cos(end)*radius)-r,2*r,2*r);
+    }
     auto point=[&](double bearing,double r) {return Gdiplus::PointF(centerX+static_cast<float>(std::sin(bearing)*r)*scale,centerY-static_cast<float>(std::cos(bearing)*r)*scale);};
     Gdiplus::PointF arrow[]={point(angle-.15,71),point(angle,56),point(angle+.15,71)};
     Gdiplus::Pen pen(Gdiplus::Color(255,246,204,66),4*scale); pen.SetStartCap(Gdiplus::LineCapRound); pen.SetEndCap(Gdiplus::LineCapRound); pen.SetLineJoin(Gdiplus::LineJoinRound);
