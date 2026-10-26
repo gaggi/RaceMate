@@ -590,19 +590,19 @@ void TelemetryTests() {
  add("SessionNum",2,0); add("PlayerCarIdx",2,4); add("FuelLevel",4,8); add("EngineWarnings",3,12);
  add("OnPitRoad",1,16); add("IsOnTrack",1,17); add("IsReplayPlaying",1,18); add("SessionFlags",3,20); add("CamCarIdx",2,24); add("CarIdxLapDistPct",4,32,8);
  add("CarIdxPosition",2,64,8); add("CarIdxTrackSurface",2,96,8); add("SessionTime",5,144);
- add("CarIdxLapCompleted",2,160,8); add("SessionTimeRemain",5,200); add("PlayerCarIsTowing",1,208); add("PlayerCarTowTime",4,212);
+ add("CarIdxLapCompleted",2,160,8); add("SessionTimeRemain",5,200); add("PlayerCarIsTowing",1,208); add("PlayerCarTowTime",4,212); add("CarLeftRight",2,216);
  int session=1,player=3,warnings=0x10,position=4,surface=3; float fuel=22.5f,pct=.42f; double time=150;
  auto* data=memory+13000; std::memcpy(data,&session,4); std::memcpy(data+4,&player,4); std::memcpy(data+8,&fuel,4); std::memcpy(data+12,&warnings,4); data[16]=data[17]=1;
  uint32_t flags=0x80000000u; std::memcpy(data+20,&flags,4);
  int camera=4; std::memcpy(data+24,&camera,4);
  std::memcpy(data+32+3*4,&pct,4); std::memcpy(data+64+3*4,&position,4); std::memcpy(data+96+3*4,&surface,4); std::memcpy(data+144,&time,8);
- int completed=12; double timeLeft=600;
+ int completed=12, spotter=5; double timeLeft=600; std::memcpy(data+216,&spotter,4);
  std::memcpy(data+160+3*4,&completed,4); std::memcpy(data+200,&timeLeft,8);
  {
   Telemetry reader(name.c_str()); Frame f; Session s;
   Require(reader.Read(f,s),"connect");
   Require(f.session==1 && f.player==3 && f.onTrack && f.pit && f.limiter,"integer boolean bitfield");
-  Require(f.flags==0x80000000u,"unsigned high bitfield bit");
+  Require(f.flags==0x80000000u && f.spotter==5,"unsigned high bitfield bit; the spotter");
   Near(f.fuel,22.5,"newest buffer"); Near(f.time,150,"double"); Near(f.cars[3].pct,.42,"array offsets");
   Require(f.cars[99].pct==-1 && f.lastLap==-1,"missing variables and array bounds");
   Require(s.type=="Race" && s.drivers.size()==2,"integrated yaml");
@@ -694,6 +694,21 @@ void WindTests() {
  // degrees, as fitted against OpenStreetMap, where the offset gives 294.
  Require(NorthTurnFromHeadings(1.99379,3*pi/2)==204 && NorthTurnFromOffset(.4107)==294,"north from the car in the pit box");
  Require(NorthTurnFromHeadings(.1,.2)==354 && NorthTurnFromHeadings(std::numeric_limits<double>::quiet_NaN(),0)==-1,"turns wrap; no heading, no turn");
+}
+void SideTrafficTests() {
+ auto s=DemoSession(); s.trackMeters=4000; auto f=DemoFrame(0); f.player=3;
+ for(auto& c:f.cars) { c.pct=-1; c.surface=-1; c.pit=false; }
+ f.cars[3].pct=.5; f.cars[3].surface=3;
+ f.cars[5].pct=.5+2.0/4000; f.cars[5].surface=3; // 2 m ahead, beside you.
+ f.cars[6].pct=.5-30.0/4000; f.cars[6].surface=3; // 30 m behind: not beside.
+ f.spotter=1; auto t=SideTrafficOf(s,f); Require(!t.left && !t.right,"clear: nobody beside");
+ f.spotter=2; t=SideTrafficOf(s,f); Require(t.left==1 && !t.right && !std::isfinite(t.rightAt),"car left"); Near(t.leftAt,2,"the car beside, 2 m ahead");
+ f.spotter=6; t=SideTrafficOf(s,f); Require(!t.left && t.right==2,"two cars right"); Near(t.rightAt,2,"the nearest of them");
+ f.spotter=4; t=SideTrafficOf(s,f); Require(t.left==1 && t.right==1 && !std::isfinite(t.leftAt) && !std::isfinite(t.rightAt),"both sides: no places, the lap distance cannot tell them apart");
+ f.cars[3].pct=.0001; f.cars[5].pct=.9999; f.spotter=3; t=SideTrafficOf(s,f); Near(t.rightAt,-.8,"across the start/finish line");
+ f.replay=true; t=SideTrafficOf(s,f); Require(!t.left && !t.right,"replays show nothing");
+ f.replay=false; f.onTrack=false; t=SideTrafficOf(s,f); Require(!t.right,"only while you drive");
+ f.onTrack=true; f.spotter=-1; t=SideTrafficOf(s,f); Require(!t.left && !t.right,"no spotter, nothing");
 }
 void WeatherHistoryTests() {
  auto s=DemoSession(); auto f=DemoFrame(0); WeatherHistory history;
@@ -816,6 +831,6 @@ int main(int argc,char** argv) {
    <<"; SessionNum: "<<frame.session<<"; ReplaySessionNum: "<<frame.replaySession<<'\n';
   return 0;
  }
- try { ReviewRegressionTests(); WindTests(); WeatherHistoryTests(); ParserTests(); ResultsTests(); RowTests(); RelativeCenterTests(); StandingsSelectionTests(); EarlyAndLiveGapTests(); UntimedPracticeTests(); MissingDriverDataTests(); LivePositionAndPitVisibilityTests(); FuelMetricsTests(); FirstRaceLapFuelTests(); FuelTests(); PredictionTests(); RaceControlTests(); PitStopTests(); TelemetryTests(); std::cout<<"PASS: review regressions, parser, historical results, relative, standings, fuel metrics, finish projection, leader changes, pit learning, confidence, replay and shared memory\n"; }
+ try { ReviewRegressionTests(); WindTests(); SideTrafficTests(); WeatherHistoryTests(); ParserTests(); ResultsTests(); RowTests(); RelativeCenterTests(); StandingsSelectionTests(); EarlyAndLiveGapTests(); UntimedPracticeTests(); MissingDriverDataTests(); LivePositionAndPitVisibilityTests(); FuelMetricsTests(); FirstRaceLapFuelTests(); FuelTests(); PredictionTests(); RaceControlTests(); PitStopTests(); TelemetryTests(); std::cout<<"PASS: review regressions, parser, historical results, relative, standings, fuel metrics, finish projection, leader changes, pit learning, confidence, replay and shared memory\n"; }
  catch(const std::exception& e) { std::cerr<<"FAIL: "<<e.what()<<'\n'; return 1; }
 }

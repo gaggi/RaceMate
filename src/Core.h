@@ -97,6 +97,9 @@ struct Frame {
     // The pit menu: PitSvFlags, PitSvFuel (litres to add) and PitRepairLeft (mandatory repair seconds).
     unsigned pitSvFlags = 0; double pitSvFuel = 0, pitRepair = 0;
     double brake = -1; // Brake pedal, 0 to 1; -1 when not reported.
+    // CarLeftRight, the spotter for your car: 0 off, 1 clear, 2 car left, 3 car right, 4 cars left and right,
+    // 5 two cars left, 6 two cars right; -1 when not reported.
+    int spotter = -1;
     // The in-car adjustments this car has: bit d of dialsKnown marks dials[d].
     std::array<double, DialCount> dials{}; unsigned dialsKnown = 0;
     std::array<Car, MaxCars> cars{};
@@ -134,6 +137,11 @@ int NorthTurnFromOffset(double trackNorthOffset);
 // there, both in radians, the map's clockwise from its top. A car in its pit stall stands along the pit lane.
 // -1 when either is unknown.
 int NorthTurnFromHeadings(double yawNorth, double mapHeading);
+// Cars beside your car as the spotter reports them (CarLeftRight), none to two a side, while you drive it; and how
+// far the nearest is along your car, in metres ahead (+) or behind. The lap distance cannot tell the sides apart,
+// so with cars on both sides neither has a place.
+struct SideTraffic { int left = 0, right = 0; double leftAt = std::numeric_limits<double>::quiet_NaN(), rightAt = std::numeric_limits<double>::quiet_NaN(); };
+SideTraffic SideTrafficOf(const Session& s, const Frame& f);
 // Track and air temperature, precipitation and wetness every 30 s of session time, 20 minutes back.
 class WeatherHistory {
 public:

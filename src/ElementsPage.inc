@@ -1,11 +1,12 @@
 // Pages that list what an overlay shows: Fuel Calculator and Weather choose a layout,
 // switch and order modules (the fuel consumption module expands to its values) and set
-// header and footer. Pit Assist shares the bands and explains when and how it shows.
+// header and footer. Pit Assist shares the bands and explains when and how it shows; the Side Warning has no
+// bands, only when it shows and the car's place on its bars.
 class ElementsPage : public PageWindow {
 public:
     explicit ElementsPage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
-    enum class Key { None, Layout, Rounded, Module, Band, Info, SetupChanges, PitStrip, Countdown };
+    enum class Key { None, Layout, Rounded, Module, Band, Info, SetupChanges, PitStrip, Countdown, SideCar, SideApart };
     static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210, HumidityEditId=212, HistoryPartEditId=213, CautionEditId=220, SlotEditId=230, HeaderRow=1000, FooterRow=1001;
 
     void OnCreate() override {
@@ -44,6 +45,25 @@ private:
                 push(std::move(row),Key::Band,id);
             }
         };
+        if(o_.kind==SideWarningKind) {
+            header(L"Layout");
+            RowList::Row apart; apart.title=L"Distance apart"; apart.button=L"Choose...";
+            apart.detail=std::to_wstring(o_.sideApart)+(o_.sideApart==100?L" % of the screen width: at its edges":L" % of the screen width, centred on it");
+            push(std::move(apart),Key::SideApart);
+            push(RoundedRow(o_),Key::Rounded);
+            info(L"Placement",L"Drag the bars up or down, or onto another monitor; they stay centred on it. Size and opacity under Overlays.");
+            header(L"When it shows");
+            info(L"A car beside you",L"While you drive and iRacing's spotter reports a car on that side. Both bars show while overlays are moved.");
+            header(L"On the bars");
+            RowList::Row car; car.title=L"Where the car beside you is"; car.toggle=o_.sideCar?1:0;
+            car.detail=L"A block at its place along your car, higher when it is ahead; the bar spans 7 m either way.";
+            push(std::move(car),Key::SideCar);
+            header(L"Colors");
+            info(L"One car beside you",L"The whole bar",L"Red",RowList::Tone::Warning);
+            info(L"Two cars on one side",L"Two stripes",L"Red",RowList::Tone::Warning);
+            info(L"Where the car is",L"The block on the bar",L"Amber");
+            list_.SetRows(std::move(rows)); return;
+        }
         if(o_.kind==PitLimiterKind) {
             header(L"Layout");
             push(RoundedRow(o_),Key::Rounded);
@@ -169,6 +189,14 @@ private:
         case Key::Rounded: if(code==RowList::kToggled) { SetRounded(o_,on); Changed(); } break;
         case Key::SetupChanges: if(code==RowList::kToggled) { o_.setupChanges=on; Fit(o_); Changed(); } break;
         case Key::PitStrip: if(code==RowList::kToggled) { o_.pitStrip=on; Fit(o_); Changed(); } break;
+        case Key::SideCar: if(code==RowList::kToggled) { o_.sideCar=on; Changed(); } break;
+        case Key::SideApart:
+            if(pressed) {
+                std::vector<std::wstring> items; for(int percent=100;percent>=20;percent-=10) items.push_back(std::to_wstring(percent)+(percent==100?L" %  ·  at the screen edges":L" %"));
+                const int choice=ChooseFromMenu(items,(100-o_.sideApart)/10);
+                if(choice>=0) { o_.sideApart=100-10*choice; Fit(o_); Changed(); }
+            }
+            break;
         case Key::Countdown:
             if(pressed) { const int choice=ChooseFromMenu({L"Metres",L"Seconds"},o_.pitSeconds?1:0); if(choice>=0) { o_.pitSeconds=choice==1; Changed(); } }
             break;

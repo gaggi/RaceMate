@@ -33,15 +33,17 @@ namespace {
 using namespace rm;
 constexpr COLORREF Background=RGB(246,247,249), Text=RGB(40,47,58);
 constexpr UINT TrayMessage=WM_APP+1;
-enum OverlayKind { RelativeKind, StandingsKind, FuelKind, PitLimiterKind, WeatherKind, TrackMapKind };
-constexpr int OverlayCount=TrackMapKind+1;
+enum OverlayKind { RelativeKind, StandingsKind, FuelKind, PitLimiterKind, WeatherKind, TrackMapKind, SideWarningKind };
+constexpr int OverlayCount=SideWarningKind+1;
 constexpr bool IsTable(int kind) { return kind==RelativeKind || kind==StandingsKind; }
-const wchar_t* Titles[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pit Assist",L"Weather",L"Track Map"};
-const wchar_t* Sections[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pitlimiter",L"Weather",L"Track Map"};
-constexpr POINT DefaultPositions[]={{40,120},{480,120},{40,470},{40,720},{40,820},{960,120}};
+constexpr bool SingleInstance(int kind) { return kind==PitLimiterKind || kind==SideWarningKind; }
+const wchar_t* Titles[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pit Assist",L"Weather",L"Track Map",L"Side Warning"};
+const wchar_t* Sections[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pitlimiter",L"Weather",L"Track Map",L"Side Warning"};
+// The Side Warning's place is its left bar's, at the screen's left edge; the right bar mirrors it.
+constexpr POINT DefaultPositions[]={{40,120},{480,120},{40,470},{40,720},{40,820},{960,120},{8,380}};
 // Refresh rates an overlay can choose, and each overlay's default; telemetry is read at least as often as the fastest.
 constexpr int OverlayRates[]={1,2,5,10,15,20};
-constexpr int DefaultRates[]={10,1,1,10,1,20};
+constexpr int DefaultRates[]={10,1,1,10,1,20,20};
 // Relative and Standings columns. The values are stored in ColumnOrder.
 enum Column {
     PositionColumn, NumberColumn, DriverColumn, GapColumn, IntervalColumn, BestColumn, LastColumn,
@@ -220,8 +222,14 @@ struct Overlay {
     bool setupChanges=true; // Pit Assist: in the pit lane, list in-car adjustments that differ from the setup.
     bool pitStrip=true;     // Pit Assist: the pit lane with your car, your box, where to brake and where the limiter can go off.
     bool pitSeconds=false;  // Pit Assist: count down to the brake points, box and exit in seconds instead of metres.
+    bool sideCar=true;      // Side Warning: where the car beside you is along your car, as a block on the bar.
+    int sideApart=100;      // Side Warning: how far apart the bars' outer edges are, in % of the monitor's width, centred on it.
+    // Side Warning: the right bar, mirrored across the monitor's centre. It shows the right half of the buffer,
+    // which holds both bars side by side.
+    HWND mirror=nullptr;
     HDC dc=nullptr; HBITMAP bitmap=nullptr; HGDIOBJ original=nullptr, originalFont=nullptr;
     HWND frame=nullptr; int frameState=-1; RECT frameRect{}; // The ring around it while edited or movable.
+    HWND mirrorFrame=nullptr; int mirrorFrameState=-1; RECT mirrorFrameRect{}; // The Side Warning's right bar's ring.
     std::array<HFONT,FontCount> fonts{}; int width=0,height=0,dpi=0;
     std::vector<DrawCommand> scene;
     ULONGLONG due=0; // Next scheduled refresh, in app.now time.
@@ -292,6 +300,7 @@ struct App {
     PitLaneLoss pitLane; RefuelRate refuel; PitLaneEnds pitEnds; BrakingRate braking;
     // Whether Pit Assist shows, and where its strip starts while it does, so it stays put on the way in.
     bool pitVisible=false; double pitStripLeft=std::numeric_limits<double>::quiet_NaN();
+    SideTraffic side; std::array<ULONGLONG,2> sideSeen{}; // The Side Warning's cars beside you, and when each side last had one.
     struct { int track=-1; std::wstring car; double fixedLane=-1, tires=-1, rate=-1; int samplesSaved=0, endsSaved=0, brakingSaved=0; } pitTimes;
     unsigned pitExitVersion=~0u; PitRejoin pitExit; bool pitExitPartial=false;
     unsigned modelVersion=0,planVersion=~0u,ratingVersion=~0u;
@@ -439,11 +448,18 @@ int FuelHeight(const Overlay& o) {
     }
     return std::max(h,40);
 }
+// One Side Warning bar; the buffer holds two.
+constexpr int SideBarWidth=14, SideBarHeight=320;
+// The bars' distance apart: 100 % at the monitor's edges, down to 20 % in steps of 10.
+int SideApart(int percent) { return ((std::clamp(percent,20,100)+5)/10)*10; }
+// Where the left bar starts on a monitor, its outer edges this far apart; the right bar mirrors it.
+int SideBarLeft(const RECT& monitor,int apart) { return monitor.left+static_cast<int>(std::lround((monitor.right-monitor.left)*(100-apart)/200.0)); }
 int OverlayWidth(const Overlay& o) {
     if(o.kind==TrackMapKind) return TrackMapWidthOf(o.map);
     if(IsTable(o.kind)) { int width=16; for(int id:VisibleColumns(o)) width+=ColumnWidth(o,id); return std::max(120,width); }
     if(o.kind==WeatherKind) return o.weather.strip?std::max(1,WeatherStripCount(o))*WeatherStripCell:(WindRoseOnly(o)?WindRoseWidth:WeatherPanelWidth);
     if(o.kind==FuelKind) return o.fuel.strip?std::max(1,FuelStripCount(o))*FuelStripCell:FuelPanelWidth;
+    if(o.kind==SideWarningKind) return SideBarWidth;
     return 365;
 }
 COLORREF TireTextColor(const Row& row) {
@@ -463,8 +479,9 @@ std::wstring CompletedLaps(const Row& row) {
 }
 // All overlay kinds draw the same configurable metric bands.
 bool MapOnly(const Overlay& o) { return o.kind==TrackMapKind && !o.map.background; }
-bool ShowOverlayHeader(const Overlay& o) { return o.bands.header && !MapOnly(o); }
-int FooterHeight(const Overlay& o) { return o.bands.footer.enabled && !MapOnly(o)?28:0; }
+// The Side Warning's bars have none.
+bool ShowOverlayHeader(const Overlay& o) { return o.bands.header && !MapOnly(o) && o.kind!=SideWarningKind; }
+int FooterHeight(const Overlay& o) { return o.bands.footer.enabled && !MapOnly(o) && o.kind!=SideWarningKind?28:0; }
 double SessionProgress();
 // The Standings' session progress bar, a row of its own under the header while the session has a known length.
 int ProgressHeight(const Overlay& o) { return o.kind==StandingsKind && o.table.progress && SessionProgress()>=0?24:0; }
@@ -591,7 +608,7 @@ void ReadInstance(Overlay& o) {
     p.scale=NormalizeScale(ReadInt(section.c_str(),L"Scale",100)); p.opacity=std::clamp(ReadInt(section.c_str(),L"Opacity",90),40,100);
     const int rate=ReadInt(section.c_str(),L"RefreshHz",DefaultRates[kind]);
     p.rate=*std::find_if(std::begin(OverlayRates),std::end(OverlayRates)-1,[&](int choice){return choice>=rate;});
-    p.enabled=ReadBool(section.c_str(),L"Enabled",kind!=TrackMapKind); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
+    p.enabled=ReadBool(section.c_str(),L"Enabled",kind!=TrackMapKind && kind!=SideWarningKind); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
     p.rounded=ReadBool(section.c_str(),L"RoundedCorners",false);
     const Bands defaults=DefaultBands(kind); auto& b=o.bands;
     b.header=ReadBool(section.c_str(),L"ShowHeader",kind==PitLimiterKind?ReadBool(L"General",L"ShowTitleBar",false):defaults.header); b.headerMetrics=ReadSlots(section.c_str(),HeaderKeys,defaults.headerMetrics);
@@ -604,6 +621,7 @@ void ReadInstance(Overlay& o) {
     if(kind==WeatherKind) o.weather.order=ReadOrder(section.c_str(),L"ModuleOrder",WeatherOrder);
     for(int i=0;i<WeatherModuleCount;++i) o.weather.display[i]=ReadBool(section.c_str(),WeatherModules[i].key,WeatherModules[i].on);
     o.weather.strip=o.fuel.strip;
+    if(kind==SideWarningKind) { o.sideCar=ReadBool(section.c_str(),L"ShowCarPosition",true); o.sideApart=SideApart(ReadInt(section.c_str(),L"BarsApart",100)); }
     if(kind==PitLimiterKind) { o.setupChanges=ReadBool(section.c_str(),L"ShowSetupChanges",true); o.pitStrip=ReadBool(section.c_str(),L"ShowPitLaneProgress",true); o.pitSeconds=ReadBool(section.c_str(),L"CountdownInSeconds",false); }
     if(kind==TrackMapKind) {
         o.map.numbers=ReadBool(section.c_str(),L"ShowCarNumbers",true); o.map.ownClass=ReadBool(section.c_str(),L"OwnClass",false);
@@ -637,9 +655,9 @@ void LoadLayouts() {
 }
 // The active layout's overlays: instances added or dropped to its counts, then its settings.
 void LoadOverlays() {
-    // Each kind's section counts its instances; the Pit Assist has only one.
+    // Each kind's section counts its instances; the Pit Assist and the Side Warning have only one.
     for(int kind=0;kind<OverlayCount;++kind) {
-        const int count=kind==PitLimiterKind?1:std::clamp(ReadInt(KindSection(kind).c_str(),L"Instances",1),1,99);
+        const int count=SingleInstance(kind)?1:std::clamp(ReadInt(KindSection(kind).c_str(),L"Instances",1),1,99);
         for(int number=1;number<=count;++number)
             if(std::none_of(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return o.kind==kind && o.number==number;})) AddInstance(kind,number);
         for(auto it=app.overlays.begin();it!=app.overlays.end();) {
@@ -681,7 +699,7 @@ void Save() {
         write(L"Layouts",L"Order",ids); number(L"Layouts",L"Active",app.layout);
         for(const auto& l:app.layouts) { const auto section=L"Layout "+std::to_wstring(l.id); write(section.c_str(),L"Name",l.name); number(section.c_str(),L"Condition",l.condition); }
     }
-    for(int kind=0;kind<OverlayCount;++kind) if(kind!=PitLimiterKind) number(KindSection(kind).c_str(),L"Instances",InstanceCount(kind));
+    for(int kind=0;kind<OverlayCount;++kind) if(!SingleInstance(kind)) number(KindSection(kind).c_str(),L"Instances",InstanceCount(kind));
     for(const auto& o:app.overlays) {
         const auto name=Section(o); const auto* section=name.c_str(); const auto& p=o.place;
         number(section,L"X",p.x); number(section,L"Y",p.y); number(section,L"Scale",p.scale); number(section,L"Opacity",p.opacity);
@@ -726,6 +744,7 @@ void Save() {
             for(int i=0;i<WeatherModuleCount;++i) number(section,WeatherModules[i].key,o.weather.display[i]);
             number(section,L"Layout",o.weather.strip); order(section,L"ModuleOrder",o.weather.order);
         }
+        if(o.kind==SideWarningKind) { number(section,L"ShowCarPosition",o.sideCar); number(section,L"BarsApart",o.sideApart); }
         if(o.kind==PitLimiterKind) { number(section,L"ShowSetupChanges",o.setupChanges); number(section,L"ShowPitLaneProgress",o.pitStrip); number(section,L"CountdownInSeconds",o.pitSeconds); }
         if(o.kind==TrackMapKind) {
             number(section,L"ShowCarNumbers",o.map.numbers); number(section,L"OwnClass",o.map.ownClass); number(section,L"MarkerText",o.map.markerText); number(section,L"WhiteTrack",o.map.whiteTrack);
@@ -883,6 +902,7 @@ constexpr COLORREF LapsAhead=RGB(255,138,125), LapsBehind=RGB(127,191,255);
 constexpr COLORREF AirLine=RGB(255,176,103), HumidityLine=RGB(118,214,186); // Temperature history beside the track's Wet blue.
 constexpr COLORREF Value=RGB(195,204,213), Frame=RGB(46,49,53), IconBack=RGB(36,38,42), NeutralBadge=RGB(37,40,44), Brand=RGB(170,181,192);
 constexpr COLORREF BarBack=RGB(29,31,35), HatchFore=RGB(131,96,66), HatchBack=RGB(52,45,42), HatchGrey=RGB(78,82,88), Missing=RGB(158,111,69);
+constexpr COLORREF SideRed=RGB(255,90,82); // The Side Warning: brighter than Red, seen from the corner of the eye.
 constexpr COLORREF ChartBar=RGB(80,82,85), CautionBar=RGB(122,99,38), PitBar=RGB(40,43,47), WindowOpen=RGB(46,160,92), LapAhead=RGB(34,37,40), LapDone=RGB(52,55,60);
 }
 // A translucent ink pre-blended over a background.
@@ -1070,6 +1090,7 @@ PitStripModel PitStrip(const Overlay& o) {
 }
 int HeightWithTitle(const Overlay& o) {
     if(o.kind==TrackMapKind) return 32+TrackMapBody(o.map,MapOnly(o),o.map.details)+FooterHeight(o);
+    if(o.kind==SideWarningKind) return 32+SideBarHeight;
     const auto& t=o.table;
     if(o.kind==RelativeKind) return TableRowsTop(o)+t.rows*27+FooterHeight(o);
     if(o.kind==StandingsKind) {
@@ -1318,7 +1339,28 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         fill({0,px(y),width,height+titleOffset},Ink::Band); fill({0,px(y),width,px(y)+std::max(1,px(1))},Ink::Line);
         slots(o.bands.footer.metrics,{0,px(y),width,height+titleOffset});
     };
-    if(o.kind==TrackMapKind) {
+    if(o.kind==SideWarningKind) {
+        // Both bars side by side, the left one first. A car beside you turns its side red, two cars make two stripes;
+        // an amber block shows where the car is along yours, higher when it is ahead. Grey while there is none,
+        // which shows only while overlays are placed or previewed.
+        const auto& side=app.side; const int bar=width/2;
+        for(int s=0;s<2;++s) {
+            const int count=s?side.right:side.left; const double at=s?side.rightAt:side.leftAt;
+            const RECT r{s*bar,0,(s+1)*bar,height};
+            if(!count) { out.push_back({DrawCommand::Fill,Regular,0,r,Ink::HatchGrey}); continue; }
+            if(count==1) out.push_back({DrawCommand::Fill,Regular,0,r,Ink::SideRed});
+            else {
+                const int stripe=(bar-std::max(1,bar/7))/2;
+                out.push_back({DrawCommand::Fill,Regular,0,{r.left,0,r.left+stripe,height},Ink::SideRed});
+                out.push_back({DrawCommand::Fill,Regular,0,{r.right-stripe,0,r.right,height},Ink::SideRed});
+            }
+            if(o.sideCar && std::isfinite(at)) {
+                // The bar spans 7 m ahead to 7 m behind the middle of your car; the block is a car's 4.5 m long.
+                const int middle=height/2-static_cast<int>(std::lround(std::clamp(at,-7.,7.)/7*height/2)), half=static_cast<int>(std::lround(height*4.5/28));
+                out.push_back({DrawCommand::Fill,Regular,0,{r.left,std::max(0,middle-half),r.right,std::min(height,middle+half)},Ink::Orange});
+            }
+        }
+    } else if(o.kind==TrackMapKind) {
 #include "TrackMapScene.inc"
     } else if(IsTable(o.kind)) {
         const auto columns=VisibleColumns(o); int headerX=12;
@@ -1884,7 +1926,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         footer(changes.empty()?y:y+8);
     }
     // The 1 px border, last so it stays on top; the window region rounds the same corners. The Pit Assist's color needs none.
-    if(o.kind!=PitLimiterKind && !MapOnly(o)) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{static_cast<float>(o.place.rounded?px(CornerRadius):0)}});
+    if(o.kind!=PitLimiterKind && o.kind!=SideWarningKind && !MapOnly(o)) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{static_cast<float>(o.place.rounded?px(CornerRadius):0)}});
 }
 // DrawTextW costs about three times as much as measuring and ExtTextOutW; it remains only for ellipsis.
 void DrawLabel(HDC dc,const DrawCommand& c) {
@@ -2157,8 +2199,10 @@ void RefreshOverlay(Overlay& o) {
     if(client.right<=0 || client.bottom<=0) return;
     const int dpi=GetDpiForWindow(o.window);
     // The buffer comes first: building the scene measures text with its fonts.
-    const bool resized=EnsureBuffer(o,client.right,client.bottom,dpi);
-    { ProfileScope p(true,[&]{ return ProfileName(o,"  scene"); }); BuildScene(o,client.right,client.bottom,dpi,app.sceneBuffer); }
+    // The Side Warning's buffer holds both bars: its window shows the left half, the mirror the right.
+    const int width=client.right*(o.kind==SideWarningKind?2:1);
+    const bool resized=EnsureBuffer(o,width,client.bottom,dpi);
+    { ProfileScope p(true,[&]{ return ProfileName(o,"  scene"); }); BuildScene(o,width,client.bottom,dpi,app.sceneBuffer); }
     const bool full=resized || app.sceneBuffer.size()!=o.scene.size() || o.layeredAlpha;
     HRGN dirty=nullptr;
     if(!full) {
@@ -2187,8 +2231,8 @@ void RefreshOverlay(Overlay& o) {
     if(commandTiming) {
         // Repaints whole or in part, the area painted, and which command types changed.
         auto& s=repaintStats[o.kind]; ++(full?s.full:s.partial);
-        RECT box{0,0,client.right,client.bottom}; if(dirty) GetRgnBox(dirty,&box);
-        s.pixels+=static_cast<double>(box.right-box.left)*(box.bottom-box.top); s.area+=static_cast<double>(client.right)*client.bottom;
+        RECT box{0,0,width,client.bottom}; if(dirty) GetRgnBox(dirty,&box);
+        s.pixels+=static_cast<double>(box.right-box.left)*(box.bottom-box.top); s.area+=static_cast<double>(width)*client.bottom;
         if(!full) for(size_t i=0;i<app.sceneBuffer.size();++i) if(!(app.sceneBuffer[i]==o.scene[i])) ++s.changed[app.sceneBuffer[i].type];
     }
 #endif
@@ -2199,6 +2243,7 @@ void RefreshOverlay(Overlay& o) {
     // RACEMATE_FULL_COPY=1: every refresh copies the whole window, to separate the copy's fixed cost from its area.
     if(dirty && GetEnvironmentVariableW(L"RACEMATE_FULL_COPY",nullptr,0)) { DeleteObject(dirty); dirty=nullptr; }
 #endif
+    if(o.mirror) InvalidateRect(o.mirror,nullptr,FALSE);
     if(dirty) { InvalidateRgn(o.window,dirty,FALSE); DeleteObject(dirty); }
     else InvalidateRect(o.window,nullptr,FALSE);
 }
@@ -2223,6 +2268,14 @@ void ApplyOpacity(const Overlay& o) {
     }
     if(perPixel) PresentLayered(o);
     else SetLayeredWindowAttributes(o.window,0,static_cast<BYTE>(o.place.opacity*255/100),LWA_ALPHA);
+    if(o.mirror) SetLayeredWindowAttributes(o.mirror,0,static_cast<BYTE>(o.place.opacity*255/100),LWA_ALPHA);
+}
+// The Side Warning's right bar: as far from the right edge of the monitor as the left bar is from its left edge.
+void PlaceMirror(const Overlay& o) {
+    RECT r{}; GetWindowRect(o.window,&r); MONITORINFO info{sizeof(info)};
+    if(!GetMonitorInfoW(MonitorFromRect(&r,MONITOR_DEFAULTTONEAREST),&info)) return;
+    SetWindowPos(o.mirror,HWND_TOPMOST,info.rcMonitor.left+info.rcMonitor.right-r.right,r.top,r.right-r.left,r.bottom-r.top,SWP_NOACTIVATE);
+    InvalidateRect(o.mirror,nullptr,FALSE);
 }
 void Fit(Overlay& o,bool recover=false) {
     InvalidateModel();
@@ -2239,15 +2292,41 @@ void Fit(Overlay& o,bool recover=false) {
         y=static_cast<int>(std::clamp<LONG>(y,info.rcWork.top,maxY));
         o.place.x=x+(o.place.growLeft?w:0); o.place.y=y+(o.place.growUp?h:0);
     }
+    if(o.kind==SideWarningKind) {
+        // Only its height is placed by hand; across, the bars stay centred on their monitor.
+        const RECT at{x,y,x+w,y+h}; MONITORINFO info{sizeof(info)}; GetMonitorInfoW(MonitorFromRect(&at,MONITOR_DEFAULTTONEAREST),&info);
+        x=SideBarLeft(info.rcMonitor,o.sideApart); o.place.x=x+(o.place.growLeft?w:0);
+    }
     SetWindowPos(o.window,HWND_TOPMOST,x,y,w,h,SWP_NOACTIVATE);
     o.Free(); InvalidateRect(o.window,nullptr,FALSE);
     ApplyOpacity(o);
     const int diameter=2*MulDiv(CornerRadius,dpi*o.place.scale,9600);
     SetWindowRgn(o.window,o.place.rounded?CreateRoundRectRgn(0,0,w+1,h+1,diameter,diameter):nullptr,TRUE);
+    if(o.mirror) { SetWindowRgn(o.mirror,o.place.rounded?CreateRoundRectRgn(0,0,w+1,h+1,diameter,diameter):nullptr,TRUE); PlaceMirror(o); }
 }
 void CreateOverlayWindow(Overlay& o) {
     CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_LAYERED|WS_EX_TRANSPARENT,L"RaceMate.Overlay",Name(o).c_str(),WS_POPUP,o.place.x,o.place.y,365,200,nullptr,nullptr,app.instance,&o);
+    if(o.kind==SideWarningKind) {
+        o.mirror=CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_LAYERED|WS_EX_TRANSPARENT,L"RaceMate.Mirror",Name(o).c_str(),WS_POPUP,0,0,0,0,nullptr,nullptr,app.instance,nullptr);
+        SetWindowLongPtrW(o.mirror,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(&o));
+    }
     Fit(o,true);
+}
+// The Side Warning's right bar shows the right half of its overlay's buffer; it is moved with the left bar, never itself.
+LRESULT CALLBACK MirrorProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
+    const auto* o=reinterpret_cast<const Overlay*>(GetWindowLongPtrW(w,GWLP_USERDATA));
+    switch(m) {
+    case WM_PAINT: {
+        PAINTSTRUCT p{}; HDC dc=BeginPaint(w,&p); const RECT& r=p.rcPaint;
+        if(o && o->dc) BitBlt(dc,r.left,r.top,r.right-r.left,r.bottom-r.top,o->dc,o->width/2+r.left,r.top,SRCCOPY);
+        EndPaint(w,&p); return 0;
+    }
+    case WM_PRINTCLIENT: if(o && o->dc) BitBlt(reinterpret_cast<HDC>(wp),0,0,o->width/2,o->height,o->dc,o->width/2,0,SRCCOPY); return 0;
+    case WM_ERASEBKGND: return 1;
+    case WM_NCHITTEST: return HTTRANSPARENT;
+    case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
+    }
+    return DefWindowProcW(w,m,wp,lp);
 }
 // A ring just outside an overlay marks it: red while its settings are open, dashed yellow while overlays can be moved.
 // It is a window of its own, so the overlay keeps its size and content.
@@ -2256,7 +2335,7 @@ constexpr int FrameWidth=3;
 int FrameStyleOf(const Overlay& o) { return !o.window || !IsWindowVisible(o.window)?NoFrame:(Editing(o)?EditingFrame:(app.edit?MovingFrame:NoFrame)); }
 void PaintFrame(HWND w,HDC dc) {
     const auto* o=reinterpret_cast<const Overlay*>(GetWindowLongPtrW(w,GWLP_USERDATA)); if(!o) return;
-    RECT r{}; GetClientRect(w,&r); const int thick=MulDiv(FrameWidth,GetDpiForWindow(w),96), style=o->frameState/2;
+    RECT r{}; GetClientRect(w,&r); const int thick=MulDiv(FrameWidth,GetDpiForWindow(w),96), style=(w==o->mirrorFrame?o->mirrorFrameState:o->frameState)/2;
     const int diameter=o->place.rounded?2*(MulDiv(CornerRadius,GetDpiForWindow(o->window)*o->place.scale,9600)+thick):0;
     SetDCBrushColor(dc,Ink::Panel); FillRect(dc,&r,static_cast<HBRUSH>(GetStockObject(DC_BRUSH))); // The gaps between dashes.
     LOGBRUSH ink{BS_SOLID,style==EditingFrame?RGB(235,64,52):Ink::Yellow,0}; const DWORD dashes[]={static_cast<DWORD>(3*thick),static_cast<DWORD>(2*thick)};
@@ -2276,23 +2355,29 @@ LRESULT CALLBACK FrameProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     }
     return DefWindowProcW(w,m,wp,lp);
 }
-// Shows, moves or hides an overlay's ring to match its state, place, size and corners.
-void UpdateFrame(Overlay& o) {
-    const int style=FrameStyleOf(o);
-    if(style==NoFrame) { if(o.frame && IsWindowVisible(o.frame)) ShowWindow(o.frame,SW_HIDE); o.frameState=-1; return; }
-    if(!o.frame) {
-        o.frame=CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_LAYERED|WS_EX_TRANSPARENT,L"RaceMate.Frame",L"",WS_POPUP,0,0,0,0,nullptr,nullptr,app.instance,nullptr);
-        SetWindowLongPtrW(o.frame,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(&o)); SetLayeredWindowAttributes(o.frame,0,255,LWA_ALPHA);
+// Shows, moves or hides the ring around one of an overlay's windows to match its state, place, size and corners.
+void UpdateRing(Overlay& o,HWND window,int style,HWND& frame,int& frameState,RECT& frameRect) {
+    if(style==NoFrame) { if(frame && IsWindowVisible(frame)) ShowWindow(frame,SW_HIDE); frameState=-1; return; }
+    if(!frame) {
+        frame=CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_LAYERED|WS_EX_TRANSPARENT,L"RaceMate.Frame",L"",WS_POPUP,0,0,0,0,nullptr,nullptr,app.instance,nullptr);
+        SetWindowLongPtrW(frame,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(&o)); SetLayeredWindowAttributes(frame,0,255,LWA_ALPHA);
     }
-    RECT r{}; GetWindowRect(o.window,&r); const int thick=MulDiv(FrameWidth,GetDpiForWindow(o.window),96); InflateRect(&r,thick,thick);
+    RECT r{}; GetWindowRect(window,&r); const int thick=MulDiv(FrameWidth,GetDpiForWindow(window),96); InflateRect(&r,thick,thick);
     const int state=style*2+o.place.rounded;
-    if(state==o.frameState && EqualRect(&r,&o.frameRect) && IsWindowVisible(o.frame)) return;
+    if(state==frameState && EqualRect(&r,&frameRect) && IsWindowVisible(frame)) return;
     // Only the ring between the overlay's edge and the frame's outer edge belongs to the window.
-    const int w=r.right-r.left, h=r.bottom-r.top, inner=o.place.rounded?2*MulDiv(CornerRadius,GetDpiForWindow(o.window)*o.place.scale,9600):0;
+    const int w=r.right-r.left, h=r.bottom-r.top, inner=o.place.rounded?2*MulDiv(CornerRadius,GetDpiForWindow(window)*o.place.scale,9600):0;
     HRGN ring=CreateRoundRectRgn(0,0,w+1,h+1,inner?inner+2*thick:0,inner?inner+2*thick:0), hole=CreateRoundRectRgn(thick,thick,w-thick+1,h-thick+1,inner,inner);
-    CombineRgn(ring,ring,hole,RGN_DIFF); DeleteObject(hole); SetWindowRgn(o.frame,ring,FALSE);
-    o.frameState=state; o.frameRect=r;
-    SetWindowPos(o.frame,HWND_TOPMOST,r.left,r.top,w,h,SWP_NOACTIVATE|SWP_SHOWWINDOW); InvalidateRect(o.frame,nullptr,FALSE);
+    CombineRgn(ring,ring,hole,RGN_DIFF); DeleteObject(hole); SetWindowRgn(frame,ring,FALSE);
+    frameState=state; frameRect=r;
+    SetWindowPos(frame,HWND_TOPMOST,r.left,r.top,w,h,SWP_NOACTIVATE|SWP_SHOWWINDOW); InvalidateRect(frame,nullptr,FALSE);
+}
+// The overlay's ring, and the Side Warning's right bar its own alike: both bars look the same while placed or edited.
+void UpdateFrame(Overlay& o) {
+    UpdateRing(o,o.window,FrameStyleOf(o),o.frame,o.frameState,o.frameRect);
+    if(!o.mirror) return;
+    const int style=!IsWindowVisible(o.mirror)?NoFrame:(Editing(o)?EditingFrame:(app.edit?MovingFrame:NoFrame));
+    UpdateRing(o,o.mirror,style,o.mirrorFrame,o.mirrorFrameState,o.mirrorFrameRect);
 }
 // Whether a refresh is due on a timer tick at now. The deadline moves on by whole periods, so the rate
 // holds on any timer: an earlier deadline from the tick time would drift (10 Hz on a 66 ms timer gave
@@ -2321,6 +2406,18 @@ bool OverlayDue(Overlay& o,int rate) {
     }
     return RefreshDue(o.due,app.now,1000/rate,app.timerMs/2);
 }
+// The spotter's report for the Side Warning. A side stays lit 300 ms after it clears, so its bar does not flicker
+// when iRacing's report wavers. The preview has a car 1.5 m ahead on the left and two cars on the right.
+void UpdateSide() {
+    if(app.preview) { app.side={1,2,1.5,std::numeric_limits<double>::quiet_NaN()}; app.sideSeen={}; return; }
+    const auto now=SideTrafficOf(app.session,app.frame);
+    auto hold=[&](int count,double at,int& shown,double& shownAt,ULONGLONG& seen) {
+        if(count) { shown=count; shownAt=at; seen=app.now; }
+        else if(app.now-seen>=300) { shown=0; shownAt=std::numeric_limits<double>::quiet_NaN(); }
+    };
+    hold(now.left,now.leftAt,app.side.left,app.side.leftAt,app.sideSeen[0]);
+    hold(now.right,now.rightAt,app.side.right,app.side.rightAt,app.sideSeen[1]);
+}
 // Ticks refresh each overlay at its own rate; everything else (settings, hide, diagnostics) forces a refresh.
 void UpdateOverlays(bool force=true) {
     if(!app.overlayClass) return;
@@ -2328,13 +2425,20 @@ void UpdateOverlays(bool force=true) {
     InvalidateModel();
     const bool pitVisible=app.pitVisible=app.pitVisibility.Update(app.session,app.frame);
     app.setupDials.Update(app.session,app.frame);
+    UpdateSide();
     for(auto& o:app.overlays) {
         bool visible=o.place.enabled && !app.hidden && (!app.layoutIdle || app.preview || app.edit) && (o.kind!=WeatherKind || std::any_of(o.weather.display.begin(),o.weather.display.begin()+WeatherPanelCount,[](bool value){return value;})) && (app.preview || (app.frame.connected && (o.kind!=PitLimiterKind || pitVisible)));
         auto style=GetWindowLongPtrW(o.window,GWL_EXSTYLE);
         const auto desired=app.edit?(style&~WS_EX_TRANSPARENT):(style|WS_EX_TRANSPARENT);
         if(style!=desired) SetWindowLongPtrW(o.window,GWL_EXSTYLE,desired);
-        if(visible && !IsWindowVisible(o.window)) { ShowWindow(o.window,SW_SHOWNOACTIVATE); o.due=0; }
-        if(!visible && IsWindowVisible(o.window)) ShowWindow(o.window,SW_HIDE);
+        // The Side Warning shows a bar while a car is beside you on its side, both while overlays are moved.
+        bool shown=visible, mirrored=false;
+        if(o.kind==SideWarningKind) {
+            shown=visible && (app.edit || app.side.left); mirrored=visible && (app.edit || app.side.right); visible=shown || mirrored;
+            if(mirrored!=static_cast<bool>(IsWindowVisible(o.mirror))) { ShowWindow(o.mirror,mirrored?SW_SHOWNOACTIVATE:SW_HIDE); if(mirrored) o.due=0; }
+        }
+        if(shown && !IsWindowVisible(o.window)) { ShowWindow(o.window,SW_SHOWNOACTIVATE); o.due=0; }
+        if(!shown && IsWindowVisible(o.window)) ShowWindow(o.window,SW_HIDE);
         UpdateFrame(o);
         if(visible) {
             const int dpi=GetDpiForWindow(o.window);
@@ -2514,10 +2618,18 @@ LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     case WM_NCHITTEST: return app.edit?HTCAPTION:HTTRANSPARENT;
     case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
     case WM_EXITSIZEMOVE: CaptureOverlayCorner(*o); Save(); return 0;
-    case WM_WINDOWPOSCHANGED: UpdateFrame(*o); break; // The ring follows while the overlay is dragged or resized.
+    case WM_WINDOWPOSCHANGING:
+        // The Side Warning's bars are dragged up or down, or onto another monitor; across they keep their distance apart.
+        if(auto* p=reinterpret_cast<WINDOWPOS*>(lp); o->kind==SideWarningKind && !(p->flags&SWP_NOMOVE)) {
+            RECT now{}; GetWindowRect(w,&now); const int width=p->flags&SWP_NOSIZE?now.right-now.left:p->cx, height=p->flags&SWP_NOSIZE?now.bottom-now.top:p->cy;
+            const RECT at{p->x,p->y,p->x+width,p->y+height}; MONITORINFO info{sizeof(info)};
+            if(GetMonitorInfoW(MonitorFromRect(&at,MONITOR_DEFAULTTONEAREST),&info)) p->x=SideBarLeft(info.rcMonitor,o->sideApart);
+        }
+        break;
+    case WM_WINDOWPOSCHANGED: if(o->mirror) PlaceMirror(*o); UpdateFrame(*o); break; // The mirror and the rings follow while it is dragged or resized.
     case WM_DPICHANGED: Fit(*o); return 0;
     case WM_DISPLAYCHANGE: Fit(*o,true); return 0;
-    case WM_DESTROY: o->Free(); if(o->frame) DestroyWindow(o->frame); o->frame=nullptr; return 0;
+    case WM_DESTROY: o->Free(); for(HWND window:{o->frame,o->mirror,o->mirrorFrame}) if(window) DestroyWindow(window); o->frame=o->mirror=o->mirrorFrame=nullptr; return 0;
     }
     return DefWindowProcW(w,m,wp,lp);
 }
@@ -2668,6 +2780,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
     CreateMainUi();
     cls.lpfnWndProc=OverlayProc; cls.hbrBackground=nullptr; cls.lpszClassName=L"RaceMate.Overlay"; RegisterClassExW(&cls);
     cls.lpfnWndProc=FrameProc; cls.lpszClassName=L"RaceMate.Frame"; RegisterClassExW(&cls);
+    cls.lpfnWndProc=MirrorProc; cls.lpszClassName=L"RaceMate.Mirror"; RegisterClassExW(&cls);
     app.overlayClass=true;
     for(auto& o:app.overlays) CreateOverlayWindow(o);
 #ifdef RACEMATE_DIAGNOSTICS

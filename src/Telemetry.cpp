@@ -39,7 +39,7 @@ constexpr const char* VarNames[] = {
     "CarIdxLapCompleted","CarIdxLapDistPct","CarIdxEstTime","CarIdxF2Time","CarIdxBestLapTime","CarIdxLastLapTime","CarIdxOnPitRoad",
     "PlayerCarIsTowing","PlayerCarTowTime","Speed","PlayerTrackSurface","ReplayFrameNumEnd","dcBrakeBias","SessionTimeTotal","SessionLapsTotal",
     "WeatherDeclaredWet","Precipitation","RelativeHumidity","FogLevel","Skies","PitSvFlags","PitSvFuel","PitRepairLeft",
-    "dcABS","dcTractionControl","dcTractionControl2","dcThrottleShape","dcFuelMixture","dcEngineBraking","IsGarageVisible","Brake"};
+    "dcABS","dcTractionControl","dcTractionControl2","dcThrottleShape","dcFuelMixture","dcEngineBraking","IsGarageVisible","Brake","CarLeftRight"};
 static_assert(std::size(VarNames) == Telemetry::VarCount);
 }
 bool Telemetry::BuildVariables(const MemoryHeader& h) {
@@ -101,6 +101,7 @@ bool Telemetry::Read(Frame& f, Session& s) {
     next.onTrack=Value(IsOnTrack,0)!=0;
     next.pit=Value(OnPitRoad,0)!=0; next.inStall=Value(PlayerCarInPitStall,0)!=0;
     next.replay=Value(IsReplayPlaying,0)!=0; next.garage=Value(IsGarageVisible,0)!=0; next.brake=Has(Brake)?Value(Brake,-1):-1;
+    next.spotter=Has(CarLeftRight)?static_cast<int>(Value(CarLeftRight,-1)):-1;
     next.replayFramesBehind=Has(ReplayFrameNumEnd)?static_cast<int>(Value(ReplayFrameNumEnd,-1)):-1;
     next.limiterKnown=Has(EngineWarnings);
     next.limiter=(static_cast<unsigned>(Value(EngineWarnings,0))&EngineWarning::PitSpeedLimiter)!=0;

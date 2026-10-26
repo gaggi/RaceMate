@@ -82,7 +82,8 @@ void ShowPage(Page page,Overlay* overlay=nullptr) {
         L"Class leaders and the cars around you: rows, columns, header and footer.",
         L"Choose and order what it shows, and which laps count toward consumption.",
         L"The pit limiter, your way through the pit lane to your box with where to brake, and what you changed in the car since the setup.",
-        L"Choose and order what it shows.",L"The official iRacing track map with every car: layout, markers, pit exit and what is drawn."};
+        L"Choose and order what it shows.",L"The official iRacing track map with every car: layout, markers, pit exit and what is drawn.",
+        L"Bars at the screen edges that light up while a car is beside you."};
     if(page==Page::Overlay) {
         SetWindowTextW(ui.title,Name(*ui.overlay).c_str()); SetWindowTextW(ui.hint,hints[ui.overlay->kind]);
     } else if(page==Page::RaceControl) {

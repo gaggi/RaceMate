@@ -1,5 +1,6 @@
 // A stand-in for iRacing on this machine, for benchmarks: the SDK's shared memory and data-valid event,
-// 60 cars racing in three classes, a new frame 60 times a second like iRacing.
+// 60 cars racing in three classes, a new frame 60 times a second like iRacing. Every 10 s the spotter reports
+// a car passing you on the left, two cars on the right and three wide, with a car beside you to match.
 // SessionTime is QueryPerformanceCounter seconds, so a reader in another process can tell how old a frame is.
 //   RaceMateFakeIRacing.exe <seconds> [mapping name] [event name]
 // Without names it takes iRacing's own, which iRacing's service may already hold (empty); then it stops.
@@ -24,7 +25,7 @@ std::vector<Variable> variables = {
     {"PlayerCarInPitStall",1,1},{"IsGarageVisible",1,1},{"EngineWarnings",3,1},{"FuelLevel",4,1},{"LapCompleted",2,1},{"LapDistPct",4,1},
     {"LapLastLapTime",4,1},{"LapBestLapTime",4,1},{"PlayerCarMyIncidentCount",2,1},{"AirTemp",4,1},{"TrackTempCrew",4,1},
     {"WindDir",4,1},{"WindVel",4,1},{"YawNorth",4,1},{"TrackWetness",2,1},{"Speed",4,1},{"PlayerTrackSurface",2,1},{"Brake",4,1},
-    {"dcBrakeBias",4,1},{"SessionTimeOfDay",4,1},{"SessionLapsRemainEx",2,1},
+    {"dcBrakeBias",4,1},{"SessionTimeOfDay",4,1},{"SessionLapsRemainEx",2,1},{"CarLeftRight",2,1},
     {"CarIdxPosition",2,64},{"CarIdxClassPosition",2,64},{"CarIdxLap",2,64},{"CarIdxLapCompleted",2,64},{"CarIdxTrackSurface",2,64},
     {"CarIdxSessionFlags",3,64},{"CarIdxTireCompound",2,64},{"CarIdxLapDistPct",4,64},{"CarIdxEstTime",4,64},{"CarIdxF2Time",4,64},
     {"CarIdxBestLapTime",4,64},{"CarIdxLastLapTime",4,64},{"CarIdxOnPitRoad",1,64}};
@@ -112,6 +113,14 @@ int main(int argc, char** argv) {
             set(row, "CarIdxLastLapTime", lapTime, i); set(row, "CarIdxOnPitRoad", 0, i); set(row, "CarIdxTireCompound", 0, i);
         }
         for (int i = Cars; i < 64; ++i) { set(row, "CarIdxLapDistPct", -1, i); set(row, "CarIdxTrackSurface", -1, i); set(row, "CarIdxPosition", 0, i); }
+        // The spotter in a 10 s cycle: clear, a car passing on the left (from 6 m behind to 6 m ahead), clear,
+        // two cars on the right, three wide. The car beside you is moved there; the others keep racing.
+        const int phase = tick % 600;
+        const int spotter = phase < 150 ? 1 : phase < 330 ? 2 : phase < 420 ? 1 : phase < 540 ? 6 : 4;
+        if (spotter != 1) {
+            const double metres = spotter == 2 ? -6 + 12.0 * (phase - 150) / 180 : 1.5, pct = std::fmod(laps[Player] + metres / 5200, 1.0);
+            set(row, "CarIdxLapDistPct", pct, (Player + 1) % Cars);
+        }
         const int playerLaps = static_cast<int>(laps[Player]);
         set(row, "SessionTime", time); set(row, "SessionTimeRemain", 3600 - tick / 60.0); set(row, "SessionNum", 0); set(row, "SessionState", 4);
         set(row, "SessionFlags", 0x4); set(row, "PlayerCarIdx", Player); set(row, "CamCarIdx", Player); set(row, "CamGroupNumber", 1);
@@ -121,6 +130,7 @@ int main(int argc, char** argv) {
         set(row, "AirTemp", 22); set(row, "TrackTempCrew", 31); set(row, "WindDir", 1.2); set(row, "WindVel", 3.5);
         set(row, "YawNorth", std::fmod(tick * .01, 6.283)); set(row, "TrackWetness", 1); set(row, "Speed", 55); set(row, "PlayerTrackSurface", 3);
         set(row, "Brake", 0); set(row, "dcBrakeBias", 54.5); set(row, "SessionTimeOfDay", 50000 + tick / 60.0); set(row, "SessionLapsRemainEx", 32767);
+        set(row, "CarLeftRight", spotter);
         MemoryBarrier(); h->buffers[buffer].tick = tick; MemoryBarrier();
         PulseEvent(event);
     }

@@ -824,6 +824,25 @@ Session DemoSession() {
     for (int i = 0; i < 10; ++i) { s.drivers.push_back({i,1,2400+i*117,0xe7c451,false,false,names[i],std::to_string(12+i),"GT3"}); s.drivers.back().carPath=paths[i]; s.drivers.back().brand=CarBrand(paths[i],""); }
     return s;
 }
+SideTraffic SideTrafficOf(const Session& s,const Frame& f) {
+    SideTraffic t;
+    if(!f.connected || !f.onTrack || f.replay || f.player<0 || f.player>=MaxCars) return t;
+    switch(f.spotter) {
+    case 2: t.left=1; break; case 3: t.right=1; break; case 4: t.left=t.right=1; break;
+    case 5: t.left=2; break; case 6: t.right=2; break; default: return t;
+    }
+    if((t.left && t.right) || !(s.trackMeters>0)) return t;
+    // The nearest car within 10 m along the lap: beside you, the spotter says on which side.
+    const double own=f.cars[f.player].pct; double nearest=std::numeric_limits<double>::quiet_NaN();
+    for(int i=0;i<MaxCars;++i) {
+        const auto& c=f.cars[i];
+        if(i==f.player || c.pct<0 || c.surface<0 || c.surface==1 || c.pit || own<0) continue;
+        double apart=c.pct-own; apart-=std::floor(apart+.5); apart*=s.trackMeters;
+        if(std::abs(apart)<=10 && !(std::abs(apart)>=std::abs(nearest))) nearest=apart;
+    }
+    (t.left?t.leftAt:t.rightAt)=nearest;
+    return t;
+}
 int NorthTurnFromOffset(double offset) {
     if(!std::isfinite(offset)) return -1;
     const int turn=static_cast<int>(std::lround(offset*180/3.141592653589793+270))%360;

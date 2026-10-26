@@ -12,6 +12,7 @@
 | [Pit Assist](#pit-assist) | Limiter state, pit lane progress and setup adjustments in the pit lane | 10 Hz |
 | [Weather](#weather) | Current conditions, history and wind | 1 Hz |
 | [Track Map](track-map.md) | Car locations on a Map, Circle or Line | 20 Hz |
+| [Side Warning](#side-warning) | Bars at the screen edges while a car is beside you | 20 Hz |
 
 Also on this page: [Position in the Relative](#position-in-the-relative) · [Table columns](#table-columns) · [Status badges](#status-badges) · [Header and footer metrics](#header-and-footer-metrics)
 
@@ -181,6 +182,20 @@ Your box position and the speed limit come from iRacing's session information. T
 The entry brake point uses your car's deceleration, measured from your own braking zones with the pedal well down and kept per car, with a 5 % margin. Until it is learned, RaceMate assumes 10 m/s². The countdown shows the brake point coming, so no reaction time is added. Braking into the box assumes 7 m/s². Neither is learned in Preview, where a car drives through the pit lane at the limit, stops in its box and leaves again.
 
 **Setup changes** is enabled by default. In the pit lane it lists supported adjustments that differ from the loaded setup, showing current and setup values: brake bias, ABS, traction control, throttle map, fuel mixture and engine braking where available. If a dial already differs when you enter the car, RaceMate treats it as not comparable for that car and leaves it out.
+
+## Side Warning
+
+Two narrow bars, by default at the left and right edge of the screen, light up while a car is beside you: the left bar for a car on your left, the right bar for one on your right. They show **only while you drive your own car**, as iRacing's spotter reports it (`CarLeftRight`), and stay lit 300 ms after the side clears so they don't flicker. The Side Warning is off by default; switch it on under **Overlays**.
+
+| Appearance | Meaning |
+| --- | --- |
+| Red bar | A car beside you on that side |
+| Two red stripes | Two cars on that side |
+| Amber block | Where the car beside you is along your car: higher when it is ahead, lower when behind. The bar spans 7 m either way |
+
+The spotter tells the side, but not which car is there. RaceMate takes the nearest car within 10 m along the lap as the one beside you. With cars on both sides their lap distance cannot tell which is where, so neither bar shows a block then. **Where the car beside you is** switches the block off.
+
+The bars stay centred on their monitor. **Distance apart** sets how far apart their outer edges are, as a share of the screen width: 100 % puts them at its edges, down to 20 % for bars close beside the middle of the screen. Drag the left bar up or down, or onto another monitor; the right bar follows at the same height. Size, opacity and rounded corners apply to both, and both get the same frame while overlays are moved or the page is open. Both bars show while overlays are moved, in grey when nobody is beside you. The Side Warning has no header or footer, and only one instance.
 
 ## Weather
 

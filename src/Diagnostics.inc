@@ -294,6 +294,7 @@ int RunDiagnostics() {
         app.fuelPlan=savedPlan;
         // One registry and renderer for both bands of every kind, including the Pit Assist.
         for(int kind=0;kind<OverlayCount;++kind) {
+            if(kind==SideWarningKind) continue; // Its bars have no bands.
             auto& o=First(kind); const Bands bands=o.bands;
             o.bands.header=true; o.bands.footer.enabled=true;
             o.bands.headerMetrics={LeaderDistanceMetric,WhiteFlagTimeMetric,NoMetric,NoMetric};
@@ -789,7 +790,8 @@ int RunDiagnostics() {
         };
         ShowPage(Page::Overlays); aligned("Overlays");
         ShowPage(Page::Settings); aligned("Settings");
-        constexpr const char* pages[]={"Relative","Standings","Fuel Calculator","Pit Assist","Weather","Track Map"};
+        constexpr const char* pages[]={"Relative","Standings","Fuel Calculator","Pit Assist","Weather","Track Map","Side Warning"};
+        static_assert(std::size(pages)==OverlayCount);
         for(int kind=0;kind<OverlayCount;++kind) { OpenOverlay(First(kind)); aligned(pages[kind]); }
         ShowPage(Page::Overlays);
         report<<"Expand, sort arrows, toggle and button in order and in columns in every settings list: "<<(alignOk && toggles>40?"PASS":"FAIL")<<"\n"; ok=alignOk && toggles>40 && ok;
@@ -1415,7 +1417,7 @@ int RunDiagnostics() {
     }
     app.pitVisibility.Reset();
     app.preview=false; app.hidden=false; app.frame.pit=false; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind))&&ok;
     const auto originalSurface=app.frame.cars[app.frame.player].surface;
     app.frame.cars[app.frame.player].surface=2; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
     ok=Export(First(3).window,L"build\\qa\\pit-approach.bmp") && ok;
@@ -1478,13 +1480,13 @@ int RunDiagnostics() {
     app.frame.cars[app.frame.player].surface=originalSurface;
     app.frame.pit=true; UpdateOverlays(); ok=IsWindowVisible(First(3).window)&&ok;
     app.frame.onTrack=false; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind))&&ok;
     app.frame.camera=4; app.frame.replay=true; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind))&&ok;
     ok=ReferenceCar(app.frame)==4 && !Rows(First(0)).empty() && ok;
     ok=Export(First(0).window,L"build\\qa\\relative-replay.bmp")&&ok;
     app.frame.replay=false; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind))&&ok;
     app.frame.connected=false; UpdateOverlays();
     for(auto& o:app.overlays) ok=!IsWindowVisible(o.window)&&ok;
     app.preview=true; app.hidden=true; UpdateOverlays();
@@ -1493,6 +1495,47 @@ int RunDiagnostics() {
     First(0).place.x=0; First(0).place.scale=50; Load();
     ok=(First(0).place.x==123 && First(0).place.scale==130 && !app.settingsError)&&ok;
     report<<"Visibility in car, spotting, replay, pause, disconnect, pit lane, hide and saved placement: "<<(ok?"PASS":"FAIL")<<"\n";
+    {
+        // Side Warning: a bar at each edge of the monitor, the right one mirrored; each shows while the spotter has a
+        // car on its side, with a block where that car is.
+        auto& side=First(SideWarningKind); const auto savedPlace=side.place; const auto savedFrame=app.frame; const auto savedSession=app.session; const bool savedHidden=app.hidden;
+        app.preview=true; app.hidden=false; side.place.enabled=true; Fit(side); UpdateOverlays();
+        bool sideOk=IsWindowVisible(side.window) && IsWindowVisible(side.mirror); // The preview: a car left, two right.
+        RECT left{},right{}; GetWindowRect(side.window,&left); GetWindowRect(side.mirror,&right);
+        MONITORINFO monitorInfo{sizeof(monitorInfo)}; GetMonitorInfoW(MonitorFromRect(&left,MONITOR_DEFAULTTONEAREST),&monitorInfo);
+        sideOk=right.top==left.top && right.bottom==left.bottom && right.right-right.left==left.right-left.left
+            && left.left-monitorInfo.rcMonitor.left==monitorInfo.rcMonitor.right-right.right && sideOk;
+        sideOk=Export(side.window,L"build\\qa\\side-warning-left.bmp") && Export(side.mirror,L"build\\qa\\side-warning-right.bmp") && sideOk;
+        // At 100 % apart the bars sit at the monitor's edges. Dragging moves them up or down together, never across.
+        sideOk=left.left==monitorInfo.rcMonitor.left && right.right==monitorInfo.rcMonitor.right && sideOk;
+        SetWindowPos(side.window,nullptr,left.left+40,left.top+60,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
+        RECT moved{}; GetWindowRect(side.window,&moved); GetWindowRect(side.mirror,&right);
+        sideOk=moved.left==left.left && moved.top==left.top+60 && right.top==left.top+60 && right.right==monitorInfo.rcMonitor.right && sideOk;
+        // 60 % apart: centred on the monitor, the outer edges 60 % of its width apart; kept when saved.
+        side.sideApart=60; Fit(side); Save(); side.sideApart=100; Load(); Fit(side);
+        GetWindowRect(side.window,&moved); GetWindowRect(side.mirror,&right);
+        const int span=monitorInfo.rcMonitor.right-monitorInfo.rcMonitor.left;
+        sideOk=side.sideApart==60 && std::abs((right.right-moved.left)-span*60/100)<=1 && moved.left-monitorInfo.rcMonitor.left==monitorInfo.rcMonitor.right-right.right && sideOk;
+        side.sideApart=100; Fit(side); UpdateOverlays();
+        auto block=[&](bool onRight) { return std::any_of(side.scene.begin(),side.scene.end(),[&](const DrawCommand& c){ return c.type==DrawCommand::Fill && c.color==Ink::Orange && (c.r.left>=side.width/2)==onRight; }); };
+        sideOk=block(false) && !block(true) && sideOk;
+        // Live: a car 3 m ahead on the left, then on the right; each bar shows only for its side, 300 ms after it clears.
+        app.preview=false; app.frame.connected=app.frame.onTrack=true; app.frame.replay=false;
+        auto& car=app.frame.cars[(app.frame.player+1)%10]; car.pct=app.frame.cars[app.frame.player].pct+3/app.session.trackMeters; car.pit=false; car.surface=3;
+        app.frame.spotter=2; app.now+=1000; UpdateOverlays();
+        sideOk=IsWindowVisible(side.window) && !IsWindowVisible(side.mirror) && block(false) && sideOk;
+        app.frame.spotter=3; app.now+=100; UpdateOverlays();
+        sideOk=IsWindowVisible(side.window) && IsWindowVisible(side.mirror) && sideOk;
+        app.now+=1000; UpdateOverlays();
+        sideOk=!IsWindowVisible(side.window) && IsWindowVisible(side.mirror) && block(true) && !block(false) && sideOk;
+        side.sideCar=false; UpdateOverlays(); sideOk=!block(true) && sideOk; side.sideCar=true;
+        app.frame.spotter=1; app.now+=1000; UpdateOverlays();
+        sideOk=!IsWindowVisible(side.window) && !IsWindowVisible(side.mirror) && sideOk;
+        app.frame.spotter=2; app.frame.replay=true; app.now+=1000; UpdateOverlays();
+        sideOk=!IsWindowVisible(side.window) && sideOk;
+        app.frame=savedFrame; app.session=savedSession; side.place=savedPlace; app.hidden=savedHidden; app.preview=true; Fit(side); UpdateOverlays();
+        report<<"Side Warning: mirrored bars, distance apart, dragging, each for its side, car position and hold: "<<(sideOk?"PASS":"FAIL")<<"\n"; ok=sideOk && ok;
+    }
     app.preview=true; PreviewData(0);
     bool orderOk=true;
     for(int kind=0;kind<2;++kind) {
@@ -1511,6 +1554,7 @@ int RunDiagnostics() {
     ok=orderOk && ok; report<<"Independent column ordering, move boundaries, hidden-column positions and persistence: "<<(orderOk?"PASS":"FAIL")<<"\n";
     bool cornersOk=true;
     for(int kind=0;kind<OverlayCount;++kind) {
+        if(kind==SideWarningKind) continue; // Its bars stay centred on their monitor; only their height is placed.
         auto& overlay=First(kind); const auto original=overlay.place;
         overlay.place.growLeft=overlay.place.growUp=false; overlay.place.scale=100;
         SetOverlayOrigin(overlay,monitor.rcWork.left+300,monitor.rcWork.top+250); Fit(overlay);
