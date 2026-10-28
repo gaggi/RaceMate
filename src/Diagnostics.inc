@@ -921,11 +921,11 @@ int RunDiagnostics() {
         First(FuelKind).bands.footer.enabled=true; SettingChanged();
         ok=BaseHeight(First(FuelKind))==before+FooterHeight(First(FuelKind)) && Export(First(2).window,L"build\\qa\\fuel-footer.bmp") && ok;
         First(FuelKind).bands.footer.enabled=false; SettingChanged();
-        // Pit window below the timeline: refuel and pit window split into two rows; the order survives a reload.
+        // Pit window below the timeline: the cards split into two rows of 104; the order survives a reload.
         auto& fuel=First(FuelKind); const int paired=BaseHeight(fuel);
-        ok=MoveInOrder(fuel.fuel.order,WindowCard,1) && BaseHeight(fuel)==paired+92 && ok;
+        ok=MoveInOrder(fuel.fuel.order,WindowCard,1) && BaseHeight(fuel)==paired+104 && ok;
         MoveInOrder(fuel.fuel.order,TankModule,2); Load();
-        ok=First(FuelKind).fuel.order==std::vector<int>{LeaderDistanceModule,FiguresModule,TankModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,TimelineModule,WindowCard,PitExitModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow} && BaseHeight(First(FuelKind))==paired+92 && ok;
+        ok=First(FuelKind).fuel.order==std::vector<int>{LeaderDistanceModule,FiguresModule,TankModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,ShorterCard,TimelineModule,WindowCard,PitExitModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow} && BaseHeight(First(FuelKind))==paired+104 && ok;
         ok=Export(First(FuelKind).window,L"build\\qa\\fuel-reordered.bmp") && ok;
         auto& weather=First(WeatherKind); const int weatherHeight=BaseHeight(weather);
         ok=MoveInOrder(weather.weather.order,ConditionModule,3) && BaseHeight(weather)==weatherHeight && ok;
@@ -1008,7 +1008,7 @@ int RunDiagnostics() {
             ok=std::none_of(First(FuelKind).fuel.display.begin(),First(FuelKind).fuel.display.end(),[](bool value){return value;}) && ok;
             ok=Export(First(2).window,L"build\\qa\\fuel-compact.bmp") && ok;
             First(FuelKind).fuel.display.fill(true); SettingChanged();
-            ok=HeightWithTitle(First(2))==32+112+52+104+92+46+16+4*24+3*32 && BaseHeight(First(2))==HeightWithTitle(First(2)) && ok;
+            ok=HeightWithTitle(First(2))==32+112+52+104+104+46+16+4*24+3*32 && BaseHeight(First(2))==HeightWithTitle(First(2)) && ok; // The three cards share one row.
             ok=Export(First(2).window,L"build\\qa\\fuel-all.bmp") && ok;
             First(FuelKind).fuel.strip=true; SettingChanged(); ok=Export(First(2).window,L"build\\qa\\fuel-strip.bmp") && ok;
             First(FuelKind).fuel.strip=false; SettingChanged();

@@ -131,13 +131,14 @@ The Fuel Calculator groups information into switchable, reorderable modules: dra
 | Consumption | Last lap; averages of 3, 10 and 5 laps; race average; minimum and maximum; the qualifying maximum |
 | Last 10 laps | Whole-lap consumption history against the 10-lap average |
 | Refuel to finish | Additional fuel required without a safety margin, or fuel left at the finish |
+| One lap shorter | The same if the race runs a lap shorter than forecast, as when the leader still has to stop |
 | Pit window | Earliest and latest stop lap |
 | Pit window timeline | Full-tank stint blocks, window in green and current lap in yellow |
 | Pit exit | Predicted class position, car ahead and pit loss; off by default |
 | Target and adjacent rows | Maximum per-lap burn for the normal target and one fewer, one extra or two extra laps, with the fuel to add when you stop on that lap; outside races the laps the fuel lasts at the average, and the most per lap for one fewer or more |
 | Leader forecasts | Fractional leader distance and projected final-lap start clock; off by default |
 
-Expand **Consumption** to select its individual figures, **Last 10 laps** to enable yellow caution markers, and **Target** to switch the fuel to add on the target rows. Caution laps still do not contribute to the consumption average. Adjacent refuel/window modules share a row, and adjacent target modules share a band.
+Expand **Consumption** to select its individual figures, **Last 10 laps** to enable yellow caution markers, and **Target** to switch the fuel to add on the target rows. Caution laps still do not contribute to the consumption average. Adjacent card modules (refuel, one lap shorter, pit window) share a row, up to three, and adjacent target modules share a band.
 
 ![Fuel Calculator in a horizontal strip](images/fuel-strip.png)
 

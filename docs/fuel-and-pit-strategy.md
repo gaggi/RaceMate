@@ -33,6 +33,8 @@ If consumption stays empty, finish complete green laps without visiting the pits
 
 The target normally reaches the latest stop, or the finish when no stop is required. **One lap longer**, **Two laps longer** and **One lap shorter** show the per-lap limits for adjacent objectives.
 
+The finish forecast counts no stops still to come. Before the leader has made a stop it must make, the race can run a lap shorter than the forecast, especially when **Time left at leader's final lap** is shorter than a pit stop takes. The **One lap shorter** card shows what to add then: one lap's fuel less at the 10-lap average, or the fuel to spare at the finish when that is enough. It is a module of its own, on by default.
+
 With a pit window open, each target row also shows the fuel to add when you stop on its lap, in orange, such as **+9.4 L**: arriving with the tank empty at that per-lap limit, the fuel for the laps from there to the finish, at the 10-lap average and at most a full tank. Stopping a lap later leaves a lap less to fuel for, so the amount goes down by about one lap's fuel per row. Switch it in the expanded **Target** row; it is on by default.
 
 **QUALI** among the consumption figures is the most fuel a counted lap took in this event's qualifying, in this car. It stays for the race of the same event, as a cautious figure for planning; practice laps don't count towards it. Until you have driven a qualifying lap it shows **—**.

@@ -87,9 +87,9 @@ constexpr Slots DefaultHeader{OverlayNameMetric,SofMetric,IncidentsMetric,TimeRe
 // Fuel Calculator modules, top to bottom; each switch is stored under its key.
 enum FuelModule {
     TankModule, FiguresModule, HistoryModule, CautionMarks, RefuelCard, WindowCard, TimelineModule,
-    OneShorterRow, TargetRow, OneLongerRow, TwoLongerRow, LeaderDistanceModule, WhiteFlagTimeModule, PitExitModule, TargetRefuel
+    OneShorterRow, TargetRow, OneLongerRow, TwoLongerRow, LeaderDistanceModule, WhiteFlagTimeModule, PitExitModule, TargetRefuel, ShorterCard
 };
-constexpr int FuelModuleCount=TargetRefuel+1;
+constexpr int FuelModuleCount=ShorterCard+1;
 struct ModuleInfo { const wchar_t* key; const wchar_t* title; const wchar_t* detail; bool on; };
 constexpr ModuleInfo FuelModules[]={
     {L"ShowTank",L"Tank",L"Fuel, range in laps and a bar of the fuel to the finish",true},
@@ -108,7 +108,9 @@ constexpr ModuleInfo FuelModules[]={
     {L"ShowFinalLapTime",L"Time left at leader's final lap",L"Race clock when the current overall leader is projected to start the final lap. No future stops assumed.",false},
     {L"ShowPitExit",L"Pit exit",L"Class position and the car ahead if you box now: pit lane loss plus the service set in the pit menu",false},
     // Switched in the expanded Target row: on each target row, the fuel to add when you stop on that lap.
-    {L"ShowTargetRefuel",L"Fuel to add at the stop",L"For each target: stopping a lap later leaves a lap less to fuel for",true}};
+    {L"ShowTargetRefuel",L"Fuel to add at the stop",L"For each target: stopping a lap later leaves a lap less to fuel for",true},
+    // The forecast counts no stops still to come: before the leader's, the race may run a lap shorter.
+    {L"ShowOneLapShorter",L"One lap shorter",L"Fuel to add if the race runs a lap shorter than forecast, as when the leader still has to stop",true}};
 static_assert(std::size(FuelModules)==FuelModuleCount);
 // Consumption figures in display order; app.fuelRows follows this order.
 struct FigureInfo { int metric; const wchar_t* heading; const wchar_t* title; const wchar_t* key; bool on; };
@@ -145,7 +147,7 @@ constexpr ModuleInfo WeatherModules[]={
     {L"ShowHumidityHistory",L"Humidity",L"A dashed line on its own scale",false}};
 static_assert(std::size(WeatherModules)==WeatherModuleCount);
 // Modules in their default order; the page moves them, the rest are display options.
-const std::vector<int> FuelOrder{TankModule,FiguresModule,LeaderDistanceModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,WindowCard,TimelineModule,PitExitModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow};
+const std::vector<int> FuelOrder{TankModule,FiguresModule,LeaderDistanceModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,ShorterCard,WindowCard,TimelineModule,PitExitModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow};
 const std::vector<int> WeatherOrder{ConditionModule,RainModule,TemperatureModule,TemperatureHistoryModule,WindModule,DetailsModule,UsageModule};
 const wchar_t* WetnessNames[]={L"—",L"Dry",L"Mostly Dry",L"Very Lightly Wet",L"Lightly Wet",L"Moderately Wet",L"Very Wet",L"Extremely Wet"};
 struct Placement { int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=true, growLeft=false, growUp=false, rounded=false; };
@@ -460,18 +462,19 @@ std::vector<int> FuelShown(const Overlay& o) {
     for(int id:o.fuel.order) if(o.fuel.display[id] && (id!=FiguresModule || std::count(o.fuel.figures.begin(),o.fuel.figures.end(),true))) shown.push_back(id);
     return shown;
 }
-bool IsCard(int id) { return id==RefuelCard || id==WindowCard; }
+bool IsCard(int id) { return id==RefuelCard || id==ShorterCard || id==WindowCard; }
 bool IsTarget(int id) { return id>=OneShorterRow && id<=TwoLongerRow; }
 int FuelHeight(const Overlay& o) {
     if(o.fuel.strip) return 50;
-    constexpr int heights[]={112,52,104,0,92,92,46,24,24,24,24,32,32,32,0};
+    // A row of cards is 104 high: 12 above and below an 80 high card. Up to three cards next to each other share it.
+    constexpr int heights[]={112,52,104,0,104,104,46,24,24,24,24,32,32,32,0,104};
     static_assert(std::size(heights)==FuelModuleCount);
     const auto shown=FuelShown(o); int h=0;
     for(size_t k=0;k<shown.size();++k) {
         const int id=shown[k], next=k+1<shown.size()?shown[k+1]:-1;
         h+=heights[id];
         if(IsTarget(id)) h+=8*(!k || !IsTarget(shown[k-1]))+8*!IsTarget(next);
-        if(IsCard(id) && IsCard(next)) ++k;
+        for(int shared=1;IsCard(id) && shared<3 && k+1<shown.size() && IsCard(shown[k+1]);++shared) ++k;
     }
     return std::max(h,40);
 }
@@ -1748,20 +1751,32 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                     y+=104;
                 }
                 if(IsCard(id)) {
-                    const bool pair=IsCard(next); const int cardWidth=pair?(W-42)/2:W-32; int x=16;
+                    // Cards next to each other in the order share a row, up to three; 12 above and below them.
+                    std::vector<int> cards{id}; while(cards.size()<3 && k+cards.size()<shown.size() && IsCard(shown[k+cards.size()])) cards.push_back(shown[k+cards.size()]);
+                    const int count=static_cast<int>(cards.size()), cardWidth=(W-32-10*(count-1))/count; int x=16; y+=12;
                     auto card=[&](const wchar_t* title,std::wstring value,COLORREF ink,std::wstring note) {
                         shape(DrawCommand::RoundFill,rect(x,y,cardWidth,80),Ink::Band,6);
                         label(title,rect(x+12,y+8,cardWidth-24,16),Ink::Label,Small);
                         label(std::move(value),rect(x+12,y+24,cardWidth-24,32),ink,Hero);
                         label(std::move(note),rect(x+12,y+56,cardWidth-24,16),Ink::Muted,Small); x+=cardWidth+10;
                     };
-                    for(int which:{id,pair?next:-1}) if(which==RefuelCard && spare) card(L"AT FINISH",SignedLitres(atFinish),Ink::Green,L"\u2248"+Format(atFinish/burn,1)+L" laps spare");
+                    // At the finish with a lap less to drive: the forecast counts no stops still to come, so before the
+                    // leader's stop the race may run a lap shorter than it says.
+                    const double shorter=std::isfinite(atFinish)?atFinish+burn:std::numeric_limits<double>::quiet_NaN();
+                    for(int which:cards) if(which==RefuelCard && spare) card(L"AT FINISH",SignedLitres(atFinish),Ink::Green,L"\u2248"+Format(atFinish/burn,1)+L" laps spare");
                     else if(which==RefuelCard) card(L"REFUEL TO FINISH",litres(refuel,true),refuelInk,
                         refuel<0?L"waiting for laps":(saveable?L"or save "+Format(save,2)+L" L/lap":(refuel==0?L"enough fuel to finish":(refuelFits?L"fits in the tank":L"more than one tank"))));
-                    else if(which==WindowCard) card(L"PIT WINDOW",open?lap(window.firstLap)+L"–"+std::to_wstring(window.lastLap):L"—",white,
-                        open?(window.openNow?std::wstring(L"open now"):L"opens "+lap(window.firstLap))+L" · latest "+lap(window.lastLap)
+                    else if(which==ShorterCard) {
+                        if(!std::isfinite(shorter) || p.lapsToFinish<1) card(L"ONE LAP SHORTER",L"\u2014",Ink::Muted,L"waiting for laps");
+                        else if(shorter>=0) card(L"ONE LAP SHORTER",SignedLitres(shorter),Ink::Green,L"spare at the finish");
+                        else card(L"ONE LAP SHORTER",litres(-shorter,true),!capacityKnown || -shorter<=capacity?Ink::Orange:Ink::Red,L"to add then");
+                    }
+                    // Three in a row leave too little room for the long note.
+                    else if(which==WindowCard) card(L"PIT WINDOW",open?lap(window.firstLap)+L"\u2013"+std::to_wstring(window.lastLap):L"\u2014",white,
+                        open&&count==3?(window.openNow?L"open until "+lap(window.lastLap):L"opens "+lap(window.firstLap))
+                        :open?(window.openNow?std::wstring(L"open now"):L"opens "+lap(window.firstLap))+L" \u00B7 latest "+lap(window.lastLap)
                             :(noStop?L"no stop needed":(extraStop?L"an extra stop is needed":L"waiting for laps")));
-                    if(pair) ++k;
+                    k+=cards.size()-1;
                     y+=92;
                 }
                 if(id==TimelineModule) {
