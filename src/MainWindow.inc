@@ -232,8 +232,9 @@ bool MoveToPlace(std::vector<int>& order,int id,int place) {
 }
 // Gives a table the columns of another, also one of the other kind: their order, which show and their options
 // (name format, short views, logo and name, status badges, headings, class colours, signs). Columns only the target
-// has keep their setting and stand before the column they stood before; Best and Last, always shown in the
-// Standings, keep the Relative's setting.
+// has keep their setting and stand before the column they stood before. Switches and options only one kind has go
+// between two of that kind: Best, Last and the Position option between Relatives (the Standings always show Best and
+// Last, and their positions follow the class view), Laps and Gained between Standings. Rows and gap decimals stay.
 void CopyColumns(const Overlay& from,Overlay& to) {
     const auto& f=from.table; auto& t=to.table;
     auto has=[](const std::vector<int>& order,int id) { return std::find(order.begin(),order.end(),id)!=order.end(); };
@@ -247,6 +248,8 @@ void CopyColumns(const Overlay& from,Overlay& to) {
     t.driverColumns=f.driverColumns; t.extraColumns=f.extraColumns; t.driverShortView=f.driverShortView; t.driverFlags=f.driverFlags;
     t.showDriver=f.showDriver; t.showStatus=f.showStatus; t.nameFormat=f.nameFormat; t.columnHeaders=f.columnHeaders;
     t.classColors=f.classColors; t.brandLogo=f.brandLogo; t.brandName=f.brandName; t.gapSigns=f.gapSigns; t.interval=f.interval;
+    if(from.kind==to.kind && to.kind==RelativeKind) { t.best=f.best; t.last=f.last; t.classPositions=f.classPositions; }
+    if(from.kind==to.kind && to.kind==StandingsKind) { t.laps=f.laps; t.gained=f.gained; }
     Fit(to); SettingChanged();
 }
 void SetColumnVisible(Overlay& o,int id,bool on) {

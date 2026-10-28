@@ -6,7 +6,7 @@ RaceMate derives strategy from observed telemetry. Your current fuel is measured
 
 ## Consumption learning
 
-RaceMate measures fuel used between line crossings. A sample must be a complete lap at racing speed. The first partial lap, caution laps, pit laps, out laps, refueling and replay footage do not count toward the average. History resets when the session or car changes.
+RaceMate measures fuel used between line crossings. A sample must be a complete lap at racing speed. The first partial lap, caution laps, pit laps, out laps, refueling and replay footage do not count toward the average. History resets when the session or car changes; the one exception is **QUALI**, the qualifying maximum, which stays for the race of the same event in the same car. It is kept in memory only: after RaceMate restarts it shows **—** until another qualifying lap.
 
 The **average of the last 10 counted laps** drives range, refuel requirements, the pit window and targets. It can operate with fewer than ten samples: **AVG 10 (3)** means only three eligible laps have been collected. The reduced sample count is shown in gray.
 

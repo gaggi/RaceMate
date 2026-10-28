@@ -319,7 +319,7 @@ struct App {
     // The Radar's cars and their lanes, and when a car was last in its range.
     RadarTracker radar; std::vector<RadarCar> radarCars; ULONGLONG radarNear=0;
     // Where each car is drawn across, in lanes, as it glides to its lane; whether it was on the radar, and when.
-    std::array<double,MaxCars> radarAcross{}; std::array<bool,MaxCars> radarPresent{}; ULONGLONG radarGlided=0;
+    std::array<double,MaxCars> radarAcross{}; std::array<bool,MaxCars> radarPresent{}; ULONGLONG radarGlided=0; unsigned radarResets=0;
     // Traffic: the cars behind you within its gap, closest first, and when one last was.
     std::vector<CarBehind> traffic; ULONGLONG trafficNear=0;
     struct { int track=-1; std::wstring car; double fixedLane=-1, tires=-1, rate=-1; int samplesSaved=0, endsSaved=0, brakingSaved=0; } pitTimes;
@@ -2573,6 +2573,8 @@ void UpdateRadar(const Overlay& o) {
         app.radarCars={{beside,.5,1},{left,1.5,-1},{outside,-3,2},{ahead,11,0},{behind,-15,0}}; return;
     }
     app.radar.Update(app.session,app.frame,o.radar.range); app.radarCars=app.radar.Cars();
+    // Lanes forgotten (another session or car): no car glides on from where it was drawn before.
+    if(app.radar.Resets()!=app.radarResets) { app.radarResets=app.radar.Resets(); app.radarPresent={}; app.radarNear=0; }
     if(!app.radarCars.empty()) app.radarNear=app.now;
     // Across, a car glides to its new lane in about a quarter of a second rather than jumping; one new on the radar
     // starts in its lane.

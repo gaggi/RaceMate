@@ -775,6 +775,15 @@ void RadarTests() {
  }
  f.replay=true; radar.Update(s,f,20); Require(radar.Cars().empty(),"nothing while not driving");
  f.replay=false; f.time=10; f.spotter=1; at(5,-7); radar.Update(s,f,20); Require(lane(5)==0,"a clock that went back forgets the lanes");
+ {
+  // Another event or session at a later clock forgets them too, as after a while with the Radar off.
+  RadarTracker other; f.time=100; f.spotter=2; at(1,1); at(5,-30); at(7,-30); other.Update(s,f,20);
+  auto laneOf=[&](int i) { for(const auto& c:other.Cars()) if(c.index==i) return c.lane; return 99; };
+  Require(laneOf(1)==-1,"beside you on the left");
+  const unsigned resets=other.Resets(); auto next=s; next.key+="-B"; f.session+=1; f.time=101; f.spotter=1; at(1,15);
+  other.Update(next,f,20); Require(laneOf(1)==0 && other.Resets()!=resets,"another event and session forget the lanes");
+  f.session-=1; at(1,-30);
+ }
 }
 void WeatherHistoryTests() {
  auto s=DemoSession(); auto f=DemoFrame(0); WeatherHistory history;

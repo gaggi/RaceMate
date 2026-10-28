@@ -1683,7 +1683,17 @@ int RunDiagnostics() {
         bool copyOk=relative.table.columnOrder==shared && relative.table.columnOrder.front()==BrandColumn && !relative.table.brandName && relative.table.driverColumns[0] && relative.table.nameFormat==2 && relative.table.best;
         Save(); Load(); copyOk=First(RelativeKind).table.columnOrder.front()==BrandColumn && copyOk;
         First(StandingsKind).table=savedStandings; First(RelativeKind).table=savedRelative; SettingChanged();
-        report<<"Copying columns from the Standings to the Relative: order, visibility and options: "<<(copyOk?"PASS":"FAIL")<<"\n"; ok=copyOk && ok;
+        // Between two of a kind its own switches go too: Best, Last and Position between Relatives, Laps and Gained
+        // between Standings; rows and gap decimals stay.
+        auto& relative2=NewInstance(RelativeKind); auto& r1=First(RelativeKind);
+        r1.table.best=true; r1.table.last=true; r1.table.classPositions=false; r1.table.gapDecimals=3; CopyColumns(r1,relative2);
+        copyOk=relative2.table.best && relative2.table.last && !relative2.table.classPositions && relative2.table.gapDecimals==1 && copyOk;
+        auto& standings2=NewInstance(StandingsKind); auto& s1=First(StandingsKind);
+        s1.table.laps=true; s1.table.gained=true; CopyColumns(s1,standings2);
+        copyOk=standings2.table.laps && standings2.table.gained && copyOk;
+        RemoveInstance(relative2); RemoveInstance(standings2);
+        First(StandingsKind).table=savedStandings; First(RelativeKind).table=savedRelative; SettingChanged();
+        report<<"Copying columns between and within the Relative and Standings: order, visibility and options: "<<(copyOk?"PASS":"FAIL")<<"\n"; ok=copyOk && ok;
     }
     bool cornersOk=true;
     for(int kind=0;kind<OverlayCount;++kind) {

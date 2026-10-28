@@ -84,7 +84,7 @@ Expand **Pit exit row** to choose how many cars ahead of and behind the rejoin p
 
 ## Table columns
 
-Relative and Standings use the same set of columns. Each overlay has its own choice of columns, order and formats. In the column list, columns marked **Always** cannot be hidden; all others have a switch. Drag a column up or down by the six dots at its left to change the order; a hidden column keeps its place. **Copy to another table** gives another Relative or Standings the same columns in the same order with their options; columns only that table has keep their setting and place. Columns with an arrow on the right have further options when expanded.
+Relative and Standings use the same set of columns. Each overlay has its own choice of columns, order and formats. In the column list, columns marked **Always** cannot be hidden; all others have a switch. Drag a column up or down by the six dots at its left to change the order; a hidden column keeps its place. **Copy to another table** gives another Relative or Standings the same columns in the same order with their options; columns only that table has keep their setting and place. Between a Relative and a Standings, the Relative keeps its own Best and Last switches and Position option, and the Standings their Laps and Gained switches; between two of a kind these go too. Rows, gap decimals and other settings outside the columns stay. Columns with an arrow on the right have further options when expanded.
 
 | Column (heading) | What it shows | Options when expanded |
 | --- | --- | --- |
@@ -211,7 +211,7 @@ The cars around yours from above: your car in the middle, outlined in yellow, th
 
 It shows only while you drive your own car, not while spotting or in replays; both settings for when it shows apply to that. While overlays are moved or previewed it always shows.
 
-**Lanes are estimated.** iRacing reports where every car is along the lap, but not across the track. Distances ahead and behind are exact; lanes come from the spotter (`CarLeftRight`):
+**Lanes are estimated.** iRacing reports where every car is along the lap, but not across the track. Distances ahead and behind come from each car's share of the lap (`CarIdxLapDistPct`) times the track length, and the bumper-to-bumper gaps take every car as 4.6 m long: estimates along the racing line, not measured spacing or real car lengths. Lanes come from the spotter (`CarLeftRight`):
 
 - The cars beside you, as many as it reports, take the side it reports: a car within 5.5 m that had that side keeps it, otherwise the nearest within 8 m. Two cars on one side are in two lanes, since you are then at the edge of three wide.
 - A car that clearly overlaps yours (within 3.5 m) is beside you even when the spotter doesn't report it, as when you stand beside the track or a car has only just come alongside: on the one side the spotter reports, else the side it was last on, else the free side.
@@ -231,7 +231,7 @@ After irdashies' *faster cars from behind*: the cars of faster classes close beh
 | Within … s behind | 1, 2, 3 (default) or 5 s: it shows while a car is that close behind you |
 | Faster classes only | On (default): only classes whose estimated lap (`CarClassEstLapTime`) is at least 2 % quicker than yours. Off: every car behind you |
 
-The gap is the same as in the Relative: how far behind the car is in time, by iRacing's estimate of each class's time around the lap (`CarIdxEstTime`), counted in that car's own lap time. Cars in the pits are left out, and nothing shows while you are in them.
+The gap is how far behind the car is, by iRacing's estimate of each class's time around the lap (`CarIdxEstTime`), counted in **that car's own** lap time: about the time it needs to reach where you are now. The Relative counts the same share of the lap in your lap time instead, so for a faster car Traffic shows less: with your lap at 100 s and its at 80 s, 1 % of the lap is 1.0 s in the Relative and 0.8 s in Traffic. Neither is a closing time from the difference in speed, and Traffic takes no car length off. Cars in the pits are left out, and nothing shows while you are in them.
 
 It shows while you drive your own car and a car is within the gap, and half a second after, so it doesn't flicker at the edge. While overlays are moved or previewed it always shows. Like the Side Warning and the Radar, Traffic has no header or footer and only one instance.
 

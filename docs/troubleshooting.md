@@ -14,6 +14,18 @@
 
 After Preview is off, disconnected overlays hide automatically. A transparent Track Map intentionally hides its panel, header and footer.
 
+## Side Warning, Radar or Traffic do not show
+
+| Check | Why |
+| --- | --- |
+| The overlay's switch under **Overlays** | All three are off by default |
+| You drive your own car | Not while spotting, in replays or in the garage; in the pits Traffic shows nothing and the Radar only cars in the pit lane |
+| A car is near | Side Warning: the spotter reports one beside you. Radar: a car within its range, unless **Always while you drive** is on. Traffic: a car within its seconds behind |
+| Traffic's **Faster classes only** | On by default: only classes at least 2 % quicker by iRacing's class lap estimate. In a one-class race nothing qualifies; switch it off to see every car behind |
+| Preview or **Move overlays** | All three show then, so you can see them and place them |
+
+Radar lanes and the Side Warning come from iRacing's spotter; without it (off the track, or just joined) lanes are guessed from overlapping cars. See [Overlays](overlays.md#radar).
+
 ## RaceMate is not connected
 
 Start iRacing on the same machine and join a session. RaceMate reads the local shared-memory interface and retries a disconnected connection about once per second. There is no account or server configuration to enter.
@@ -55,7 +67,7 @@ Check the status banner for the conflicting shortcut names. Local Race Control k
 
 Blank opponent fuel does not mean the opponent certainly needs a stop. The estimate assumes a full tank and your car's range; it cannot read an opponent's actual fuel. See [Fuel and pit strategy](fuel-and-pit-strategy.md).
 
-Fuel history resets for a session/car change. Watching historical replay does not train new live fuel or stint evidence.
+Fuel history resets for a session/car change, except the qualifying maximum (**QUALI**), which stays for the race of the same event and car while RaceMate runs; it is not saved across a restart. Watching historical replay does not train new live fuel or stint evidence.
 
 ## Weather trends or wind direction are missing
 

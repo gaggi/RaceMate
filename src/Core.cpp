@@ -876,8 +876,10 @@ void RadarTracker::Update(const Session& s,const Frame& f,double reach) {
     cars_.clear();
     if(!f.connected || !f.onTrack || f.replay || f.player<0 || f.player>=MaxCars || !(s.trackMeters>0)) { Reset(); return; }
     const auto& own=f.cars[f.player]; if(own.pct<0) return;
-    // A session clock that went back (a new session, a reset) forgets the lanes.
-    if(std::any_of(seen_.begin(),seen_.end(),[&](double t){ return t>f.time; })) Reset();
+    // Another event, session or car, or a session clock that went back (a reset) forgets the lanes.
+    if(key_!=s.key || session_!=f.session || player_!=f.player || std::any_of(seen_.begin(),seen_.end(),[&](double t){ return t>f.time; })) {
+        Reset(); key_=s.key; session_=f.session; player_=f.player;
+    }
     for(int i=0;i<MaxCars;++i) {
         const auto& c=f.cars[i];
         // Cars in the pit lane only beside yours in it: on track the pit wall is between you.

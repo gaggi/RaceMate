@@ -2,7 +2,7 @@
 
 [Project home](../README.md) · [Download releases](https://github.com/gaggi/RaceMate/releases)
 
-These guides describe the implementation in **RaceMate 0.2.2**. Screenshots show the real Windows interface with diagnostic sample data. Some screenshots deliberately enable optional modules and columns; they do not represent the factory defaults or a live race.
+These guides describe the implementation in **RaceMate 0.2.2** and the development state after it. Side Warning, Radar, Traffic, dragging rows by their six dots, copying columns to another table, the qualifying maximum and the fuel to add per target came after 0.2.2: they are in the development build from this repository and not yet in a release. Screenshots show the real Windows interface with diagnostic sample data. Some screenshots deliberately enable optional modules and columns; they do not represent the factory defaults or a live race.
 
 ## User guides
 

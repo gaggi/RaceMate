@@ -105,7 +105,7 @@ Three environment variables refine the live benchmark. `RACEMATE_COMMAND_TIMING=
 
 The tick benchmark writes `build/qa/benchmark.txt`. The live benchmark runs the real application for 30 s against `RaceMateFakeIRacing`, a stand-in for iRacing that publishes 60 cars at 60 Hz under shared-memory and event names of its own, and writes `build/qa/live-benchmark.txt`: CPU in cycles for the process and the main thread, frames processed, the main thread's time per part, and for every overlay how evenly it refreshes and how old its data is. Windows' own CPU times are sampled on its 15.6 ms clock and miss timer-driven work, so compare cycles. Treat results as measurements of that machine, build, scene and configuration. More visible overlays or a faster map rate changes the workload. GUI diagnostics also report some rendering timings and GDI handle checks in `controls.txt`.
 
-In normal operation RaceMate requests low process priority and EcoQoS. It samples disconnected telemetry about once per second, parses session YAML only after an update, shares analysis results and refreshes overlays at their individual rates. A faster enabled overlay raises telemetry sampling as needed.
+In normal operation RaceMate requests low process priority and EcoQoS. It samples disconnected telemetry about once per second, parses session YAML only after an update, shares analysis results and refreshes overlays at their individual rates. Live telemetry is read when iRacing signals new data, whatever the overlays' rates.
 
 ## Live telemetry inspection
 

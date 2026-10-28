@@ -168,9 +168,12 @@ public:
     // Cars within reach metres ahead or behind, nearest first.
     void Update(const Session& s, const Frame& f, double reach);
     const std::vector<RadarCar>& Cars() const { return cars_; }
-    void Reset() { cars_.clear(); lane_.fill(0); guess_.fill(false); side_.fill(0); seen_.fill(-1e9); sided_.fill(-1e9); paired_.fill(-1e9); }
+    // Counts the times the lanes were forgotten, for a display that smooths them to start afresh too.
+    unsigned Resets() const { return resets_; }
+    void Reset() { cars_.clear(); lane_.fill(0); guess_.fill(false); side_.fill(0); seen_.fill(-1e9); sided_.fill(-1e9); paired_.fill(-1e9); ++resets_; }
 private:
     std::vector<RadarCar> cars_;
+    std::string key_; int session_ = -1, player_ = -1; unsigned resets_ = 0;
     // Each car's lane and side when it was last beside you or beside another, when, and when last beside another.
     // guess_: the lane was not reported by the spotter but taken for a car overlapping yours.
     std::array<int, MaxCars> lane_{}, side_{}; std::array<bool, MaxCars> guess_{}; std::array<double, MaxCars> seen_ = Unseen(), sided_ = Unseen(), paired_ = Unseen();
