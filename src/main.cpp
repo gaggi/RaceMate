@@ -203,6 +203,7 @@ struct FuelSettings { std::array<bool,FuelModuleCount> display{}; std::array<boo
 struct WeatherSettings { std::array<bool,WeatherModuleCount> display{}; std::vector<int> order=WeatherOrder; bool strip=false; };
 struct TrackMapSettings {
     bool numbers=true, ownClass=false, pit=true, details=false, background=true, pitLane=true, startFinish=true;
+    bool directionArrow=false; // An arrow beside the track past the line, in the driving direction.
     bool cornerNumbers=false, cornerNames=false, labelContrast=true, pitExit=true;
     int labelScale=100;
     int layout=0; // The official map, a circle, or a line for wide monitors; circle and line need no SVG.
@@ -213,6 +214,7 @@ struct TrackMapSettings {
     bool northUp=false; // Turned so north points up, where iRacing turned the drawing to fit.
     bool sectors=false; // Optional observed sector/minisector comparison.
     int sectorParts=1; // 1: SDK sectors, 3: three mini-sectors each.
+    bool sectorMarks=true, sectorLabels=true; // Dark split marks across the road; S1, S2 … beside it.
 };
 // The Radar: what it shows and when. range: metres ahead and behind, 10 to 40.
 struct RadarSettings { bool background=true, always=false, distances=true; int range=20; };
@@ -271,7 +273,7 @@ struct Overlay {
     HBITMAP mapBitmap=nullptr; int mapWidth=0,mapHeight=0,mapStyle=-1; unsigned mapRevision=~0u;
     HBITMAP sectorBitmap=nullptr; std::uint32_t* sectorPixels=nullptr;
     uint64_t sectorLayout=~uint64_t{0};
-    float sectorScene=-1;
+    float sectorScene=-1; int sectorStyle=-1;
     std::vector<std::vector<Gdiplus::PointF>> sectorPaths;
     std::vector<COLORREF> sectorColors;
     struct SectorPixel { uint32_t offset; uint16_t segment; unsigned char alpha; };
@@ -713,9 +715,10 @@ void ReadInstance(Overlay& o) {
         o.map.sectors=ReadBool(section.c_str(),L"ShowSectors",false);
         // Older versions kept one mini-sector choice for every map in General.
         o.map.sectorParts=ReadInt(section.c_str(),L"SectorParts",ReadInt(L"General",L"SectorParts",1))==3?3:1;
+        o.map.sectorMarks=ReadBool(section.c_str(),L"ShowSectorMarks",true); o.map.sectorLabels=ReadBool(section.c_str(),L"ShowSectorLabels",true);
         o.map.pit=ReadBool(section.c_str(),L"ShowPitCars",true); o.map.details=ReadBool(section.c_str(),L"ShowMapDetails",false);
         o.map.background=ReadBool(section.c_str(),L"ShowBackground",true); o.map.pitLane=ReadBool(section.c_str(),L"ShowPitLane",true);
-        o.map.startFinish=ReadBool(section.c_str(),L"ShowStartFinish",true);
+        o.map.startFinish=ReadBool(section.c_str(),L"ShowStartFinish",true); o.map.directionArrow=ReadBool(section.c_str(),L"ShowDirectionArrow",false);
         o.map.cornerNumbers=ReadBool(section.c_str(),L"ShowCornerNumbers",false); o.map.cornerNames=ReadBool(section.c_str(),L"ShowCornerNames",false);
         o.map.labelContrast=ReadBool(section.c_str(),L"CornerLabelContrast",true); o.map.pitExit=ReadBool(section.c_str(),L"ShowPitExit",true);
         o.map.layout=std::clamp(ReadInt(section.c_str(),L"MapLayout",MapLayout),0,static_cast<int>(LineLayout));
@@ -841,8 +844,9 @@ void Save() {
             number(section,L"ShowCarNumbers",o.map.numbers); number(section,L"OwnClass",o.map.ownClass); number(section,L"MarkerText",o.map.markerText); number(section,L"WhiteTrack",o.map.whiteTrack);
             number(section,L"ShowMapBackground",o.map.surroundings); number(section,L"ShowAllConfigs",o.map.allConfigs); number(section,L"NorthUp",o.map.northUp);
             number(section,L"ShowSectors",o.map.sectors); number(section,L"SectorParts",o.map.sectorParts);
+            number(section,L"ShowSectorMarks",o.map.sectorMarks); number(section,L"ShowSectorLabels",o.map.sectorLabels);
             number(section,L"ShowPitCars",o.map.pit); number(section,L"ShowMapDetails",o.map.details);
-            number(section,L"ShowBackground",o.map.background); number(section,L"ShowPitLane",o.map.pitLane); number(section,L"ShowStartFinish",o.map.startFinish);
+            number(section,L"ShowBackground",o.map.background); number(section,L"ShowPitLane",o.map.pitLane); number(section,L"ShowStartFinish",o.map.startFinish); number(section,L"ShowDirectionArrow",o.map.directionArrow);
             number(section,L"ShowCornerNumbers",o.map.cornerNumbers); number(section,L"ShowCornerNames",o.map.cornerNames);
             number(section,L"CornerLabelContrast",o.map.labelContrast); number(section,L"CornerLabelScale",o.map.labelScale); number(section,L"ShowPitExit",o.map.pitExit); number(section,L"MapLayout",o.map.layout);
         }

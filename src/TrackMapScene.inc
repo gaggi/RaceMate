@@ -12,7 +12,7 @@
         if(ready) {
             RECT physical=area; physical.top-=titleOffset; physical.bottom-=titleOffset;
             out.push_back({DrawCommand::Map,Regular,0,physical,0,{static_cast<float>(trackMap.revision),static_cast<float>(MapStyle(o.map)),
-                o.map.sectors?SectorSceneRevision():0.f,0.f,
+                o.map.sectors?SectorSceneRevision():0.f,static_cast<float>(o.map.sectorMarks*2+o.map.sectorLabels),
                 static_cast<float>(o.map.sectors?o.map.sectorParts:0)}});
             if(!svg || trackMap.geometry.direction) {
                 const auto transform=svg?MapFit(trackMap.geometry,area.right-area.left,area.bottom-area.top,o.map):MapTransform{};

@@ -35,7 +35,7 @@ void PassingTimesTests() {
         passes.Update(s,At(n/60.,offsets));
         if(n>3*60 && n%97==0) Close(passes.Gap(1,0),2,.002,"measured gap on an uneven profile");
     }
-    Check(passes.Points()==500 && passes.Memory()<=2*500*sizeof(double),"10 m points, storage only for cars that appear");
+    Check(passes.Points()==500 && passes.Memory()<=2*2*500*sizeof(double),"10 m points and a lap profile, only for cars that appear");
     // Side by side: zero once the car ahead has passed one point under observation.
     PassingTimes beside; const std::vector<double> together{0,0.001};
     for(int n=0;n<=60;++n) beside.Update(s,At(n/60.,together));
@@ -47,6 +47,69 @@ void PassingTimesTests() {
     Close(broken.Gap(1,0),2,.002,"known again after re-observing the gap");
     broken.Update(s,At(5,offsets)); Check(std::isnan(broken.Gap(1,0)),"a rewind forgets every pass");
 
+    // The Relative times each pair by the car behind on its last clean lap. A car 3 s ahead stops at 210 s, or
+    // crawls on at a quarter of its pace: you come closer as the distance shrinks, instead of keeping 3 s.
+    for(double crawl:{0.,.25}) {
+        PassingTimes trouble; const auto one=Track(2);
+        auto frame=[&](double t) {
+            auto f=At(t,{3,0}); const double driven=t<=210?t:210+(t-210)*crawl;
+            f.cars[1].pct=Position(driven); return f;
+        };
+        for(int n=0;n<=60*60;++n) trouble.Update(one,frame(n/60.));
+        Check(!trouble.HasProfile(0),"no profile before a clean lap from line to line");
+        for(int n=60*60+1;n<=212*60;++n) trouble.Update(one,frame(n/60.));
+        Check(trouble.HasProfile(0) && trouble.HasProfile(1),"a clean lap becomes the profile");
+        // At 212 s you are where the other was at 209 s; you need to get to where it is now.
+        const auto rows=Relative(one,frame(212),9,false,false,&trouble);
+        const auto other=std::find_if(rows.begin(),rows.end(),[](const Row& r){return r.driver.index==1;});
+        Close(-other->gap,crawl?1.5:1.0,.02,crawl?"a crawling car ahead: the time to reach it":"a stopped car ahead: the time to reach it");
+        for(int n=212*60+1;n<=static_cast<int>((crawl?213.8:212.8)*60);++n) trouble.Update(one,frame(n/60.));
+        Close(trouble.Reach(0,0,1),crawl?.15:.2,.02,"nearly there, nearly zero");
+    }
+    // A faster class behind is timed at its own pace: 2.5 s of your lap, which it covers in 2.0 s.
+    {
+        PassingTimes faster; auto two=Track(2,2);
+        auto frame=[&](double t) { auto f=At(t,{0,0}); f.cars[1].pct=Position(1.25*t-77.5); return f; };
+        for(int n=0;n<=300*60;++n) faster.Update(two,frame(n/60.));
+        const auto f=frame(300);
+        const auto rows=Relative(two,f,9,false,false,&faster);
+        const auto other=std::find_if(rows.begin(),rows.end(),[](const Row& r){return r.driver.index==1;});
+        Close(other->gap,2.0,.02,"a faster class behind shows when it is there");
+        Close(faster.Reach(0,1,0),2.5,.02,"your own lap would say 2.5 s");
+        const auto traffic=CarsBehind(two,f,3,false,&faster);
+        Check(traffic.size()==1 && std::abs(traffic[0].gap-2.0)<.02,"Traffic shows the same");
+    }
+    // Rolling start: iRacing still reports the formation lap for a second after the line. Lap one still counts.
+    {
+        PassingTimes start; auto one=Track(1); one.type="Race";
+        for(int n=0;n<=112*60;++n) { const double t=n/60.; auto f=At(t,{0}); f.cars[0].pct=Position(t+90); f.state=t<11?3:4; start.Update(one,f); }
+        Check(start.HasProfile(0),"the first racing lap after a rolling start becomes a profile");
+    }
+    // Before any profile, two cars of one class 3 s apart keep 3 s all lap, also on a fast straight where lap
+    // distance at the average pace says far more, and where iRacing's estimate runs past the class lap time.
+    {
+        PassingTimes early; auto one=Track(2); one.type="Race";
+        auto uneven=[](double t) { const double lap=t/100+.12*std::sin(2*std::numbers::pi*t/100); return lap-std::floor(lap); };
+        double worst=0;
+        for(int n=0;n<=102*60;++n) {
+            const double t=n/60.; auto f=At(t,{3,0}); f.state=4;
+            for(int i=0;i<2;++i) { auto& c=f.cars[i]; const double u=t-(i?0:3); c.pct=uneven(u); c.estTime=(u-100*std::floor(u/100))*1.05; } // iRacing's estimate follows the pace, here 5 % past the class lap time.
+            early.Update(one,f);
+            if(t<5) continue;
+            const auto rows=Relative(one,f,9,false,false,&early);
+            const auto other=std::find_if(rows.begin(),rows.end(),[](const Row& r){return r.driver.index==1;});
+            worst=std::max(worst,std::abs(-other->gap-3));
+        }
+        if(!(!early.HasProfile(0) && worst<.02)) std::cerr<<"worst "<<worst<<"\n";
+        Check(!early.HasProfile(0) && worst<.02,"without profiles the measured gap holds all lap");
+    }
+    // A pit visit or an off-track spoils the lap: the earlier profile stays.
+    {
+        PassingTimes spoiled; const auto one=Track(1);
+        for(int n=0;n<=290*60;++n) { auto f=At(n/60.,{0}); if(n/60.>250 && n/60.<251) f.cars[0].surface=0; spoiled.Update(one,f); }
+        Check(spoiled.HasProfile(0),"earlier clean laps remain");
+        Close(spoiled.Reach(0,0,0),0,1e-9,"a car to itself is zero");
+    }
     // Relative, Standings and Traffic. Different classes with their own SDK curves side by side read zero.
     auto multi=Track(2,2); PassingTimes field; const std::vector<double> side{0,0.02};
     auto estimates=[&](Frame f) { for(int i=0;i<2;++i) { auto& c=f.cars[i]; c.estTime=(i?.97:1.03)*c.pct*multi.drivers[i].estimatedLapTime; } return f; };
@@ -57,7 +120,7 @@ void PassingTimesTests() {
     Check(other!=rows.end() && other->gap>=0 && other->gap<.05,"another class beside you is beside you");
     // Without measurements two classes share the lap distance, not two different time curves.
     rows=Relative(multi,f,9,false,false,nullptr);
-    const double distance=(f.cars[0].pct-f.cars[1].pct)*100;
+    const double distance=(f.cars[0].pct-f.cars[1].pct)*multi.drivers[1].estimatedLapTime; // In the car behind's class time.
     const auto fallback=std::find_if(rows.begin(),rows.end(),[](const Row& r){return r.driver.index==1;});
     Close(fallback->gap,distance,.001,"other classes fall back to lap distance on one scale");
     // Same class, one estimate unusable (0 mid-lap): both use lap distance, never time minus distance.
@@ -73,6 +136,47 @@ void PassingTimesTests() {
     Check(traffic.size()==1 && traffic[0].index==1,"a car just behind on track is behind in Traffic");
     g.cars[1].pct=g.cars[0].pct+.0004; traffic=CarsBehind(multi,g,3,false,nullptr);
     Check(traffic.empty(),"a car just ahead on track is never behind in Traffic");
+}
+// Debug sweep: two cars of one class 3 s apart; every frame's Relative and live Standings gap, worst deviation.
+int PassingTimesSweep() {
+    auto one=Track(2); one.type="Race"; PassingTimes passes; double worstRelative=0,worstStanding=0,atRelative=-1,atStanding=-1;
+    for(int n=0;n<=400*60;++n) {
+        const double t=n/60.; auto f=At(t,{3,0}); f.state=4; passes.Update(one,f);
+        if(t<150) continue;
+        const auto rows=Relative(one,f,9,false,false,&passes);
+        const auto other=std::find_if(rows.begin(),rows.end(),[](const Row& r){return r.driver.index==1;});
+        if(other!=rows.end() && std::abs(std::abs(other->gap)-3)>worstRelative) { worstRelative=std::abs(std::abs(other->gap)-3); atRelative=t; }
+        StandingsOptions options; options.liveGaps=true; options.separateClasses=false; options.leaders=MaxCars;
+        for(const auto& g:SelectStandings(one,f,options,&passes)) for(const auto& r:g.rows) if(r.driver.index==0 && std::isfinite(r.interval) && std::abs(r.interval-3)>worstStanding) { worstStanding=std::abs(r.interval-3); atStanding=t; }
+    }
+    std::cout<<"worst Relative deviation "<<worstRelative<<" s at "<<atRelative<<" (pct "<<Position(atRelative)<<"); worst Standings interval deviation "<<worstStanding<<" s at "<<atStanding<<" (pct "<<Position(atStanding)<<")\n";
+    return 0;
+}
+// Live or TapeMate: every Relative row with its inputs, to find jumps: gap, gap without passes, measured,
+// the car behind's profile time, both lap positions, lap counters and SDK estimates.
+int PassingTimesTrace(int seconds,const char* path) {
+    Telemetry reader; Frame frame; Session session; PassingTimes passes; std::ofstream out(path);
+    out<<"time,reference,car,ahead,gap,estimate,measured,reach,classReach,pct,refPct,completed,refCompleted,est,refEst,surface,pit\n";
+    const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(seconds); double last=-1; int frames=0;
+    while(std::chrono::steady_clock::now()<end) {
+        if(!reader.Read(frame,session) || frame.time==last) { Sleep(1); continue; }
+        last=frame.time; ++frames; passes.Update(session,frame);
+        if(frames%3) continue;
+        const int reference=ReferenceCar(frame); if(reference<0 || reference>=MaxCars) continue;
+        const auto with=Relative(session,frame,15,false,false,&passes),without=Relative(session,frame,15,false,false,nullptr);
+        for(const auto& row:with) {
+            if(row.player) continue;
+            const int car=row.driver.index; const bool ahead=row.gap<0;
+            const int front=ahead?car:reference,back=ahead?reference:car;
+            const auto other=std::find_if(without.begin(),without.end(),[&](const Row& r){return r.driver.index==car;});
+            int backClass=-1; for(const auto& d:session.drivers) if(d.index==back) backClass=d.classId;
+            const auto& c=frame.cars[car]; const auto& m=frame.cars[reference];
+            out<<frame.time<<','<<reference<<','<<car<<','<<ahead<<','<<row.gap<<','<<(other==without.end()?NAN:other->gap)<<','<<passes.Gap(front,back)<<','
+               <<passes.Reach(back,back,front)<<','<<passes.Reach(passes.ClassProfile(backClass),back,front)<<','<<c.pct<<','<<m.pct<<','<<c.completed<<','<<m.completed<<','
+               <<c.estTime<<','<<m.estTime<<','<<c.surface<<','<<c.pit<<'\n';
+        }
+    }
+    std::cout<<frames<<" frames\n"; return 0;
 }
 int PassingTimesBenchmark() {
     for(int cars:{60,128}) {

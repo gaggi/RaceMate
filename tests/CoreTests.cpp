@@ -18,6 +18,8 @@ int SectorReasonLog(int seconds);
 int SectorCoverageLog(int seconds);
 void PassingTimesTests();
 int PassingTimesBenchmark();
+int PassingTimesSweep();
+int PassingTimesTrace(int seconds,const char* path);
 int PassingTimesLog(int seconds,const char* path);
 void Require(bool c,const char* m) { if(!c) throw std::runtime_error(m); }
 void Near(double a,double b,const char* m) { Require(std::abs(a-b)<0.001,m); }
@@ -296,7 +298,7 @@ DriverInfo:
  auto leader=std::find_if(relative.begin(),relative.end(),[](const Row& row){return row.driver.index==0;});
  Near(player->gap,0,"formation reference gap is zero"); Near(leader->gap,-2,"formation relative uses SDK class pace before best or last lap exists");
  auto other=std::find_if(relative.begin(),relative.end(),[](const Row& row){return row.driver.index==2;});
- Near(other->gap,2,"multiclass estimates are normalized before comparing relative phases");
+ Near(other->gap,4,"another class behind is timed at its own class pace, never compared across class curves");
  auto rows=Standings(session,frame,9,false);
  Require(rows.size()==3 && rows[0].car.position==1 && rows[1].car.classPosition==2,"formation standings visible before SDK race positions exist");
  Near(rows[1].gap,2,"early leader gap is available before first crossing");
@@ -832,6 +834,8 @@ void WeatherHistoryTests() {
 }
 int main(int argc,char** argv) {
  if(argc==2 && std::string(argv[1])=="--benchmark-sectors") return SectorTimingBenchmark();
+ if(argc==4 && std::string(argv[1])=="--gap-trace") return PassingTimesTrace(std::stoi(argv[2]),argv[3]);
+ if(argc==2 && std::string(argv[1])=="--sweep-passing") return PassingTimesSweep();
  if(argc==2 && std::string(argv[1])=="--benchmark-passing") return PassingTimesBenchmark();
  try { PassingTimesTests(); } catch(const std::exception& e) { std::cerr<<"FAIL passing times: "<<e.what()<<'\n'; return 1; }
  if(argc==4 && std::string(argv[1])=="--gap-log") return PassingTimesLog(std::stoi(argv[2]),argv[3]);

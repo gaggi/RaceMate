@@ -105,6 +105,27 @@ double LapGap(const PassingTimes* passes,const Driver& ahead,const Car& a,const 
     }
     return std::max(0.0,share)*lap;
 }
+// Relative and Traffic: the time the car behind needs to get where the car ahead is now, on its own last clean
+// lap, so each class is timed at its own pace and a stopped car comes closer as the distance shrinks. Without
+// one, the last clean lap of a car in its class. Before any (the first laps), the measured gap. Only iRacing's own
+// estimate for one class (CarIdxEstTime, which knows slow corners and fast straights) may overrule it, where the
+// car ahead crawled over the stretch (pit lane, a stop). Lap distance at the average pace is too coarse for that:
+// far too long on a fast straight, far too short in a slow corner.
+double ReachGap(const PassingTimes* passes,const Driver& ahead,const Car& a,const Driver& behind,const Car& b,double lap) {
+    if(passes) for(int profile:{behind.index,passes->ClassProfile(behind.classId)}) {
+        const double reach=passes->Reach(profile,behind.index,ahead.index);
+        if(std::isfinite(reach)) return reach;
+    }
+    const double pace=ValidTime(behind.estimatedLapTime)?behind.estimatedLapTime:lap;
+    const double measured=passes?passes->Gap(ahead.index,behind.index):std::numeric_limits<double>::quiet_NaN();
+    double first=0,second=0;
+    if(std::isfinite(measured)) {
+        if(ahead.classId!=behind.classId || !TimeShare(ahead,a,pace,first) || !TimeShare(behind,b,pace,second)) return measured;
+        const double estimate=LapGap(nullptr,ahead,a,behind,b,pace);
+        if(!(measured>estimate*2+.3)) return measured;
+    }
+    return LapGap(nullptr,ahead,a,behind,b,pace);
+}
 double LiveGap(const Session& s,const Frame& f,const Row& ahead,const Row& behind,const PassingTimes* passes) {
     if(ahead.driver.index==behind.driver.index) return 0;
     if(!OnCircuit(ahead.car) || !OnCircuit(behind.car)) return std::numeric_limits<double>::quiet_NaN();
@@ -526,8 +547,8 @@ std::vector<Row> Relative(const Session& s, const Frame& f, int count, bool ownC
             row.lapDifference = static_cast<int>(std::round(c.lap + c.pct - mine.lap - mine.pct));
         // Ahead or behind by lap position; the seconds only say how far.
         if (row.player) row.gap = 0;
-        else if (diff > 0 || (diff == 0 && d.index < reference)) row.gap = -LapGap(passes,d,c,*me,mine,lapTime);
-        else row.gap = LapGap(passes,*me,mine,d,c,lapTime);
+        else if (diff > 0 || (diff == 0 && d.index < reference)) row.gap = -ReachGap(passes,d,c,*me,mine,lapTime);
+        else row.gap = ReachGap(passes,*me,mine,d,c,lapTime);
         if(!row.player && !std::isfinite(row.gap) && d.classId==me->classId && c.estTime>0 && mine.estTime>0 && std::abs(c.pct-mine.pct)<.5) row.gap=mine.estTime-c.estTime;
         rows.push_back(row);
     }
@@ -920,9 +941,9 @@ std::vector<CarBehind> CarsBehind(const Session& s,const Frame& f,double thresho
         if(fasterOnly && (d.classId==me->classId || !ValidTime(d.estimatedLapTime) || !ValidTime(me->estimatedLapTime) || lap>me->estimatedLapTime*.98)) continue;
         const auto& c=f.cars[d.index];
         if(c.pct<0 || c.surface<0 || c.surface==1 || c.pit) continue;
-        // Behind by lap position; then measured seconds, or before those that car's own class time.
+        // Behind by lap position; then the time it needs to reach you, as in the Relative.
         double apart=own.pct-c.pct; apart-=std::floor(apart); if(apart<=0 || apart>.5) continue;
-        const double gap=LapGap(passes,*me,own,d,c,lap);
+        const double gap=ReachGap(passes,*me,own,d,c,lap);
         if(gap<=threshold) cars.push_back({d.index,gap});
     }
     std::sort(cars.begin(),cars.end(),[](const CarBehind& a,const CarBehind& b){ return a.gap<b.gap; });

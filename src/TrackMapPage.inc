@@ -2,7 +2,7 @@ class TrackMapPage : public PageWindow {
 public:
     explicit TrackMapPage(Overlay& overlay) : PageWindow(ui.heading,ui.text), o_(overlay) {}
 private:
-    enum Key { Info, LayoutKey, WhiteTrackKey, SurroundingsKey, AllConfigsKey, NorthUpKey, Numbers, OwnClass, Pit, PitExitKey, Details, Rounded, Header, Footer, Retry, NorthKey, StartKey, Cache, Background, PitLane, StartFinish, CornerNumbers, CornerNames, LabelSize, LabelContrast, SectorsKey, SectorPartsKey };
+    enum Key { Info, LayoutKey, WhiteTrackKey, SurroundingsKey, AllConfigsKey, NorthUpKey, Numbers, OwnClass, Pit, PitExitKey, Details, Rounded, Header, Footer, Retry, NorthKey, StartKey, Cache, Background, PitLane, StartFinish, CornerNumbers, CornerNames, LabelSize, LabelContrast, SectorsKey, SectorPartsKey, SectorMarksKey, SectorLabelsKey, DirectionKey };
     static constexpr int ListId=100, SlotEditId=230, LabelSizeId=240;
     void OnCreate() override { list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont()); editors_.Attach(list_,Instance(),TextFont()); Refresh(); }
     void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
@@ -25,7 +25,8 @@ private:
         toggle(L"All configurations",L"The track's other layouts in grey under this one; the map makes room for them.",o_.map.allConfigs,AllConfigsKey);
         toggle(L"North up",L"iRacing turns some maps to fit the screen; this turns them back. Where north lies: North, under Map data.",o_.map.northUp,NorthUpKey);
         for(size_t i=rows.size()-3;i<rows.size();++i) { rows[i].muted=o_.map.layout!=MapLayout; rows[i].toggleEnabled=o_.map.layout==MapLayout; }
-        toggle(L"Start/finish marking",L"Show the line and direction arrow. Position mapping keeps using these data when hidden.",o_.map.startFinish,StartFinish);
+        toggle(L"Start/finish marking",L"A checkered bar across the road where the lap starts. Position mapping keeps using the official stripe when hidden.",o_.map.startFinish,StartFinish);
+        toggle(L"Direction arrow",L"An arrow beside the track just past the line, in the driving direction, where there is room.",o_.map.directionArrow,DirectionKey);
         {
             static constexpr const wchar_t* texts[]={L"Car numbers",L"Position in class",L"Overall position"};
             RowList::Row row; row.title=L"Text in markers"; row.toggle=o_.map.numbers?1:0; row.button=L"Choose...";
@@ -42,6 +43,8 @@ private:
         toggle(L"Show sectors",L"Colour the full track width for your car (or the car you watch). Dark split marks and sector labels.",o_.map.sectors,SectorsKey);
         if(o_.map.sectors) {
             RowList::Row row; row.title=L"Sector detail"; row.detail=o_.map.sectorParts==3?L"Three equal-distance mini-sectors per SDK sector":L"SDK sectors"; row.button=L"Choose..."; push(std::move(row),SectorPartsKey);
+            toggle(L"Split marks",L"Dark lines across the road where sectors (and mini-sectors) begin.",o_.map.sectorMarks,SectorMarksKey);
+            toggle(L"Sector labels",L"S1, S2 \u2026 beside the middle of each sector, always next to the road, never on it or on another part of the circuit.",o_.map.sectorLabels,SectorLabelsKey);
             RowList::Row note; note.title=L"Sector colours"; note.detail=L"Green: personal best. Purple: fastest observed in this session within the car's class. Yellow: slower, or with pit lane, off-track or caution (never a record). Grey: not yet completed this lap. A new S1 clears the previous lap's later splits. Estimated timing; no all-time history."; push(std::move(note),Info);
         }
         heading(L"Corner labels");
@@ -123,11 +126,14 @@ private:
             if(key==AllConfigsKey) o_.map.allConfigs=on;
             if(key==NorthUpKey) o_.map.northUp=on;
             if(key==StartFinish) o_.map.startFinish=on;
+            if(key==DirectionKey) o_.map.directionArrow=on;
             if(key==CornerNumbers) o_.map.cornerNumbers=on;
             if(key==CornerNames) o_.map.cornerNames=on;
             if(key==LabelContrast) o_.map.labelContrast=on;
             if(key==Rounded) SetRounded(o_,on);
             if(key==SectorsKey) { o_.map.sectors=on; Fit(o_); }
+            if(key==SectorMarksKey) o_.map.sectorMarks=on;
+            if(key==SectorLabelsKey) o_.map.sectorLabels=on;
             if(key==Header || key==Footer) SetBand(o_,key==Footer,on);
             SettingChanged(); Refresh(); return true;
         }

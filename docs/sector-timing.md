@@ -8,7 +8,7 @@ RaceMate estimates split times from observed telemetry. These are local interpol
 
 Enable **Track Map → Settings → Sectors and mini-sectors → Show sectors**. Only then do the sector options appear. **Sector detail** (per map) selects SDK sectors or **3 mini-sectors per sector**; the latter divides each official sector into three equal lap-distance intervals, not equal-time intervals or official mini-splits. Circle and Line support the same display.
 
-The full width of the active circuit is coloured for your car, or the camera car while spectating live. Dark marks use the frame colour; official boundaries are thicker than mini boundaries. S1, S2, S3 labels sit beside the middle of each sector, without background boxes. Label size and contrast follow the map's corner-label settings. Maps with more than 12 official sectors omit further sector labels to avoid clutter; all segments still receive colours and boundary marks.
+The full width of the active circuit is coloured for your car, or the camera car while spectating live. **Split marks** (optional) are dark lines in the frame colour; official boundaries are thicker than mini boundaries. **Sector labels** (optional) S1, S2, S3 sit beside the middle of each sector, without background boxes: RaceMate tries spots along the sector, outside the circuit first, and takes the first one that touches no road (other parts of the circuit included) and no other label; with no free spot near a sector, that label is left out rather than drawn on the road. Label size and contrast follow the map's corner-label settings. Maps with more than 12 official sectors omit further sector labels to avoid clutter; all segments still receive colours and boundary marks.
 
 The colours follow the [Formula 1 sector convention](https://www.formula1.com/en/latest/article/f1-glossary-p-t.GBhLQtpeu9b8LrK5VM0F1):
 
@@ -37,9 +37,9 @@ Pit stops do not hide times: the in-lap's last sector and the out-lap's first se
 
 ## Race Control
 
-Enable **Race Control settings → Sectors → Show sectors**. The standings get one column per sector (S1 ~, S2 ~ …) with the same lap rule and pace colours as Relative and Standings: a completed time sits on its colour, a sector not yet completed this lap is a grey dash. **Sector detail** switches to three mini-sector columns per sector. Each column sorts by its own header; cars without a time in it go last.
+Switch on **Race Control settings → Standings columns → Sectors**; expand it for **Columns**: SDK sectors or mini-sectors. The standings get one column per sector (S1 ~, S2 ~ …) with the same lap rule and pace colours as Relative and Standings: a completed time sits on its colour, a sector not yet completed this lap is a grey dash. Each column sorts by its own header; cars without a time in it go last.
 
-Turning **Show sectors** off hides the columns and their options. There is no reference-delta column or comparison lap basis.
+Turning **Sectors** off hides the columns. There is no reference-delta column or comparison lap basis.
 
 ## Definitions and observation limits
 

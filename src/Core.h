@@ -179,8 +179,8 @@ SideTraffic SideTrafficOf(const Session& s, const Frame& f);
 //   either way, each keeping the side it was last on, else the one ahead goes left; a third goes beside its neighbour.
 // Only while you drive.
 // The cars behind yours within threshold seconds while you drive, closest first, with their gap as the Relative
-// shows it: behind by lap position, then how long ago you passed where each car is now (passes), or before that is
-// known, iRacing's same-class estimate (CarIdxEstTime) or the lap distance in the car's own class time. fasterOnly keeps cars of a faster class: its estimated lap (CarClassEstLapTime) at least 2 %
+// shows it: behind by lap position, then the time each needs to reach you on its last clean lap (passes); before
+// it has one, as the Relative falls back. fasterOnly keeps cars of a faster class: its estimated lap (CarClassEstLapTime) at least 2 %
 // quicker than yours. Cars in the pits are left out, as are all while you are in them.
 struct CarBehind { int index = -1; double gap = 0; };
 class PassingTimes;
@@ -275,7 +275,8 @@ constexpr int NoRatingChange = -100000;
 std::array<int, MaxCars> IRatingChanges(const Session&, const Frame&);
 std::string DriverFlags(unsigned flags, bool black=true, bool slowdown=true, bool repair=true);
 int RelativeRowCount(int requested);
-// passes: measured gaps (PassingTimes.h) where known; without, same-class SDK estimates or lap distance.
+// passes (PassingTimes.h): each pair timed by the car behind on its last clean lap, else a car of its class's;
+// in the first lap the measured gap or same-class SDK estimates / lap distance. Rows and sides come from lap position.
 std::vector<Row> Relative(const Session&, const Frame&, int count, bool ownClass, bool hidePit = false, const PassingTimes* passes = nullptr);
 std::vector<Row> Standings(const Session&, const Frame&, int count, bool ownClass, bool fallbackByRating = false);
 struct StandingsOptions {

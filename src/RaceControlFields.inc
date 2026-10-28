@@ -11,7 +11,7 @@ const wchar_t* RaceFieldTitle(int id) {
     return titles[id];
 }
 int RaceFieldWidth(int id) { if(id>=RaceSectorColumn) return raceControl.sectorParts==3?58:66; const int widths[]={40,38,130,50,64,60,78,78,84,82,72,100,70,80,88,158,54,54,44,70,84,96,62,72,110,360}; static_assert(std::size(widths)==RaceFieldCount); return widths[id]; }
-// Left to right; Race Control keeps this order.
+// Left to right by default; dragging in the settings changes and stores the order.
 constexpr int RaceFieldOrder[]={0,1,2,4,5,8,RaceFuelField,RaceIncidentsField,15,3,RaceBrandField,6,7,RaceSectorTimesField,16,17,9,10,RaceRatingChangeField,11,RaceStintLapsField,RaceStintTimeField,RaceStopsField,12,13,14};
 static_assert(std::size(RaceFieldOrder)==RaceFieldCount);
 void SaveRaceFields() {
@@ -24,8 +24,16 @@ void SaveRaceFields() {
     write(L"AlwaysOnTop",raceControl.onTop); write(L"ReplayFrom",raceControl.replayMode);
     write(L"SplitPermille",raceControl.splitPermille);
     write(L"ShowSectors",raceControl.showSectors); write(L"SectorParts",raceControl.sectorParts);
+    auto order=[&](const wchar_t* key,const std::vector<int>& ids) {
+        std::wstring text; for(int id:ids) text+=(text.empty()?L"":L",")+std::to_wstring(id);
+        WritePrivateProfileStringW(L"RaceControl",key,text.c_str(),app.config.c_str());
+    };
+    order(L"FieldOrder",raceControl.fieldOrder); order(L"EventOrder",raceControl.eventOrder);
 }
 void LoadRaceFields() {
+    // Saved orders keep their place; columns added later go before their default successor.
+    raceControl.fieldOrder=ReadOrder(L"RaceControl",L"FieldOrder",std::vector<int>(std::begin(RaceFieldOrder),std::end(RaceFieldOrder)));
+    raceControl.eventOrder=ReadOrder(L"RaceControl",L"EventOrder",std::vector<int>(std::begin(RaceEventOrder),std::end(RaceEventOrder)));
     // New installs start narrow enough to fit beside the event feed without scrolling.
     for(int i=0;i<RaceFieldCount;++i) {
         const bool fallback=i<=2 || i==4 || i==5 || i==8 || i==RaceIncidentsField || (i>=9 && i<15 && First(StandingsKind).table.driverColumns[i-9]);
@@ -119,6 +127,23 @@ void SetRaceSort(bool feed,int col,int direction=-1) {
     descending=direction>=0?direction!=0:(sort==col?!descending:false); sort=col; SaveRaceFields(); UpdateRaceControl(true);
 }
 void ShowRaceControlPage();
+// A table column moved from position from to position to, as shown: the stored order follows. Columns not shown
+// keep their places among the others. The sector columns move as one group, to where the dragged one went.
+bool MoveRaceColumn(bool feed,int from,int to) {
+    const auto& shown=feed?raceControl.feedColumns:raceControl.columns;
+    if(from<0 || to<0 || from>=static_cast<int>(shown.size()) || to>=static_cast<int>(shown.size()) || from==to) return false;
+    std::vector<int> moved=shown; const int id=moved[from];
+    moved.erase(moved.begin()+from); moved.insert(moved.begin()+to,id);
+    std::vector<int> fields;
+    for(int column:moved) {
+        if(column>=RaceSectorColumn && id>=RaceSectorColumn && column!=id) continue;
+        const int field=RaceFieldOf(column);
+        if(std::find(fields.begin(),fields.end(),field)==fields.end()) fields.push_back(field);
+    }
+    auto& order=feed?raceControl.eventOrder:raceControl.fieldOrder; size_t next=0;
+    for(int& slot:order) if(std::find(fields.begin(),fields.end(),slot)!=fields.end() && next<fields.size()) slot=fields[next++];
+    SaveRaceFields(); return true;
+}
 // Shows or hides one column of the standings or event table; at least one column stays.
 bool SetRaceField(bool feed,int index,bool on) {
     auto set=[&](auto& fields) {

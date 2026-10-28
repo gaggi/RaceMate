@@ -74,7 +74,8 @@ The PIT ring uses the [pit exit model](fuel-and-pit-strategy.md#pit-exit-estimat
 | Background | Adds iRacing's drawing around the circuit; Map layout only |
 | All configurations | Adds other layouts in gray and expands the view to fit; Map layout only |
 | North up | Turns the map so north points up; iRacing turns some drawings to fit the screen. North comes from iRacing's TrackNorthOffset and is checked by your car in the pit box the first time on a track (see below); Map layout only |
-| Start/finish marking | Toggles the visible line/direction arrow without changing position calculations |
+| Start/finish marking | A checkered bar across the road where the lap starts (0 %, the start of S1), drawn by RaceMate rather than the SVG stripe, which can lie outside the map's tight bounds and be cut off. Position calculations keep using the official stripe. |
+| Direction arrow | Off by default. An arrow in the driving direction beside the track just past the line, at the first spot clear of the road, the pit lane and the map's edge. |
 | Projection details | Adds track ID, cache source, update rate and the projection notice below the map |
 
 **Background** and **Background and frame** are different controls: one is an official drawing layer, the other the overlay panel itself. Background surroundings and other configurations are off by default. The panel, pit-lane drawing and start/finish marking default to on.

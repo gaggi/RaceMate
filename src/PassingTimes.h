@@ -3,10 +3,12 @@
 #include <cstdint>
 
 namespace rm {
-// Measured time gaps: when each car last passed fixed points about every 10 m of the lap. The gap of a car
-// behind is how long ago the car ahead was where it is now, as on F1 timing screens. It needs no lap-time model,
-// so it is exact across classes and on tracks with very uneven speed, and it is known as soon as the car ahead
-// has been observed for that long: side by side at once, 1.5 s apart after 1.5 s.
+// When each car passed fixed points about every 10 m of the lap, and a copy of its last clean lap of them.
+// Gap: how long ago the car ahead was where the car behind is now, as on F1 timing screens. Exact across classes
+// and on tracks with very uneven speed; known once the car ahead has been watched for that long.
+// Reach: how long a car took on its last clean lap from one car's position to another's. The Relative and Traffic
+// time each pair by the car that has to cover the distance, so a faster class behind shows when it is there, and a
+// stopped car ahead comes closer as the distance to it shrinks.
 class PassingTimes {
 public:
     PassingTimes()=default;
@@ -19,14 +21,23 @@ public:
     // Seconds since ahead passed behind's current lap position, within its current lap of being ahead
     // (whole laps are the caller's). NaN while not observed long enough or after an interruption.
     double Gap(int ahead,int behind) const;
+    // Seconds profile's last clean lap took from from's lap position forward to to's. NaN without such a lap.
+    double Reach(int profile,int from,int to) const;
+    bool HasProfile(int car) const { return car>=0 && car<MaxCars && cars_[car].lapTime>0; }
+    // The car of this class with the fastest stored clean lap, so it changes rarely; -1 before any.
+    int ClassProfile(int classId) const;
     int Points() const { return points_; }
-    size_t Memory() const { return times_.capacity()*sizeof(double); }
+    size_t Memory() const { return (times_.capacity()+profiles_.capacity())*sizeof(double); }
 private:
-    struct Car { int slot=-1; double pct=-1,time=-1,since=-1; bool seen=false; };
+    // lapStart and clean: the lap under way, a clean-lap candidate while watched throughout, on track, out of
+    // the pits and without a full-course caution. lapTime: the stored clean lap's, 0 before there is one.
+    struct Car { int slot=-1,classId=0; double pct=-1,time=-1,since=-1,lapStart=-1,lapTime=0; bool seen=false,clean=false; };
     std::array<Car,MaxCars> cars_{};
     std::vector<double> times_; // points_ per observed car, in slot order; only cars that appear get a slot.
+    std::vector<double> profiles_; // The same layout: each point's time into the last clean lap.
     int points_=0,slots_=0;
     std::string key_; int session_=-1; double time_=-1,metres_=0;
-    void Forget(Car& c,double time) { c.since=time; } // Older passes no longer count.
+    void Forget(Car& c,double time) { c.since=time; c.clean=false; } // Older passes no longer count.
+    double Into(const Car& c,double pct) const; // Time into its clean lap at a lap position.
 };
 }

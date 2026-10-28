@@ -5,12 +5,13 @@ HBITMAP SectorMapBitmap(Overlay& o,int width,int height,const std::uint32_t*& pi
     if(!o.map.sectors || !sectors || !o.mapPixels || (o.map.layout==MapLayout && !trackMap.geometry.direction)) return o.mapBitmap;
     const uint64_t layout=(app.preview?~uint64_t{0}-1:app.sectors.LayoutRevision())*4+parts;
     const float scene=SectorSceneRevision();
-    if(o.sectorBitmap && !o.sectorPaths.empty() && o.sectorLayout==layout && o.sectorScene==scene) { pixels=o.sectorPixels; return o.sectorBitmap; }
+    const int style=o.map.sectorMarks*2+o.map.sectorLabels;
+    if(o.sectorBitmap && !o.sectorPaths.empty() && o.sectorLayout==layout && o.sectorScene==scene && o.sectorStyle==style) { pixels=o.sectorPixels; return o.sectorBitmap; }
     const float scale=static_cast<float>(o.dpi*o.place.scale)/9600;
     const auto transform=o.map.layout==MapLayout?MapFit(trackMap.geometry,width,height,o.map):MapTransform{};
     const auto ring=MapShape(o,width,height);
     auto point=[&](double pct) { const auto p=o.map.layout==MapLayout?transform.Apply(trackMap.geometry.At(pct)):ring.At(pct); return Gdiplus::PointF(static_cast<float>(p.x),static_cast<float>(p.y)); };
-    bool redraw=false;
+    bool redraw=o.sectorStyle!=style; o.sectorStyle=style;
     if(o.sectorPaths.empty() || o.sectorLayout!=layout) {
         o.sectorPaths.clear(); o.sectorPaths.reserve(count); o.sectorColors.assign(count,CLR_INVALID); o.sectorLayout=layout;
         struct Edge { Gdiplus::PointF p; float dx,dy,length; uint16_t segment; };
@@ -94,7 +95,7 @@ HBITMAP SectorMapBitmap(Overlay& o,int width,int height,const std::uint32_t*& pi
             }
             return last+scale;
         };
-        for(int i=0;i<count;++i) {
+        for(int i=0;i<count && o.map.sectorMarks;++i) {
             const bool official=i%parts==0;
             const auto& path=o.sectorPaths[i]; const auto p=path[0],n=normal(p,path[1]);
             const float a=reach(p,n,-1),b=reach(p,n,1);
@@ -102,27 +103,50 @@ HBITMAP SectorMapBitmap(Overlay& o,int width,int height,const std::uint32_t*& pi
             graphics.DrawLine(&mark,p.X-n.X*a,p.Y-n.Y*a,p.X+n.X*b,p.Y+n.Y*b);
         }
         Gdiplus::FontFamily family(L"Segoe UI");
-        Gdiplus::StringFormat format(Gdiplus::StringFormat::GenericTypographic()); format.SetAlignment(Gdiplus::StringAlignmentCenter);
+        Gdiplus::StringFormat format(Gdiplus::StringFormat::GenericTypographic());
         Gdiplus::SolidBrush ink(Gdiplus::Color(255,232,237,242)); Gdiplus::Pen outline(dark,std::max(1.f,1.4f*scale));
-        for(int s=0;s<std::min(sectors,12);++s) {
-            const double start=SectorStart(s),end=s+1<sectors?SectorStart(s+1):1.,middle=(start+end)/2;
-            const auto p=point(middle),q=point(std::min(middle+.001,1.)); auto n=normal(p,q);
-            if(n.X*(p.X-width/2.f)+n.Y*(p.Y-height/2.f)<0) { n.X=-n.X; n.Y=-n.Y; }
-            const float size=std::max(8.f,11.f*scale*o.map.labelScale/100);
-            float offset=reach(p,n,1)+8*scale;
-            // At the SVG's tight bounds put text inside the circuit instead of clamping it onto the road.
-            const float atX=p.X+n.X*offset,atY=p.Y+n.Y*offset-size/2;
-            if(atX<size || atX>width-size || atY<0 || atY+size*1.5f>height) {
-                n.X=-n.X; n.Y=-n.Y; offset=reach(p,n,1)+8*scale;
-            }
-            const float x=std::clamp(p.X+n.X*offset,size,std::max(size,width-size)),y=std::clamp(p.Y+n.Y*offset-size/2,0.f,std::max(0.f,height-size));
+        // Every road pixel, other parts of the circuit included: a label may touch none of them, nor another label.
+        std::vector<unsigned char> road(static_cast<size_t>(width)*height,0);
+        for(const auto& p:o.sectorMask) road[p.offset]=1;
+        std::vector<Gdiplus::RectF> placed;
+        auto free=[&](const Gdiplus::RectF& r) {
+            if(r.X<0 || r.Y<0 || r.GetRight()>width || r.GetBottom()>height) return false;
+            for(const auto& other:placed) if(other.IntersectsWith(r)) return false;
+            for(int y=static_cast<int>(r.Y);y<static_cast<int>(std::ceil(r.GetBottom()));++y)
+                for(int x=static_cast<int>(r.X);x<static_cast<int>(std::ceil(r.GetRight()));++x) if(road[static_cast<size_t>(y)*width+x]) return false;
+            return true;
+        };
+        for(int s=0;s<std::min(sectors,12) && o.map.sectorLabels;++s) {
+            const double start=SectorStart(s),end=s+1<sectors?SectorStart(s+1):1.;
+            const float size=std::max(8.f,11.f*scale*o.map.labelScale/100),gap=3*scale;
             const auto text=L"S"+std::to_wstring(s+1); Gdiplus::GraphicsPath label;
-            label.AddString(text.c_str(),static_cast<int>(text.size()),&family,Gdiplus::FontStyleBold,size,Gdiplus::PointF(x,y),&format);
+            label.AddString(text.c_str(),static_cast<int>(text.size()),&family,Gdiplus::FontStyleBold,size,Gdiplus::PointF(0,0),&format);
+            Gdiplus::RectF bounds; label.GetBounds(&bounds);
+            const float half=std::sqrt(bounds.Width*bounds.Width+bounds.Height*bounds.Height)/2;
+            // From the middle of the sector outwards along it, outside the circuit first, then inside, a little
+            // further off each round: the first spot clear of every road and label wins.
+            bool found=false; Gdiplus::PointF centre;
+            for(float extra=0;extra<=24*scale && !found;extra+=4*scale)
+                for(double along:{.5,.4,.6,.3,.7,.2,.8}) {
+                    const double at=start+(end-start)*along;
+                    const auto p=point(at),q=point(std::min(at+.001,1.)); auto n=normal(p,q);
+                    if(n.X*(p.X-width/2.f)+n.Y*(p.Y-height/2.f)<0) { n.X=-n.X; n.Y=-n.Y; }
+                    for(float side:{1.f,-1.f}) {
+                        const Gdiplus::PointF d(n.X*side,n.Y*side);
+                        const float offset=reach(p,d,1)+gap+half+extra;
+                        const Gdiplus::PointF c(p.X+d.X*offset,p.Y+d.Y*offset);
+                        const Gdiplus::RectF box(c.X-bounds.Width/2-gap/2,c.Y-bounds.Height/2-gap/2,bounds.Width+gap,bounds.Height+gap);
+                        if(free(box)) { centre=c; found=true; placed.push_back(box); break; }
+                    }
+                    if(found) break;
+                }
+            if(!found) continue; // No free spot near this sector: no label rather than one on the road.
+            Gdiplus::Matrix move; move.Translate(centre.X-bounds.X-bounds.Width/2,centre.Y-bounds.Y-bounds.Height/2); label.Transform(&move);
             if(o.map.labelContrast) graphics.DrawPath(&outline,&label);
             graphics.FillPath(&ink,&label);
         }
         if(o.map.layout==MapLayout) {
-            if(o.map.startFinish) DrawMapLayer(graphics,trackMap.geometry.finish,transform,Ink::White,o.map.whiteTrack?std::max(1.f,1.5f*scale):0);
+            if(o.map.startFinish) { auto onRoad=[&](int x,int y){ return road[static_cast<size_t>(y)*width+x]!=0; }; DrawStartFinish(graphics,o,transform,width,height,onRoad,onRoad,true,false); }
             DrawMapLabels(graphics,o,transform);
         }
         graphics.Flush(Gdiplus::FlushIntentionSync);

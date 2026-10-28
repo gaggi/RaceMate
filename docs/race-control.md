@@ -1,6 +1,6 @@
 # Race Control
 
-Enable **Show sectors** for one standings column per sector (**Sector detail**: SDK sectors or 3 mini-sectors each), each sortable by its header. Times appear as each sector is completed; a new S1 clears the previous lap's later sectors. See [sector timing and its limits](sector-timing.md).
+Switch on **Sectors** among the standings columns for one column per sector; expand that row to choose SDK sectors or 3 mini-sectors each. Each sector column sorts by its header. Times appear as each sector is completed; a new S1 clears the previous lap's later sectors. See [sector timing and its limits](sector-timing.md).
 
 [Documentation](README.md) · [Fuel and pit strategy](fuel-and-pit-strategy.md)
 
@@ -58,7 +58,7 @@ A replay jump waits for iRacing to reach the requested time before switching cam
 
 Standings include class stripes, status pills and your incident count. Available statuses include Pit, Out, Tow, Repair, Black, DQ and Inactive.
 
-Open the **Race Control** settings page, or right-click a table heading, to choose displayed fields. Its column switches are independent of overlay column switches.
+Open the **Race Control** settings page, or right-click a table heading, to choose displayed fields. Its column switches are independent of overlay column switches. The settings list the columns left to right as the tables show them: drag a row by the grip at its left to move that column, in the standings and in the events alike. In the window itself, drag a column heading left or right; the settings follow. The sector columns move together. The order is saved; columns added in later versions appear next to their default neighbour.
 
 | Group | Available fields |
 | --- | --- |

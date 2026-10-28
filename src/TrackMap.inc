@@ -173,7 +173,7 @@ bool ShowMapLabel(const trackmap::Label& label,const TrackMapSettings& settings)
 int MapStyle(const TrackMapSettings& settings) {
     return (settings.background?1:0)|(settings.pitLane?2:0)|(settings.startFinish?4:0)
         |(settings.cornerNumbers?8:0)|(settings.cornerNames?16:0)|(settings.labelContrast?32:0)|(settings.labelScale<<6)|(settings.layout<<15)|(settings.whiteTrack?1<<17:0)
-        |(settings.surroundings?1<<18:0)|(settings.allConfigs?1<<19:0)|(settings.northUp?1<<20:0);
+        |(settings.surroundings?1<<18:0)|(settings.allConfigs?1<<19:0)|(settings.northUp?1<<20:0)|(settings.directionArrow?1<<21:0);
 }
 // Circle and line: where a lap fraction lies in an area of this physical size; the scene and the static drawing share it.
 struct MapShapeInfo {
@@ -209,7 +209,9 @@ MapTransform MapFit(const trackmap::Geometry& g,int width,int height,const Track
     const double w=high.x-low.x,h=high.y-low.y;
     // Small inset protects the contrast outline against clipping at bitmap edges.
     width=std::max(8,width); height=std::max(8,height);
-    const int inset=(settings.cornerNumbers || settings.cornerNames)?3:0;
+    int inset=(settings.cornerNumbers || settings.cornerNames)?3:0;
+    // The start/finish bar and the sector marks reach past the road's edge: room for them at the map's edge too.
+    if(settings.startFinish || settings.directionArrow || settings.sectors) inset=std::max(inset,std::max(6,std::min(width,height)/40));
     const double scale=std::min((width-2*inset)/w,(height-2*inset)/h);
     transform.scale=scale; transform.x=(width-w*scale)/2-low.x*scale; transform.y=(height-h*scale)/2-low.y*scale;
     return transform;
@@ -260,6 +262,65 @@ void DrawMapLabels(Gdiplus::Graphics& graphics,const Overlay& o,const MapTransfo
         graphics.FillPath(&brush,&path);
     }
 }
+// Start/finish drawn by RaceMate at 0 % of the lap instead of the SVG stripe and arrow, which can lie outside the
+// map's tight bounds and be cut off (COTA). The SVG stripe still places 0 % when the map loads. A checkered bar
+// across the road; optionally an arrow in the driving direction beside it, at the first spot clear of road and edges.
+// road(x,y): whether that pixel is road, other parts of the circuit included; blocked(x,y): road or pit lane, which
+// the arrow keeps clear of. Over recoloured sectors only the bar is drawn again; the arrow lies off the road.
+template<class Road,class Blocked> void DrawStartFinish(Gdiplus::Graphics& graphics,const Overlay& o,const MapTransform& transform,int width,int height,Road road,Blocked blocked,bool bar,bool arrow) {
+    const float scale=static_cast<float>(o.dpi*o.place.scale)/9600;
+    auto point=[&](double pct) { const auto p=transform.Apply(trackMap.geometry.At(pct-std::floor(pct))); return Gdiplus::PointF(static_cast<float>(p.x),static_cast<float>(p.y)); };
+    auto along=[&](double pct) {
+        const auto p=point(pct),q=point(pct+.0015); const float dx=q.X-p.X,dy=q.Y-p.Y,len=std::max(.001f,std::sqrt(dx*dx+dy*dy));
+        return Gdiplus::PointF(dx/len,dy/len);
+    };
+    // How far the road reaches from p along d, at least the drawn track's half width.
+    auto reach=[&](Gdiplus::PointF p,Gdiplus::PointF d) {
+        float last=3*scale;
+        for(float s=0;s<40*scale;s+=1) {
+            const int x=static_cast<int>(std::lround(p.X+d.X*s)),y=static_cast<int>(std::lround(p.Y+d.Y*s));
+            if(x<0 || x>=width || y<0 || y>=height) break;
+            if(road(x,y)) last=s; else if(s>2) break;
+        }
+        return last+scale;
+    };
+    const auto p=point(0),t=along(0); const Gdiplus::PointF n(-t.Y,t.X);
+    // At least 4 px either side, so the bar stays visible on a thin track as a whole circuit like the Nordschleife.
+    const float left=std::max(reach(p,Gdiplus::PointF(-n.X,-n.Y)),5*scale),right=std::max(reach(p,n),5*scale);
+    // Two rows of squares, black and white, so the bar shows on a white or a grey track.
+    const float square=std::max(2.f,2.5f*scale); const int squares=std::max(2,static_cast<int>(std::ceil((left+right)/square)));
+    Gdiplus::SolidBrush black(Gdiplus::Color(255,12,15,19)),white(Gdiplus::Color(255,255,255,255));
+    for(int row=0;row<2 && bar;++row) for(int i=0;i<squares;++i) {
+        const float a=-left+i*square,b=a+square,c=(row-1)*square,d=c+square;
+        auto at=[&](float across,float ahead) { return Gdiplus::PointF(p.X+n.X*across+t.X*ahead,p.Y+n.Y*across+t.Y*ahead); };
+        const Gdiplus::PointF quad[]={at(a,c),at(b,c),at(b,d),at(a,d)};
+        graphics.FillPolygon((row+i)%2?&black:&white,quad,4);
+    }
+    if(!arrow || !trackMap.geometry.direction) return;
+    // The arrow: just past the line, outside the circuit first, inside if there is no room.
+    const float length=14*scale,head=4*scale,gap=4*scale;
+    for(double pct:{.012,.02,.03,.006,.045}) for(float side:{1.f,-1.f}) {
+        const auto q=point(pct),u=along(pct); Gdiplus::PointF m(-u.Y,u.X);
+        if(m.X*(q.X-width/2.f)+m.Y*(q.Y-height/2.f)<0) { m.X=-m.X; m.Y=-m.Y; }
+        m.X*=side; m.Y*=side;
+        const float off=reach(q,m)+gap+head;
+        const Gdiplus::PointF tail(q.X+m.X*off-u.X*length/2,q.Y+m.Y*off-u.Y*length/2),tip(tail.X+u.X*length,tail.Y+u.Y*length);
+        // Every pixel within 3 px of the arrow must be clear: a dashed pit lane has gaps to slip through.
+        bool clear=true; const float margin=head+3*scale;
+        for(float a=-3*scale;a<=length+3*scale && clear;a+=1) for(float w=-margin;w<=margin;w+=1) {
+            const float x=tail.X+u.X*a+m.X*w,y=tail.Y+u.Y*a+m.Y*w;
+            if(x<1 || y<1 || x>=width-1 || y>=height-1 || blocked(static_cast<int>(x),static_cast<int>(y))) { clear=false; break; }
+        }
+        if(!clear) continue;
+        const Gdiplus::PointF wing[]={Gdiplus::PointF(tip.X-u.X*head+m.X*head,tip.Y-u.Y*head+m.Y*head),tip,Gdiplus::PointF(tip.X-u.X*head-m.X*head,tip.Y-u.Y*head-m.Y*head)};
+        for(const bool edge:{true,false}) {
+            Gdiplus::Pen pen(edge?Gdiplus::Color(255,12,15,19):Gdiplus::Color(255,255,255,255),(edge?3.2f:1.8f)*scale);
+            pen.SetStartCap(Gdiplus::LineCapRound); pen.SetEndCap(Gdiplus::LineCapRound); pen.SetLineJoin(Gdiplus::LineJoinRound);
+            graphics.DrawLine(&pen,tail,tip); graphics.DrawLines(&pen,wing,3);
+        }
+        return;
+    }
+}
 #include "TrackMapSectors.inc"
 void PaintMap(Overlay& o,const DrawCommand& c,HRGN dirty) {
     if(o.map.layout==MapLayout && !trackMap.ready) return;
@@ -307,8 +368,16 @@ void PaintMap(Overlay& o,const DrawCommand& c,HRGN dirty) {
                 // White with a black edge by default; start/finish keeps white and gets the same edge to stay visible on it.
                 const float edge=o.map.whiteTrack?std::max(1.f,static_cast<float>(MulDiv(15,o.dpi*o.place.scale,9600))/10):0;
                 DrawMapLayer(graphics,trackMap.geometry.active,transform,o.map.whiteTrack?Ink::White:RGB(110,120,134),edge);
-                // The stripe is clear on the map; the arrow may lie outside its tight bounds.
-                if(o.map.startFinish) DrawMapLayer(graphics,trackMap.geometry.finish,transform,Ink::White,edge);
+                if(o.map.startFinish || o.map.directionArrow) {
+                    // Where the road and the pit lane are: those layers alone, rendered once more into masks.
+                    std::vector<uint32_t> road(static_cast<size_t>(width)*height,0),pit(road.size(),0);
+                    for(auto* layer:{&road,&pit}) {
+                        Gdiplus::Bitmap mask(width,height,width*4,PixelFormat32bppPARGB,reinterpret_cast<BYTE*>(layer->data()));
+                        Gdiplus::Graphics g(&mask); DrawMapLayer(g,layer==&road?trackMap.geometry.active:trackMap.geometry.pit,transform,RGB(255,255,255)); g.Flush(Gdiplus::FlushIntentionSync);
+                    }
+                    auto on=[&](const std::vector<uint32_t>& layer,int x,int y){ return (layer[static_cast<size_t>(y)*width+x]>>24)>0; };
+                    DrawStartFinish(graphics,o,transform,width,height,[&](int x,int y){ return on(road,x,y); },[&](int x,int y){ return on(road,x,y) || on(pit,x,y); },o.map.startFinish,o.map.directionArrow);
+                }
                 DrawMapLabels(graphics,o,transform);
             }
         }

@@ -12,6 +12,7 @@ struct RaceControlWindow {
     std::vector<Row> rows; std::vector<RaceEvent> events;
     std::vector<int> columns, feedColumns;
     std::array<bool,RaceFieldCount> fields{}; std::array<bool,RaceEventFieldCount> eventFields{};
+    std::vector<int> fieldOrder, eventOrder; // Left to right, as dragged in the settings; stored as FieldOrder and EventOrder.
     std::array<bool,RaceInfoCount> info{};
     int sortColumn=-1, eventSortColumn=2; bool sortDescending=false, eventSortDescending=true;
     // Event filter: 0 all, 1 incidents (offtracks, incidents, crashes), 2 pit, 3 passes; car -1 for all cars.
@@ -32,6 +33,8 @@ struct RaceControlWindow {
 constexpr int RaceSectorColumn=1000;
 bool RaceSectorShown() { return raceControl.showSectors && raceControl.fields[RaceSectorTimesField]; }
 int RaceFieldOf(int column) { return column>=RaceSectorColumn?RaceSectorTimesField:column; }
+// Posted after a heading was dropped elsewhere: the columns are rebuilt in the stored order outside the drag.
+constexpr UINT RaceColumnsMovedMessage=WM_APP+40;
 enum RaceControlId {
     RaceStandingsId=810, RaceFeedId=811, RaceMessageId=816, RaceGoLiveId=820, RaceFilterId=821, RaceCarPillId=822, RaceCountId=823,
     RaceCameraId=824, RaceOnTopId=825, RaceReplayLabelId=829, RaceReplayId=830, RaceOnlyCarId=833, RaceSelectedId=834, RaceWatchId=840, RaceCarEventsId=841, RaceSplitterId=842, RaceInfoId=843,
@@ -496,12 +499,12 @@ void UpdateRaceControl(bool force) {
     }
     const auto& events=raceControl.events;
     std::vector<int> columns;
-    for(int id:RaceFieldOrder) {
+    for(int id:raceControl.fieldOrder) {
         if(!raceControl.fields[id] || (id==RaceSectorTimesField && !raceControl.showSectors)) continue;
         if(id==RaceSectorTimesField && SectorCount()) for(int i=0;i<SectorCount()*raceControl.sectorParts;++i) columns.push_back(RaceSectorColumn+i);
         else columns.push_back(id);
     }
-    std::vector<int> feedColumns; for(int id:RaceEventOrder) if(raceControl.eventFields[id]) feedColumns.push_back(id);
+    std::vector<int> feedColumns; for(int id:raceControl.eventOrder) if(raceControl.eventFields[id]) feedColumns.push_back(id);
     const std::wstring count=std::to_wstring(events.size())+L" of "+std::to_wstring(raceControl.total)+L" events";
     SetRaceText(RaceItem(RaceCountId),count);
     const bool pill=raceControl.car>=0;
@@ -682,8 +685,19 @@ LRESULT CALLBACK RaceControlProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
             if(arrived || GetTickCount64()>=raceControl.pendingUntil || raceControl.pendingNumber.empty()) FinishRaceJump(arrived);
         }
         return 0;
+    case RaceColumnsMovedMessage: UpdateRaceControl(true); RefreshPage(); return 0;
     case WM_NOTIFY: {
         const auto* header=reinterpret_cast<NMHDR*>(lp);
+        if(header->code==HDN_ENDDRAG) {
+            // A heading dragged left or right moves its column, as dragging its row in the settings does. RaceMate
+            // keeps the header in its own order, so the drop itself is refused and the columns are rebuilt.
+            const bool feedHeader=header->hwndFrom==ListView_GetHeader(raceControl.feed);
+            if(!feedHeader && header->hwndFrom!=ListView_GetHeader(raceControl.standings)) return 0;
+            const auto* drag=reinterpret_cast<const NMHEADERW*>(lp);
+            if(drag->pitem && (drag->pitem->mask&HDI_ORDER) && MoveRaceColumn(feedHeader,drag->iItem,drag->pitem->iOrder))
+                PostMessageW(w,RaceColumnsMovedMessage,0,0);
+            return TRUE;
+        }
         const bool feed=header->hwndFrom==raceControl.feed, standings=header->hwndFrom==raceControl.standings;
         if(!feed && !standings) return 0;
         switch(header->code) {
@@ -777,7 +791,7 @@ void OpenRaceControl() {
     raceControl.feed=create(WC_LISTVIEWW,L"",RaceFeedId,LVS_REPORT|LVS_OWNERDATA|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_TABSTOP|WS_BORDER);
     raceControl.standings=create(WC_LISTVIEWW,L"",RaceStandingsId,LVS_REPORT|LVS_OWNERDATA|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_TABSTOP|WS_BORDER);
     raceControl.splitter=create(splitterClass.lpszClassName,L"Resize event and standings tables",RaceSplitterId,WS_TABSTOP);
-    for(HWND list:{raceControl.standings,raceControl.feed}) { ListView_SetExtendedListViewStyle(list,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER); ListView_SetBkColor(list,RGB(255,255,255)); ListView_SetTextBkColor(list,RGB(255,255,255)); ListView_SetTextColor(list,Text); }
+    for(HWND list:{raceControl.standings,raceControl.feed}) { ListView_SetExtendedListViewStyle(list,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP); ListView_SetBkColor(list,RGB(255,255,255)); ListView_SetTextBkColor(list,RGB(255,255,255)); ListView_SetTextColor(list,Text); }
     create(L"STATIC",L"Replay from",RaceReplayLabelId,SS_CENTERIMAGE);
     raceControl.replay.Create(app.instance,raceControl.window,RaceReplayId,raceControl.font,{L"Live",L"5 s",L"10 s"});
     create(L"BUTTON",L"Only this car",RaceOnlyCarId,WS_TABSTOP);

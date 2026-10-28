@@ -1281,6 +1281,25 @@ int RunDiagnostics() {
         SetRaceField(false,RaceStopsField,false);
         extrasOk=std::find(raceControl.columns.begin(),raceControl.columns.end(),RaceStopsField)==raceControl.columns.end() && raceControl.fields[RaceFuelField] && extrasOk;
         SetRaceField(true,RaceEventLapField,false); extrasOk=raceControl.eventSortColumn==FirstEventField && extrasOk;
+        {
+            // Columns dragged in the settings: the table follows, and the order is stored.
+            const auto fieldOrder=raceControl.fieldOrder,eventOrder=raceControl.eventOrder;
+            SetRaceField(false,RaceIncidentsField,true); SetRaceField(true,6,true);
+            MoveToPlace(raceControl.fieldOrder,RaceIncidentsField,raceControl.fieldOrder.front()); MoveToPlace(raceControl.eventOrder,6,raceControl.eventOrder.front());
+            SaveRaceFields(); UpdateRaceControl(true);
+            extrasOk=raceControl.columns.front()==RaceIncidentsField && raceControl.feedColumns.front()==6 && extrasOk;
+            extrasOk=ReadOrder(L"RaceControl",L"FieldOrder",{})==std::vector<int>{} && extrasOk; // Unknown IDs are ignored.
+            const std::vector<int> fields(std::begin(RaceFieldOrder),std::end(RaceFieldOrder)),events(std::begin(RaceEventOrder),std::end(RaceEventOrder));
+            extrasOk=ReadOrder(L"RaceControl",L"FieldOrder",fields)==raceControl.fieldOrder && ReadOrder(L"RaceControl",L"EventOrder",events)==raceControl.eventOrder && extrasOk;
+            // Dragging a heading in the window: the column lands there and the settings order follows.
+            const int first=raceControl.columns[0],third=raceControl.columns[2];
+            MoveRaceColumn(false,0,2); UpdateRaceControl(true);
+            extrasOk=raceControl.columns[2]==first && raceControl.columns[1]==third && extrasOk;
+            const auto at=[&](int id){ return std::find(raceControl.fieldOrder.begin(),raceControl.fieldOrder.end(),id)-raceControl.fieldOrder.begin(); };
+            extrasOk=at(first)>at(third) && extrasOk;
+            raceControl.fieldOrder=fieldOrder; raceControl.eventOrder=eventOrder; SaveRaceFields(); UpdateRaceControl(true);
+            report<<"Race Control column order: dragged rows and headings move the columns, stored: "<<(extrasOk?"PASS":"FAIL")<<"\n";
+        }
         app.session=savedSession; app.frame=savedFrame; InvalidateModel();
         raceControl.fields=savedFields; raceControl.eventFields=savedEvents; raceControl.info=savedInfo;
         raceControl.showSectors=savedShowSectors;
