@@ -84,14 +84,13 @@ Expand **Pit exit row** to choose how many cars ahead of and behind the rejoin p
 
 ## Table columns
 
-Relative and Standings use the same set of columns. Each overlay has its own choice of columns, order and formats. In the column list, columns marked **Always** cannot be hidden; all others have a switch. Use the up and down arrows to change the order; a hidden column keeps its place. Columns with an arrow on the right have further options when expanded.
+Relative and Standings use the same set of columns. Each overlay has its own choice of columns, order and formats. In the column list, columns marked **Always** cannot be hidden; all others have a switch. Drag a column up or down by the six dots at its left to change the order; a hidden column keeps its place. **Copy to another table** gives another Relative or Standings the same columns in the same order with their options; columns only that table has keep their setting and place. Columns with an arrow on the right have further options when expanded.
 
 | Column (heading) | What it shows | Options when expanded |
 | --- | --- | --- |
 | Position (P) | Race position. | Relative: **In class** (default) or **Overall**, see [Position in the Relative](#position-in-the-relative). Standings: follows the **Classes** view. |
 | Car number (#) | Car number in a box in the class color. | – |
-| Driver | Driver name. | Name format: **First name Last name**, **F. Last name** or **F Last name**. |
-| Status badge | A short label after the name, see [Status badges](#status-badges). It belongs to the name and has no position of its own. | Which flags to show: **Black flag**, **Slowdown**, **Required repairs**. |
+| Driver | Driver name, with the status badge after it, see [Status badges](#status-badges). The badge belongs to the name and moves with it. | Name format: **First name Last name**, **F. Last name** or **F Last name**. **Status badge after the name** on or off, and which flags it shows: **Black flag**, **Slowdown**, **Required repairs**. |
 | Gap (GAP) | Relative: time to the reference car. Standings: time behind the class leader, or laps (`1 L`) when lapped. | – |
 | Interval (INT) | Time to the car directly ahead, also when that car is not listed. Standings only. | – |
 | Best lap / Last lap | Fastest lap of this session and the most recent lap. | – |
@@ -118,27 +117,27 @@ Only one driver status is displayed, with this priority:
 PIT > TOW > BLACK/DQ > REPAIR > SLOW > OUT
 ```
 
-**OUT** lasts from an observed pit exit until the next line crossing. Towing is taken from the SDK for your car and inferred for others from a direct return to the stall. Black flag, slowdown and repair indicators can be configured in the badge's expanded settings. An inferred status is limited by what RaceMate has actually observed.
+**OUT** lasts from an observed pit exit until the next line crossing. Towing is taken from the SDK for your car and inferred for others from a direct return to the stall. The badge and its black flag, slowdown and repair indicators are switched in the expanded **Driver** column row. An inferred status is limited by what RaceMate has actually observed.
 
 ## Fuel Calculator
 
 ![Fuel Calculator panel with tank, consumption, pit window and targets](images/fuel-calculator.png)
 
-The Fuel Calculator groups information into switchable, reorderable modules. Choose **Panel** for stacked modules or **Strip** for a horizontal arrangement. Options unsupported by the strip are labeled **Panel only** in settings.
+The Fuel Calculator groups information into switchable, reorderable modules: drag a module up or down by the six dots at its left in the settings list. Choose **Panel** for stacked modules or **Strip** for a horizontal arrangement. Options unsupported by the strip are labeled **Panel only** in settings.
 
 | Module | Shows |
 | --- | --- |
 | Tank | Current fuel, range in laps and a finish requirement/spare marker |
-| Consumption | Last lap; averages of 3, 10 and 5 laps; race average; minimum and maximum |
+| Consumption | Last lap; averages of 3, 10 and 5 laps; race average; minimum and maximum; the qualifying maximum |
 | Last 10 laps | Whole-lap consumption history against the 10-lap average |
 | Refuel to finish | Additional fuel required without a safety margin, or fuel left at the finish |
 | Pit window | Earliest and latest stop lap |
 | Pit window timeline | Full-tank stint blocks, window in green and current lap in yellow |
 | Pit exit | Predicted class position, car ahead and pit loss; off by default |
-| Target and adjacent rows | Maximum per-lap burn for the normal target and one fewer, one extra or two extra laps; outside races the laps the fuel lasts at the average, and the most per lap for one fewer or more |
+| Target and adjacent rows | Maximum per-lap burn for the normal target and one fewer, one extra or two extra laps, with the fuel to add when you stop on that lap; outside races the laps the fuel lasts at the average, and the most per lap for one fewer or more |
 | Leader forecasts | Fractional leader distance and projected final-lap start clock; off by default |
 
-Expand **Consumption** to select its individual figures, and **Last 10 laps** to enable yellow caution markers. Caution laps still do not contribute to the consumption average. Adjacent refuel/window modules share a row, and adjacent target modules share a band.
+Expand **Consumption** to select its individual figures, **Last 10 laps** to enable yellow caution markers, and **Target** to switch the fuel to add on the target rows. Caution laps still do not contribute to the consumption average. Adjacent refuel/window modules share a row, and adjacent target modules share a band.
 
 ![Fuel Calculator in a horizontal strip](images/fuel-strip.png)
 

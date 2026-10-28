@@ -575,7 +575,15 @@ void FuelTests() {
  Require(c.Plan(f).samples==2,"yellow lap excluded when the filter is enabled");
  f.time=600; f.lapCompleted=6; f.fuel=37; c.Update(s,f);
  f.replay=true; c.Update(s,f); Require(c.Plan(f).estimates[1].samples==0,"no replay plan");
- f.replay=false; f.session=1; c.Update(s,f); Require(c.Plan(f).samples==0,"session reset");
+ constexpr int quali=static_cast<int>(FuelMetric::QualifyMaximum);
+ f.replay=false; f.session=1; c.Update(s,f); Require(c.Plan(f).samples==0 && !c.Plan(f).estimates[quali].samples,"session reset; no qualifying maximum outside qualifying");
+ // Qualifying: its most fuel on a counted lap stays for the race in the same event and car.
+ s.type="Qualify"; f.session=2; f.time=10; f.lapCompleted=0; f.fuel=30; c.Update(s,f);
+ f.time=110; f.lapCompleted=1; f.fuel=27; c.Update(s,f); f.time=210; f.lapCompleted=2; f.fuel=23.6; c.Update(s,f); f.time=310; f.lapCompleted=3; f.fuel=20.4; c.Update(s,f);
+ Near(c.Plan(f).estimates[quali].consumption,3.4,"the most a qualifying lap took"); Require(c.Plan(f).estimates[quali].samples==2,"of its counted laps");
+ s.type="Race"; f.session=3; f.time=10; f.lapCompleted=0; f.fuel=60; c.Update(s,f);
+ Require(c.Plan(f).samples==0,"the race begins with its own laps"); Near(c.Plan(f).estimates[quali].consumption,3.4,"and the qualifying maximum");
+ s.key="another event"; f.session=4; c.Update(s,f); Require(!c.Plan(f).estimates[quali].samples,"another event begins without");
 }
 void TelemetryTests() {
  const std::wstring name=L"Local\\RaceMate.Test."+std::to_wstring(GetCurrentProcessId());

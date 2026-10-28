@@ -7,7 +7,7 @@ public:
     explicit ElementsPage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
     enum class Key { None, Layout, Rounded, Module, Band, Info, SetupChanges, PitStrip, Countdown, SideCar, SideApart, RadarBackground, RadarRange, RadarShows, RadarDistances, TrafficBackground, TrafficCars, TrafficGapKey, TrafficFaster };
-    static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210, HumidityEditId=212, HistoryPartEditId=213, CautionEditId=220, SlotEditId=230, HeaderRow=1000, FooterRow=1001;
+    static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210, HumidityEditId=212, HistoryPartEditId=213, CautionEditId=220, TargetRefuelEditId=221, SlotEditId=230, HeaderRow=1000, FooterRow=1001;
 
     void OnCreate() override {
         list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont());
@@ -22,7 +22,7 @@ private:
     // Display options stay in place; wind rose and wind text are switched in the wind module's expanded row.
     // Caution marks are switched in the expanded "Last 10 laps" row.
     std::vector<int> Options() const { return Fuel()?std::vector<int>{}:std::vector<int>{TrendArrows,WindRelative}; }
-    bool Expandable(int id) const { return Fuel()?id==FiguresModule || id==HistoryModule:id==WindModule || id==TemperatureModule || id==TemperatureHistoryModule; }
+    bool Expandable(int id) const { return Fuel()?id==FiguresModule || id==HistoryModule || id==TargetRow:id==WindModule || id==TemperatureModule || id==TemperatureHistoryModule; }
     bool& Shown(int id) { return Fuel()?o_.fuel.display[id]:o_.weather.display[id]; }
     bool& Strip() { return Fuel()?o_.fuel.strip:o_.weather.strip; }
     std::wstring FiguresDetail() const {
@@ -143,6 +143,7 @@ private:
         auto module=[&](int id,bool movable) {
             RowList::Row row; row.title=Modules()[id].title; row.detail=Fuel() && id==FiguresModule?FiguresDetail():Modules()[id].detail;
             if(Fuel() && id==HistoryModule && o_.fuel.display[CautionMarks]) row.detail+=L"; caution laps marked";
+            if(Fuel() && id==TargetRow && o_.fuel.display[TargetRefuel]) row.detail=L"Most fuel per lap to reach the latest stop, and the fuel to add there; to the finish without a stop";
             if(!Fuel() && id==TemperatureModule) row.detail=o_.weather.display[TemperatureHumidity]?L"Track, air and humidity":L"Track and air";
             if(!Fuel() && id==TemperatureHistoryModule) {
                 const auto& d=o_.weather.display;
@@ -155,7 +156,7 @@ private:
             // Same column for every row's button: the expand arrow or an empty slot.
             const bool open=expanded_==id;
             row.iconButtons={Expandable(id)?(open?Glyph::Collapse:Glyph::Expand):wchar_t{0}}; row.expandHeight=Expandable(id) && open?(id==FiguresModule?120:48):0;
-            if(movable) row.iconButtons.insert(row.iconButtons.end(),{id!=Order().back()?Glyph::Down:wchar_t{0},id!=Order().front()?Glyph::Up:wchar_t{0}});
+            if(movable) row.dragGroup=1; // Reordered by dragging its grip.
             push(std::move(row),Key::Module,id);
         };
         // Refuel and pit window share a row while they stand next to each other here.
@@ -180,6 +181,7 @@ private:
         syncing_=true; editors_.Begin(row);
         if(expanded_==HeaderRow || expanded_==FooterRow) BandEditors(editors_,o_,expanded_==FooterRow,SlotEditId);
         else if(Fuel() && expanded_==HistoryModule) editors_.Check(CautionEditId,FuelModules[CautionMarks].title,o_.fuel.display[CautionMarks],0,10,360);
+        else if(Fuel() && expanded_==TargetRow) editors_.Check(TargetRefuelEditId,FuelModules[TargetRefuel].title,o_.fuel.display[TargetRefuel],0,10,360);
         else if(Fuel()) for(int i=0;i<FuelMetricCount;++i) editors_.Check(FuelRowEditId+i,FuelFigures[i].title,o_.fuel.figures[i],(i%2)*260,4+(i/2)*28,250);
         else if(expanded_==TemperatureModule) editors_.Check(HumidityEditId,L"Show humidity",o_.weather.display[TemperatureHumidity],0,10,360);
         else if(expanded_==TemperatureHistoryModule) for(int i=0;i<2;++i) editors_.Check(HistoryPartEditId+i,i?L"Humidity line":L"Air temperature line",o_.weather.display[HistoryAir+i],i*200,10,190);
@@ -198,8 +200,8 @@ private:
             if(!syncing_ && code==CBN_SELCHANGE) { ApplyBandEditor(editors_,o_,expanded_==FooterRow,id,SlotEditId); Changed(); }
             return true;
         }
-        if(id==CautionEditId) {
-            if(!syncing_ && code==BN_CLICKED) { o_.fuel.display[CautionMarks]=editors_.Checked(id); Changed(); }
+        if(id==CautionEditId || id==TargetRefuelEditId) {
+            if(!syncing_ && code==BN_CLICKED) { o_.fuel.display[id==CautionEditId?CautionMarks:TargetRefuel]=editors_.Checked(id); Changed(); }
             return true;
         }
         if(id==HumidityEditId || id==HistoryPartEditId || id==HistoryPartEditId+1) {
@@ -224,8 +226,8 @@ private:
         const int element=ids_[row];
         switch(keys_[row]) {
         case Key::Module:
-            if(code==RowList::kToggled) { Shown(element)=on; Changed(); }
-            else if(glyph==Glyph::Up || glyph==Glyph::Down) { if(MoveInOrder(Order(),element,glyph==Glyph::Up?-1:1)) { Refresh(); BuildEditors(); } }
+            if(code==RowList::kMoved) { if(MoveToPlace(Order(),element,ids_[list_.DropRow()])) { Refresh(); BuildEditors(); } }
+            else if(code==RowList::kToggled) { Shown(element)=on; Changed(); }
             else if(Expandable(element) && (glyph==Glyph::Expand || glyph==Glyph::Collapse || code==RowList::kActivated)) Expand(element);
             break;
         case Key::Band:

@@ -45,9 +45,9 @@ private:
             RowList::Row row; row.title=l.name; row.detail=std::wstring(ConditionNames[l.condition])+L": "+ConditionDetails[l.condition];
             if(l.id==app.layout && app.layoutIdle) row.detail+=L"  ·  None applies now: overlays hidden";
             if(active) { row.pill=L"Active"; row.pillTone=RowList::Tone::Active; } else row.button=L"Use";
-            // Right to left: expand, sort arrows, remove (not the first layout).
-            row.iconButtons={l.id==expandedLayout_?Glyph::Collapse:Glyph::Expand,i+1<app.layouts.size()?Glyph::Down:wchar_t{0},i>0?Glyph::Up:wchar_t{0},l.id!=1?Glyph::Remove:wchar_t{0}};
-            row.expandHeight=l.id==expandedLayout_?84:0;
+            // Right to left: expand, remove (not the first layout); the order changes by dragging the grip.
+            row.iconButtons={l.id==expandedLayout_?Glyph::Collapse:Glyph::Expand,l.id!=1?Glyph::Remove:wchar_t{0}};
+            row.expandHeight=l.id==expandedLayout_?84:0; row.dragGroup=1;
             push(std::move(row),Key::Layout,nullptr,l.id);
         }
         RowList::Row addLayout; addLayout.title=L"Add layout";
@@ -144,11 +144,13 @@ private:
         if(expandedLayout_==id) { expandedLayout_=0; editors_.Clear(); }
         RemoveLayout(id); Refresh();
     }
-    void MoveLayout(int id,int step) {
-        const auto at=std::find_if(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==id;});
-        const auto target=at-app.layouts.begin()+step;
-        if(at==app.layouts.end() || target<0 || target>=static_cast<long long>(app.layouts.size())) return;
-        std::swap(*at,app.layouts[static_cast<size_t>(target)]); ReconsiderLayout(); Save(); Refresh(); BuildEditors();
+    // A layout dragged to where another stands in the priority order.
+    void DropLayout(int id,int place) {
+        const auto from=std::find_if(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==id;});
+        const auto to=std::find_if(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==place;});
+        if(from==app.layouts.end() || to==app.layouts.end() || from==to) return;
+        if(from<to) std::rotate(from,from+1,to+1); else std::rotate(to,from,from+1);
+        ReconsiderLayout(); Save(); Refresh(); BuildEditors();
     }
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); return true; }
@@ -183,9 +185,9 @@ private:
             else if(glyph==Glyph::Expand || glyph==Glyph::Collapse || code==RowList::kActivated) Expand(o);
             break;
         case Key::Layout:
-            if(code==RowList::kButton) { SwitchLayout(layout); Refresh(); }
+            if(code==RowList::kMoved) DropLayout(layout,layouts_[list_.DropRow()]);
+            else if(code==RowList::kButton) { SwitchLayout(layout); Refresh(); }
             else if(glyph==Glyph::Remove) RemoveLayoutChoice(layout);
-            else if(glyph==Glyph::Up || glyph==Glyph::Down) MoveLayout(layout,glyph==Glyph::Up?-1:1);
             else if(glyph==Glyph::Expand || glyph==Glyph::Collapse || code==RowList::kActivated) ExpandLayout(layout);
             break;
         case Key::AddLayout: if(pressed) AddLayoutChoice(); break;

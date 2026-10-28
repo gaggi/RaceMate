@@ -87,9 +87,9 @@ constexpr Slots DefaultHeader{OverlayNameMetric,SofMetric,IncidentsMetric,TimeRe
 // Fuel Calculator modules, top to bottom; each switch is stored under its key.
 enum FuelModule {
     TankModule, FiguresModule, HistoryModule, CautionMarks, RefuelCard, WindowCard, TimelineModule,
-    OneShorterRow, TargetRow, OneLongerRow, TwoLongerRow, LeaderDistanceModule, WhiteFlagTimeModule, PitExitModule
+    OneShorterRow, TargetRow, OneLongerRow, TwoLongerRow, LeaderDistanceModule, WhiteFlagTimeModule, PitExitModule, TargetRefuel
 };
-constexpr int FuelModuleCount=PitExitModule+1;
+constexpr int FuelModuleCount=TargetRefuel+1;
 struct ModuleInfo { const wchar_t* key; const wchar_t* title; const wchar_t* detail; bool on; };
 constexpr ModuleInfo FuelModules[]={
     {L"ShowTank",L"Tank",L"Fuel, range in laps and a bar of the fuel to the finish",true},
@@ -106,14 +106,17 @@ constexpr ModuleInfo FuelModules[]={
     {L"ShowTwoLonger",L"Two laps longer",L"Most fuel per lap for two laps more",false},
     {L"ShowLeaderDistance",L"Leader projected race distance",L"Total leader laps at time expiry, with two decimals; at the finish for lap-limited races. No future stops assumed.",false},
     {L"ShowFinalLapTime",L"Time left at leader's final lap",L"Race clock when the current overall leader is projected to start the final lap. No future stops assumed.",false},
-    {L"ShowPitExit",L"Pit exit",L"Class position and the car ahead if you box now: pit lane loss plus the service set in the pit menu",false}};
+    {L"ShowPitExit",L"Pit exit",L"Class position and the car ahead if you box now: pit lane loss plus the service set in the pit menu",false},
+    // Switched in the expanded Target row: on each target row, the fuel to add when you stop on that lap.
+    {L"ShowTargetRefuel",L"Fuel to add at the stop",L"For each target: stopping a lap later leaves a lap less to fuel for",true}};
 static_assert(std::size(FuelModules)==FuelModuleCount);
 // Consumption figures in display order; app.fuelRows follows this order.
 struct FigureInfo { int metric; const wchar_t* heading; const wchar_t* title; const wchar_t* key; bool on; };
 constexpr FigureInfo FuelFigures[]={
     {0,L"LAST",L"Last lap",L"ShowLast",true},{6,L"AVG 3",L"Average of 3 laps",L"ShowAverage3",true},
     {1,L"AVG 10",L"Average of 10 laps",L"ShowAverage10",true},{2,L"AVG 5",L"Average of 5 laps",L"ShowAverage5",false},
-    {5,L"RACE",L"Race average",L"ShowAverage",false},{4,L"MIN",L"Minimum",L"ShowMinimum",true},{3,L"MAX",L"Maximum",L"ShowMaximum",true}};
+    {5,L"RACE",L"Race average",L"ShowAverage",false},{4,L"MIN",L"Minimum",L"ShowMinimum",true},{3,L"MAX",L"Maximum",L"ShowMaximum",true},
+    {7,L"QUALI",L"Qualifying maximum",L"ShowQualifyMaximum",true}};
 static_assert(std::size(FuelFigures)==FuelMetricCount);
 // The average of the last 10 clean laps drives range, pit window, refuel and targets.
 constexpr int FuelBasis=static_cast<int>(FuelMetric::Average10);
@@ -386,6 +389,12 @@ std::wstring Lap(double x) {
     wchar_t b[64]; swprintf_s(b,L"%d:%06.3f",static_cast<int>(x)/60,std::fmod(x,60)); return b;
 }
 const wchar_t* ColumnTitle(int id) { return Columns[id].title; }
+// The status badge is drawn after the driver's name, so in the order it stands right after Driver.
+void StatusAfterDriver(std::vector<int>& order) {
+    std::erase(order,static_cast<int>(StatusColumn));
+    const auto driver=std::find(order.begin(),order.end(),static_cast<int>(DriverColumn));
+    order.insert(driver==order.end()?order.end():driver+1,StatusColumn);
+}
 bool ColumnVisible(const Overlay& o,int id) {
     const auto& t=o.table; const bool standings=o.kind==StandingsKind;
     switch(id) {
@@ -455,7 +464,7 @@ bool IsCard(int id) { return id==RefuelCard || id==WindowCard; }
 bool IsTarget(int id) { return id>=OneShorterRow && id<=TwoLongerRow; }
 int FuelHeight(const Overlay& o) {
     if(o.fuel.strip) return 50;
-    constexpr int heights[]={112,52,104,0,92,92,46,24,24,24,24,32,32,32};
+    constexpr int heights[]={112,52,104,0,92,92,46,24,24,24,24,32,32,32,0};
     static_assert(std::size(heights)==FuelModuleCount);
     const auto shown=FuelShown(o); int h=0;
     for(size_t k=0;k<shown.size();++k) {
@@ -579,7 +588,7 @@ Slots ReadSlots(const wchar_t* section,const wchar_t* const keys[],const Slots& 
 }
 int NormalizeScale(int scale) { return ((std::clamp(scale,50,150)+5)/10)*10; }
 void ReadTable(const wchar_t* section,int kind,TableSettings& t) {
-    t.columnOrder=ReadOrder(section,L"ColumnOrder",DefaultColumns[kind]);
+    t.columnOrder=ReadOrder(section,L"ColumnOrder",DefaultColumns[kind]); StatusAfterDriver(t.columnOrder);
     for(int i=0;i<DriverColumnCount;++i) t.driverColumns[i]=ReadBool(section,DriverColumnKeys[i],false);
     t.driverShortView={ReadBool(section,L"ShortLicenseView",false),ReadBool(section,L"ShortIRatingView",false),ReadBool(section,L"ShortCombinedRatingView",false)};
     for(int i=0;i<ExtraColumnCount;++i) t.extraColumns[i]=ReadBool(section,ExtraColumnKeys[i],false);
@@ -846,7 +855,9 @@ FuelPlan PreviewPlan() {
     // The leader at 7.5 laps with 630 s left: 11.8 laps to go, the final lap starting 17 s before the clock runs out.
     auto& finish=race.finish; finish.valid=true; finish.winner=0; finish.leaderTotalDistance=19+17/race.leaderPace; finish.leaderDistance=finish.leaderTotalDistance-7.5; finish.finalLapTimeLeft=17;
     finish.ownDistance=p.lapsToFinish;
-    const double burns[]={3.09,3.12,3.10,3.21,2.98,3.11,3.13}; const int counts[]={1,10,5,12,12,12,3};
+    // The last value is the qualifying maximum, from four counted qualifying laps.
+    const double burns[]={3.09,3.12,3.10,3.21,2.98,3.11,3.13,3.24}; const int counts[]={1,10,5,12,12,12,3,4};
+    static_assert(std::size(burns)==FuelMetricCount && std::size(counts)==FuelMetricCount);
     for(int i=0;i<FuelMetricCount;++i) p.estimates[i]={burns[i],std::max(0.0,finish.ownDistance*burns[i]-app.frame.fuel),counts[i]};
     // Whole laps so far, one of them under caution.
     const double laps[]={3.06,3.11,3.02,3.09,3.10,3.12,3.04,3.12,3.07,3.09};
@@ -1700,8 +1711,9 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                         const auto& figure=FuelFigures[i]; const auto& estimate=p.estimates[figure.metric];
                         const int left=W*index/figures,cell=W*(index+1)/figures-left; ++index;
                         if(left) fill(rect(left,y+1,1,50),Ink::Line);
-                        const COLORREF ink=figure.metric==FuelBasis?Ink::Accent:(figure.metric==static_cast<int>(FuelMetric::Minimum)?Ink::Green:(figure.metric==static_cast<int>(FuelMetric::Maximum)?Ink::Red:white));
-                        static constexpr int laps[]={0,10,5,0,0,0,3};
+                        const COLORREF ink=figure.metric==FuelBasis?Ink::Accent:(figure.metric==static_cast<int>(FuelMetric::Minimum)?Ink::Green:(figure.metric==static_cast<int>(FuelMetric::Maximum)?Ink::Red:(figure.metric==static_cast<int>(FuelMetric::QualifyMaximum)?Ink::Orange:white)));
+                        static constexpr int laps[]={0,10,5,0,0,0,3,0};
+                        static_assert(std::size(laps)==FuelMetricCount);
                         const bool partial=estimate.samples>0 && estimate.samples<laps[figure.metric];
                         label(partial?std::wstring(figure.heading)+L" ("+std::to_wstring(estimate.samples)+L")":figure.heading,rect(left,y+7,cell,16),Ink::Label,Small,DT_CENTER);
                         label(estimate.samples?Format(estimate.consumption,2):L"—",rect(left,y+23,cell,22),partial?Ink::Muted:ink,Bold,DT_CENTER);
@@ -1786,9 +1798,14 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                     static constexpr const wchar_t* names[]={L"One lap shorter",L"Target",L"One lap longer",L"Two laps longer"};
                     static constexpr const wchar_t* onFuelNames[]={L"One lap less",L"Laps on fuel",L"One lap more",L"Two laps more"};
                     const int extra=id-TargetRow; const double value=target(extra); const bool main=extra==0;
-                    label(onFuel?(fuelLaps>=0?lapsOnFuel(extra,main):onFuelNames[id-OneShorterRow]):names[id-OneShorterRow],rect(16,y,150,24),main?white:Ink::Muted,main?Bold:Regular);
-                    label(targetLap>0 && (!onFuel || value>=0)?lap(targetLap+extra):L"",rect(166,y,50,24),Ink::Label,Small);
-                    label(value>=0?L"max "+Format(value,2)+L" L/lap":L"—",rect(216,y,150,24),targetInk(value),main?Bold:Regular,DT_RIGHT);
+                    label(onFuel?(fuelLaps>=0?lapsOnFuel(extra,main):onFuelNames[id-OneShorterRow]):names[id-OneShorterRow],rect(16,y,134,24),main?white:Ink::Muted,main?Bold:Regular);
+                    label(targetLap>0 && (!onFuel || value>=0)?lap(targetLap+extra):L"",rect(150,y,44,24),Ink::Label,Small);
+                    // Stopping on that lap with the tank empty, what it takes to the finish: a lap later, a lap less.
+                    if(on[TargetRefuel] && open && value>=0 && burn>0 && p.lapsToFinish>=0) {
+                        double add=std::max(0.0,(p.lapsToFinish-targetDistance-extra)*burn); if(capacityKnown) add=std::min(add,capacity);
+                        label(litres(add,true),rect(194,y,70,24),Ink::Orange,Small);
+                    }
+                    label(value>=0?L"max "+Format(value,2)+L" L/lap":L"—",rect(256,y,110,24),targetInk(value),main?Bold:Regular,DT_RIGHT);
                     label(value>=0 && burn>0?(value>=burn?L"+":L"−")+Format(std::abs(value/burn-1)*100,0)+L" %":L"",rect(366,y,W-382,24),Ink::Label,Small,DT_RIGHT);
                     y+=24;
                     if(!IsTarget(next)) y+=8;

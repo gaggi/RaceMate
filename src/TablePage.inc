@@ -4,8 +4,8 @@ class TablePage : public PageWindow {
 public:
     explicit TablePage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
-    enum class Key { None, Rounded, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, OtherClassRows, ClassHeader, ClassView, OwnClass, LiveGaps, UntimedOrder, ClassColors, LapColors, Progress, PitExit, Column, Header, Footer, ColumnHeadings };
-    static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, PitAheadEditId=215, PitBehindEditId=216, OtherClassesEditId=217, ClassHeaderEditId=240, NameFormatEditId=201, FlagEditId=202, ShortViewEditId=205, SlotEditId=206, BrandLogoEditId=213, BrandNameEditId=214, PositionEditId=230;
+    enum class Key { None, Rounded, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, OtherClassRows, ClassHeader, ClassView, OwnClass, LiveGaps, UntimedOrder, ClassColors, LapColors, Progress, PitExit, Column, Header, Footer, ColumnHeadings, CopyColumns };
+    static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, PitAheadEditId=215, PitBehindEditId=216, OtherClassesEditId=217, ClassHeaderEditId=240, NameFormatEditId=201, FlagEditId=202, StatusEditId=218, ShortViewEditId=205, SlotEditId=206, BrandLogoEditId=213, BrandNameEditId=214, PositionEditId=230;
     static constexpr UINT_PTR TypingTimer=1;
     struct ColumnText { const wchar_t* name; const wchar_t* detail; };
     static constexpr ColumnText ColumnTexts[]={
@@ -34,21 +34,23 @@ private:
 
     bool Optional(int id) const {
         if(id==BestColumn || id==LastColumn) return o_.kind==RelativeKind;
-        return id==DriverColumn || id==StatusColumn || id==IntervalColumn || id==LapsColumn || id==GainedColumn || id>=LicenseColumn && id<=PitStopColumn || id>=BrandColumn;
+        return id==DriverColumn || id==IntervalColumn || id==LapsColumn || id==GainedColumn || id>=LicenseColumn && id<=PitStopColumn || id>=BrandColumn;
     }
-    bool HasOptions(int id) const { return (id==PositionColumn && o_.kind==RelativeKind) || id==DriverColumn || id==StatusColumn || id==LicenseColumn || id==IRatingColumn || id==CombinedRatingColumn || id==BrandColumn; }
+    bool HasOptions(int id) const { return (id==PositionColumn && o_.kind==RelativeKind) || id==DriverColumn || id==LicenseColumn || id==IRatingColumn || id==CombinedRatingColumn || id==BrandColumn; }
     // Short views: License, iRating, Safety and iRating.
     static int ShortViewIndex(int id) { return id==CombinedRatingColumn?2:id-LicenseColumn; }
     std::wstring ColumnDetail(int id) const {
         switch(id) {
         case PositionColumn: if(o_.kind==RelativeKind) return o_.table.classPositions?L"In each car's class":L"Overall, across all classes"; return ColumnTexts[id].detail;
-        case DriverColumn: return NameFormats[o_.table.nameFormat];
-        case GapColumn: return o_.kind==RelativeKind?L"Time to each car, estimated":L"Gap to the class leader";
-        case StatusColumn: {
-            std::wstring text=L"After the name: PIT, TOW, OUT";
+        case DriverColumn: {
+            // With the status badge after the name, which is part of the driver's column here.
+            std::wstring text=std::wstring(NameFormats[o_.table.nameFormat])+L"  \u00B7  ";
+            if(!o_.table.showStatus) return text+L"no status badge";
+            text+=L"badge: PIT, TOW, OUT";
             for(int i=0;i<3;++i) if(o_.table.driverFlags[i]) text+=std::wstring(L", ")+FlagNames[i];
             return text;
         }
+        case GapColumn: return o_.kind==RelativeKind?L"Time to each car, estimated":L"Gap to the class leader";
         case BrandColumn: return o_.table.brandLogo && o_.table.brandName?L"Logo and name":(o_.table.brandLogo?L"Logo":(o_.table.brandName?L"Name":L"Nothing chosen"));
         case LicenseColumn: case IRatingColumn: case CombinedRatingColumn: {
             const bool shortView=o_.table.driverShortView[ShortViewIndex(id)];
@@ -124,20 +126,24 @@ private:
             pitExit.toggle=o_.table.pitExit?1:0; expandable(pitExit,Key::PitExit,-1,48); push(std::move(pitExit),Key::PitExit);
         }
         header(L"Columns  \u00B7  left to right");
-        const auto& order=o_.table.columnOrder;
-        // Same button, same column: {expand, down, up} or {0, down, up} (see "Controls line up in columns").
+        {
+            RowList::Row copy; copy.title=L"Copy to another table"; copy.button=L"Copy to...";
+            copy.detail=L"Gives a Relative or Standings these columns, in this order, with their options.";
+            push(std::move(copy),Key::CopyColumns);
+        }
+        // The status badge has no row of its own: it is part of Driver, after the name.
+        std::vector<int> order=o_.table.columnOrder; std::erase(order,static_cast<int>(StatusColumn));
+        // Same button, same column: {expand} or an empty slot {0} (see "Controls line up in columns").
         const bool anyOptions=std::any_of(order.begin(),order.end(),[&](int id){ return HasOptions(id); });
         for(size_t i=0;i<order.size();++i) {
             const int id=order[i];
             RowList::Row row; row.title=ColumnTexts[id].name; row.detail=ColumnDetail(id);
-            // The status badge follows the name, so it has no place of its own to move.
-            const bool shown=id==StatusColumn?o_.table.showStatus:ColumnVisible(o_,id);
+            const bool shown=ColumnVisible(o_,id);
             if(Optional(id)) row.toggle=shown?1:0;
             else row.pill=L"Always";
             row.muted=!shown;
-            // No arrow where the column cannot move further.
-            row.iconButtons=id==StatusColumn?std::vector<wchar_t>{0,0}:std::vector<wchar_t>{i+1<order.size()?Glyph::Down:wchar_t{0},i?Glyph::Up:wchar_t{0}};
-            if(HasOptions(id)) expandable(row,Key::Column,id,48);
+            row.dragGroup=1; // Reordered by dragging its grip.
+            if(HasOptions(id)) expandable(row,Key::Column,id,id==DriverColumn?112:48);
             else if(anyOptions) row.iconButtons.insert(row.iconButtons.begin(),0);
             push(std::move(row),Key::Column,id);
         }
@@ -192,8 +198,8 @@ private:
         } else if(expandedId_==DriverColumn) {
             editors_.Label(L"Name format",0,10,90);
             editors_.Combo(NameFormatEditId,std::vector<std::wstring>(std::begin(NameFormats),std::end(NameFormats)),o_.table.nameFormat,94,10,200);
-        } else if(expandedId_==StatusColumn) {
-            for(int i=0;i<3;++i) editors_.Check(FlagEditId+i,FlagNames[i],o_.table.driverFlags[i],i*170,10,160);
+            editors_.Check(StatusEditId,L"Status badge after the name: PIT, TOW, OUT",o_.table.showStatus,0,46,360);
+            for(int i=0;i<3;++i) editors_.Check(FlagEditId+i,FlagNames[i],o_.table.driverFlags[i],20+i*170,74,150);
         } else if(expandedId_==BrandColumn) {
             editors_.Check(BrandLogoEditId,L"Show logo",o_.table.brandLogo,0,10,160);
             editors_.Check(BrandNameEditId,L"Show name",o_.table.brandName,170,10,160);
@@ -211,7 +217,22 @@ private:
         if(const int row=ExpandedRow(); row>=0) list_.ScrollIntoView(row);
     }
     void Changed() { SettingChanged(); Refresh(); }
-    void Move(int id,int step) { if(MoveInOrder(o_.table.columnOrder,id,step)) { Refresh(); BuildEditors(); } }
+    // Every other Relative and Standings, the other kind first; the chosen one gets these columns after asking.
+    void CopyTo() {
+        std::vector<Overlay*> targets; std::vector<std::wstring> names;
+        for(int pass=0;pass<2;++pass) for(auto& o:app.overlays) if(IsTable(o.kind) && &o!=&o_ && (o.kind!=o_.kind)==(pass==0)) { targets.push_back(&o); names.push_back(Name(o)); }
+        if(targets.empty()) return;
+        const int choice=ChooseFromMenu(names,-1); if(choice<0) return;
+        const auto question=L"Give "+names[choice]+L" the columns of "+Name(o_)+L"? Its own column settings are replaced.";
+        if(MessageBoxW(app.main,question.c_str(),L"RaceMate",MB_OKCANCEL|MB_ICONQUESTION)!=IDOK) return;
+        CopyColumns(o_,*targets[choice]);
+    }
+    // Columns move among those with a row; the status badge then goes back behind Driver.
+    template<class Change> void Reorder(Change change) {
+        auto& order=o_.table.columnOrder; std::erase(order,static_cast<int>(StatusColumn));
+        const bool moved=change(order); StatusAfterDriver(order);
+        if(moved) { SettingChanged(); Refresh(); BuildEditors(); }
+    }
     // Applies typed numbers; empty or invalid fields keep their saved value.
     void ApplyRows() {
         typing_=false; KillTimer(Handle(),TypingTimer);
@@ -257,6 +278,10 @@ private:
             if(!syncing_ && code==CBN_SELCHANGE && editors_.Selection(id)>=0) { o_.table.classPositions=editors_.Selection(id)==0; Changed(); }
             return true;
         }
+        if(id==StatusEditId) {
+            if(!syncing_ && code==BN_CLICKED) { o_.table.showStatus=editors_.Checked(id); Changed(); }
+            return true;
+        }
         if(id>=NameFormatEditId && id<SlotEditId+SlotCount) {
             if(syncing_) return true;
             if(id==NameFormatEditId && code==CBN_SELCHANGE) o_.table.nameFormat=std::max(0,editors_.Selection(id));
@@ -293,10 +318,10 @@ private:
         case Key::UntimedOrder:
             if(pressed) { const int choice=ChooseFromMenu({L"By car number",L"By iRating, highest first"},o_.table.standings.fallbackByRating?1:0); if(choice>=0) { o_.table.standings.fallbackByRating=choice==1; Changed(); } }
             break;
+        case Key::CopyColumns: if(pressed) CopyTo(); break;
         case Key::Column:
-            if(code==RowList::kToggled) { SetColumnVisible(o_,column,on); Refresh(); }
-            else if(glyph==Glyph::Up) Move(column,-1);
-            else if(glyph==Glyph::Down) Move(column,1);
+            if(code==RowList::kMoved) { const int place=ids_[list_.DropRow()]; Reorder([&](std::vector<int>& order){ return MoveToPlace(order,column,place); }); }
+            else if(code==RowList::kToggled) { SetColumnVisible(o_,column,on); Refresh(); }
             else if(toggleExpand && HasOptions(column)) Expand(key,column);
             break;
         case Key::Header: case Key::Footer:

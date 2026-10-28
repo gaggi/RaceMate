@@ -14,8 +14,8 @@
 // A row can carry a file icon, a title with an optional detail line, a status pill,
 // a toggle switch, one text button and icon buttons.
 //
-// Design rule, the same on every page: from the right, the expand button, the sort
-// arrows (both icon buttons), the toggle, then a text button such as Choose... or
+// Design rule, the same on every page: from the right, the expand button and other
+// icon buttons, the toggle, then a text button such as Choose... or
 // Settings. Each of them stands in one column per card. A row with only a text button,
 // such as Add or Reset, has it at the far right. Clicks arrive at the parent as
 // WM_COMMAND(MAKEWPARAM(id, notification), hwnd); NotifiedRow() and
@@ -25,6 +25,11 @@
 // creates edit controls there as children of Handle(), places them with
 // ExpansionRect() and moves them again on kLayoutChanged (scrolling, resizing).
 // Their WM_COMMAND messages are passed on to the parent unchanged.
+//
+// Rows that share a dragGroup can be put in another order by dragging one by the grip at its left, six dots, up or
+// down: a line shows where it goes, and on release the parent gets kMoved with NotifiedRow() the dragged row and
+// DropRow() the row whose place it takes. A row of the group that is not draggable has no grip and stays put as
+// others pass it; its text still lines up with theirs.
 // Row icon buttons, the same on every page (Segoe Fluent Icons / Segoe MDL2 Assets).
 namespace Glyph
 {
@@ -42,7 +47,9 @@ public:
         kActivated = 4,
         kDeleteRequested = 5,
         // Rows moved (scrolled, resized or replaced); reposition controls in expansions.
-        kLayoutChanged = 6
+        kLayoutChanged = 6,
+        // A row was dragged to another place in its group.
+        kMoved = 7
     };
 
     enum class Tone
@@ -70,7 +77,7 @@ public:
         std::wstring button;
         bool buttonEnabled{true};
         // Glyphs from Segoe Fluent Icons / Segoe MDL2 Assets; [0] is the rightmost:
-        // expand first, then sort arrows. Every row of a card with a toggle or icon
+        // expand first, then the others. Every row of a card with a toggle or icon
         // buttons reserves as many slots as the row with the most, so toggles and
         // buttons line up. A 0 glyph leaves its slot empty, which keeps
         // the same button in the same column when only some rows have, say, an arrow.
@@ -79,6 +86,9 @@ public:
         bool selected{};
         // Height in DIPs of the expanded area below the row; 0 when collapsed.
         int expandHeight{};
+        // Rows with the same nonzero group can be reordered by dragging; draggable says whether this one can be picked up.
+        int dragGroup{};
+        bool draggable{true};
         bool operator==(const Row&) const = default;
     };
 
@@ -111,6 +121,7 @@ public:
     HWND Handle() const noexcept { return window_; }
     int NotifiedRow() const noexcept { return notifiedRow_; }
     int NotifiedIconButton() const noexcept { return notifiedIconButton_; }
+    int DropRow() const noexcept { return dropRow_; }
     const std::vector<Row>& Rows() const noexcept { return rows_; }
 
     void SetFonts(HFONT titleFont, HFONT textFont)
@@ -175,6 +186,17 @@ public:
         if (index >= 0 && index < static_cast<int>(rows_.size())) Activate({index, PartKind::Button});
     }
 
+    // Client rectangle of a row's top line.
+    RECT RowRect(int index) const
+    {
+        const auto layouts = Compute();
+        if (index < 0 || index >= static_cast<int>(layouts.size())) return {};
+        RECT rect = layouts[static_cast<size_t>(index)].bounds;
+        rect.bottom = rect.top + LineHeight(rows_[static_cast<size_t>(index)]);
+        OffsetRect(&rect, 0, -scroll_);
+        return rect;
+    }
+
     // Keeps the expanded area of a row in view, e.g. right after expanding it.
     void ScrollIntoView(int index)
     {
@@ -184,7 +206,7 @@ public:
 private:
     static constexpr wchar_t kClassName[] = L"LaunchMateRowList";
 
-    enum class PartKind { None, Body, Toggle, Button, IconButton };
+    enum class PartKind { None, Body, Toggle, Button, IconButton, Grip };
     struct Part
     {
         int row{-1};
@@ -202,6 +224,7 @@ private:
         RECT pill{};
         RECT text{};
         RECT icon{};
+        RECT grip{};
         RECT expansion{};
         bool firstInCard{};
         bool lastInCard{};
@@ -346,6 +369,11 @@ private:
                 x -= width + Scale(12);
             }
             int left = Scale(14);
+            if (row.dragGroup)
+            {
+                if (row.draggable) layout.grip = {left - Scale(4), middle - Scale(12), left + Scale(14), middle + Scale(12)};
+                left += Scale(20);
+            }
             if (row.showIcon)
             {
                 layout.icon = {left, middle - Scale(10), left + Scale(20), middle + Scale(10)};
@@ -423,6 +451,7 @@ private:
             if (PtInRect(&layout.expansion, point)) return {};
             for (size_t button = 0; button < layout.iconButtons.size(); ++button)
                 if (PtInRect(&layout.iconButtons[button], point)) return {static_cast<int>(index), PartKind::IconButton, static_cast<int>(button)};
+            if (PtInRect(&layout.grip, point)) return {static_cast<int>(index), PartKind::Grip};
             if (!row.button.empty() && PtInRect(&layout.button, point)) return {static_cast<int>(index), PartKind::Button};
             RECT toggle = layout.toggle;
             InflateRect(&toggle, Scale(6), Scale(8));
@@ -430,6 +459,25 @@ private:
             return {static_cast<int>(index), PartKind::Body};
         }
         return {};
+    }
+
+    // The row of the dragged row's group whose place it takes when dropped at client y: the furthest row it has
+    // passed the middle of, up or down.
+    int DropTarget(int y) const
+    {
+        const auto layouts = Compute();
+        const int group = rows_[static_cast<size_t>(dragRow_)].dragGroup;
+        int target = dragRow_;
+        for (size_t index = 0; index < rows_.size(); ++index)
+        {
+            if (rows_[index].dragGroup != group || static_cast<int>(index) == dragRow_) continue;
+            const auto& bounds = layouts[index].bounds;
+            const int middle = bounds.top + LineHeight(rows_[index]) / 2 - scroll_;
+            const bool above = static_cast<int>(index) < dragRow_;
+            if (above && y < middle && static_cast<int>(index) < target) target = static_cast<int>(index);
+            if (!above && y > middle && (target <= dragRow_ || static_cast<int>(index) > target)) target = static_cast<int>(index);
+        }
+        return target;
     }
 
     void Notify(Notification notification, int row, int iconButton = -1)
@@ -458,6 +506,7 @@ private:
             Notify(kIconButton, part.row, part.iconButton);
             return;
         case PartKind::Body:
+        case PartKind::Grip: // A click on the grip without dragging acts as one on the row.
             Notify(kActivated, part.row);
             return;
         default:
@@ -508,7 +557,7 @@ private:
         const auto& row = rows_[index];
         auto layout = base;
         const auto shift = [this](RECT& rect) { OffsetRect(&rect, 0, -scroll_); };
-        shift(layout.bounds); shift(layout.text); shift(layout.toggle); shift(layout.button); shift(layout.pill); shift(layout.icon);
+        shift(layout.bounds); shift(layout.text); shift(layout.toggle); shift(layout.button); shift(layout.pill); shift(layout.icon); shift(layout.grip);
         shift(layout.expansion);
         for (auto& rect : layout.iconButtons) shift(rect);
         SetBkMode(dc, TRANSPARENT);
@@ -559,6 +608,26 @@ private:
         SelectClipRgn(dc, nullptr);
         DeleteObject(clip);
 
+        if (!IsRectEmpty(&layout.grip))
+        {
+            // Six dots, two across and three down, darker under the mouse.
+            const bool gripHover = hovered && hover_.kind == PartKind::Grip;
+            const COLORREF ink = gripHover || (dragging_ && dragRow_ == static_cast<int>(index)) ? RGB(80, 85, 95) : RGB(160, 164, 172);
+            const HBRUSH brush = CreateSolidBrush(ink);
+            const auto oldBrush = SelectObject(dc, brush);
+            const auto oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
+            const int dot = std::max(2, Scale(3)), gap = Scale(5);
+            const int x0 = (layout.grip.left + layout.grip.right) / 2 - (dot + gap) / 2, y0 = (layout.grip.top + layout.grip.bottom) / 2 - dot / 2 - gap;
+            for (int across = 0; across < 2; ++across)
+                for (int down = 0; down < 3; ++down)
+                {
+                    const int x = x0 + across * gap, y = y0 + down * gap;
+                    Ellipse(dc, x, y, x + dot + 1, y + dot + 1);
+                }
+            SelectObject(dc, oldPen);
+            SelectObject(dc, oldBrush);
+            DeleteObject(brush);
+        }
         if (row.showIcon)
         {
             if (const HICON icon = IconFor(row.iconPath))
@@ -653,11 +722,24 @@ private:
             if (bounds.bottom - scroll_ < 0 || bounds.top - scroll_ > client.bottom) continue;
             PaintRow(dc, index, layouts[index], hasFocus && static_cast<int>(index) == focused_);
         }
+        if (dragging_ && dropRow_ >= 0 && dropRow_ != dragRow_)
+        {
+            // A line where the dragged row goes: above the row it replaces going up, below it going down.
+            const auto& bounds = layouts[static_cast<size_t>(dropRow_)].bounds;
+            const int y = (dropRow_ < dragRow_ ? bounds.top : bounds.top + LineHeight(rows_[static_cast<size_t>(dropRow_)])) - scroll_;
+            const RECT line{bounds.left + Scale(8), y - Scale(1), bounds.right - Scale(8), y + Scale(2)};
+            FillRect(dc, line, RGB(55, 138, 221));
+        }
         SelectObject(dc, oldFont);
         BitBlt(target, 0, 0, client.right, client.bottom, dc, 0, 0, SRCCOPY);
         SelectObject(dc, oldBitmap);
         DeleteObject(bitmap);
         DeleteDC(dc);
+    }
+
+    bool Draggable(int index) const
+    {
+        return index >= 0 && index < static_cast<int>(rows_.size()) && rows_[static_cast<size_t>(index)].dragGroup && rows_[static_cast<size_t>(index)].draggable;
     }
 
     void MoveFocus(int direction)
@@ -743,6 +825,22 @@ private:
             return 0;
         case WM_MOUSEMOVE:
         {
+            if (dragRow_ >= 0 && (wParam & MK_LBUTTON))
+            {
+                const int y = GET_Y_LPARAM(lParam);
+                if (!dragging_ && std::abs(y - dragStart_) >= Scale(5)) { dragging_ = true; SetCapture(window_); }
+                if (dragging_)
+                {
+                    // Near the edges the list scrolls along.
+                    RECT client{};
+                    GetClientRect(window_, &client);
+                    if (y < Scale(16)) ScrollTo(scroll_ - Scale(12));
+                    else if (y > client.bottom - Scale(16)) ScrollTo(scroll_ + Scale(12));
+                    const int target = DropTarget(y);
+                    if (target != dropRow_) { dropRow_ = target; InvalidateRect(window_, nullptr, FALSE); }
+                    return 0;
+                }
+            }
             const auto part = HitTest({GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
             if (!(part == hover_))
             {
@@ -758,6 +856,12 @@ private:
             InvalidateRect(window_, nullptr, FALSE);
             return 0;
         case WM_SETCURSOR:
+            // The grip shows the up-and-down cursor, as does the whole list while a row is dragged.
+            if (LOWORD(lParam) == HTCLIENT && (dragging_ || hover_.kind == PartKind::Grip))
+            {
+                SetCursor(LoadCursorW(nullptr, IDC_SIZENS));
+                return TRUE;
+            }
             if (LOWORD(lParam) == HTCLIENT && hover_.kind != PartKind::None && hover_.kind != PartKind::Body)
             {
                 SetCursor(LoadCursorW(nullptr, IDC_HAND));
@@ -771,17 +875,34 @@ private:
             // which would otherwise move another row under the mouse.
             pressed_ = HitTest({GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
             if (pressed_.row >= 0) focused_ = pressed_.row;
+            // Pressing a row's grip starts a drag once the mouse moves.
+            dragRow_ = pressed_.kind == PartKind::Grip && Draggable(pressed_.row) ? pressed_.row : -1;
+            dragStart_ = GET_Y_LPARAM(lParam); dragging_ = false; dropRow_ = -1;
             SetFocus(window_);
             InvalidateRect(window_, nullptr, FALSE);
             return 0;
         }
         case WM_LBUTTONUP:
         {
+            if (dragging_)
+            {
+                const int from = dragRow_, to = dropRow_;
+                dragging_ = false; dragRow_ = -1; pressed_ = {};
+                ReleaseCapture();
+                InvalidateRect(window_, nullptr, FALSE);
+                if (to >= 0 && to != from) { dropRow_ = to; focused_ = to; Notify(kMoved, from); }
+                dropRow_ = -1;
+                return 0;
+            }
+            dragRow_ = -1;
             const auto part = HitTest({GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
             if (part == pressed_) Activate(part);
             pressed_ = {};
             return 0;
         }
+        case WM_CAPTURECHANGED:
+            if (dragging_ && reinterpret_cast<HWND>(lParam) != window_) { dragging_ = false; dragRow_ = -1; dropRow_ = -1; InvalidateRect(window_, nullptr, FALSE); }
+            return 0;
         case WM_GETDLGCODE:
             return DLGC_WANTARROWS;
         case WM_KEYDOWN:
@@ -855,4 +976,9 @@ private:
     Part pressed_{};
     int notifiedRow_{-1};
     int notifiedIconButton_{-1};
+    // Dragging: the row picked up, where the press started, whether it moved far enough to drag, and its drop row.
+    int dragRow_{-1};
+    int dragStart_{};
+    bool dragging_{};
+    int dropRow_{-1};
 };

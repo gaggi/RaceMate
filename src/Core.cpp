@@ -728,7 +728,10 @@ void FuelCalculator::Reset() { *this = {}; }
 void FuelCalculator::Update(const Session& s, const Frame& f, bool excludeYellowLaps) {
     if (!f.connected || !f.fuelKnown || f.replay) { anchored_ = false; preStartTime_=-1; return; }
     if (key_ != s.key || session_ != f.session || player_ != f.player || f.time < time_) {
+        // The qualifying maximum stays for the event's later sessions in the same car.
+        const bool sameEvent=key_==s.key && player_==f.player; const double qualifyMaximum=qualifyMaximum_; const int qualifySamples=qualifySamples_;
         Reset(); key_ = s.key; session_ = f.session; player_ = f.player;
+        if(sameEvent) { qualifyMaximum_=qualifyMaximum; qualifySamples_=qualifySamples; }
     }
     if(!f.onTrack) { anchored_=false; preStartTime_=-1; return; }
     if(s.type=="Race" && f.state>0 && f.state<4) {
@@ -756,6 +759,7 @@ void FuelCalculator::Update(const Session& s, const Frame& f, bool excludeYellow
             burns_[cursor_] = burn; cursor_ = (cursor_ + 1) % 10;
             used_ = std::min(10, used_ + 1); ++samples_; totalBurn_+=burn; last_ = burn;
             maximum_=std::max(maximum_,burn); minimum_=std::min(minimum_,burn);
+            if(s.type.find("Qualify")!=std::string::npos) { qualifyMaximum_=std::max(qualifyMaximum_,burn); ++qualifySamples_; }
         }
         lap_ = f.lapCompleted; fuel_ = f.fuel; time_ = f.time;
         dirty_ = f.pit || f.inStall || caution; partial_ = false; caution_ = neutralized;
@@ -800,7 +804,12 @@ FuelPlan FuelCalculator::Plan(const Frame& f, const RacePrediction* prediction) 
     p.historyCount = f.replay ? 0 : historyCount_;
     for (int i = 0; i < p.historyCount; ++i) p.history[i] = history_[(historyCursor_ + 10 - historyCount_ + i) % 10];
     if(prediction) { p.prediction=*prediction; p.lapsToFinish=prediction->finish.valid?prediction->finish.ownDistance:-1; }
-    if (!used_ || !f.fuelKnown || f.replay) return p;
+    if(f.replay) return p;
+    // Shown from the first qualifying lap on, also before this session has laps of its own.
+    auto& qualifying=p.estimates[static_cast<int>(FuelMetric::QualifyMaximum)];
+    if(qualifySamples_) qualifying={qualifyMaximum_,-1,qualifySamples_};
+    if(p.lapsToFinish>=0 && qualifySamples_ && f.fuelKnown) qualifying.add=std::max(0.0,p.lapsToFinish*qualifyMaximum_-f.fuel);
+    if (!used_ || !f.fuelKnown) return p;
     double average=0, recent5=0, recent3=0;
     for (int i = 0; i < used_; ++i) average += burns_[i];
     const int count5=std::min(5,used_), count3=std::min(3,used_);

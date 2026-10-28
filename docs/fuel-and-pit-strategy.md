@@ -33,6 +33,10 @@ If consumption stays empty, finish complete green laps without visiting the pits
 
 The target normally reaches the latest stop, or the finish when no stop is required. **One lap longer**, **Two laps longer** and **One lap shorter** show the per-lap limits for adjacent objectives.
 
+With a pit window open, each target row also shows the fuel to add when you stop on its lap, in orange, such as **+9.4 L**: arriving with the tank empty at that per-lap limit, the fuel for the laps from there to the finish, at the 10-lap average and at most a full tank. Stopping a lap later leaves a lap less to fuel for, so the amount goes down by about one lap's fuel per row. Switch it in the expanded **Target** row; it is on by default.
+
+**QUALI** among the consumption figures is the most fuel a counted lap took in this event's qualifying, in this car. It stays for the race of the same event, as a cautious figure for planning; practice laps don't count towards it. Until you have driven a qualifying lap it shows **—**.
+
 Outside races (practice, qualifying, test drives) there is no finish to plan for. The targets then count the laps the fuel in the tank lasts at the 10-lap average, to the line: **12 laps on fuel · L15** means the tank reaches the end of lap 15. The rows next to it, named by their lap count, show the most fuel per lap that still makes one lap less, one more or two more, for example **13 laps · max 3.11 L/lap · −3 %**. In the strip layout, **TARGET** becomes **ON FUEL** with the lap count.
 
 When no stop is needed, **Refuel to finish** changes to fuel expected **at the finish**. For example, `+10.8 L` is a surplus, and the Stops Needed pill reads **NO STOP · +10.8 L**. The spare part of the tank bar is green. A small shortfall, up to a tenth of average consumption, can add an alternative such as `or save 0.09 L/lap`.

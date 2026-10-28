@@ -30,7 +30,7 @@ A layout is a complete set of overlays: which ones are on, where they sit, their
 1. Select **Add layout**.
 2. Choose a copy of the active layout or a set of default overlays.
 3. Expand the new layout's row to edit **Name** and **Active when**.
-4. Use the arrows to put more specific conditions above general ones.
+4. Drag the layout up or down by the six dots at its left to put more specific conditions above general ones.
 5. Click **Use** to select a layout manually. The tray menu can also select layouts.
 
 | Active when | Applies |

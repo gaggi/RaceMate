@@ -618,9 +618,8 @@ int RunDiagnostics() {
         if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) for(const auto& row:reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA))->Rows()) {
             if(row.title==WeatherModules[DetailsModule].title) weatherOk=row.pill==L"Panel only" && weatherOk;
             if(row.title==WeatherModules[RainModule].title) weatherOk=row.pill.empty() && weatherOk;
-            // No arrow beyond either end of the order.
-            if(row.title==WeatherModules[ConditionModule].title) weatherOk=row.iconButtons.size()==3 && row.iconButtons[1] && !row.iconButtons[2] && weatherOk;
-            if(row.title==WeatherModules[UsageModule].title) weatherOk=row.iconButtons.size()==3 && !row.iconButtons[1] && row.iconButtons[2] && weatherOk;
+            // Reordered by their grips, without arrows.
+            if(row.title==WeatherModules[ConditionModule].title || row.title==WeatherModules[UsageModule].title) weatherOk=row.dragGroup && row.iconButtons.size()==1 && weatherOk;
         } else weatherOk=false;
         First(WeatherKind).weather.strip=false; First(WeatherKind).bands=DefaultBands(WeatherKind); SettingChanged();
         report<<"Weather modules, strip layout, persistence and all-hidden visibility: "<<(weatherOk?"PASS":"FAIL")<<"\n"; ok=weatherOk && ok;
@@ -794,7 +793,7 @@ int RunDiagnostics() {
         static_assert(std::size(pages)==OverlayCount);
         for(int kind=0;kind<OverlayCount;++kind) { OpenOverlay(First(kind)); aligned(pages[kind]); }
         ShowPage(Page::Overlays);
-        report<<"Expand, sort arrows, toggle and button in order and in columns in every settings list: "<<(alignOk && toggles>40?"PASS":"FAIL")<<"\n"; ok=alignOk && toggles>40 && ok;
+        report<<"Expand, toggle and button in order and in columns in every settings list: "<<(alignOk && toggles>40?"PASS":"FAIL")<<"\n"; ok=alignOk && toggles>40 && ok;
     }
     {
         // Every telemetry and overlay rate combination keeps its rate over a minute of jittered ticks, and a pause restarts without a burst.
@@ -1621,6 +1620,71 @@ int RunDiagnostics() {
     }
     ShowPage(Page::Overlays);
     ok=orderOk && ok; report<<"Independent column ordering, move boundaries, hidden-column positions and persistence: "<<(orderOk?"PASS":"FAIL")<<"\n";
+    {
+        // Dragging a row of a sortable list with the mouse: press on its grip, move past other rows' middles, release.
+        bool dragOk=true;
+        auto rowList=[]{ const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr); return list?reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA)):nullptr; };
+        auto drag=[&](int from,int to) {
+            auto* list=rowList(); if(!list) return false;
+            // Both rows in view, and the mouse released just past the middle of the row whose place it takes.
+            list->ScrollIntoView(from); list->ScrollIntoView(to);
+            const RECT a=list->RowRect(from), b=list->RowRect(to); const HWND w=list->Handle();
+            const int x=a.left+MulDiv(19,GetDpiForWindow(w),96), y=(a.top+a.bottom)/2, target=(b.top+b.bottom)/2+(to>from?3:-3); // On the grip.
+            SendMessageW(w,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(x,y));
+            for(int step=1;step<=4;++step) SendMessageW(w,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(x,y+(target-y)*step/4));
+            SendMessageW(w,WM_LBUTTONUP,0,MAKELPARAM(x,target));
+            return true;
+        };
+        auto rowOf=[&](const std::wstring& title) { auto* list=rowList(); if(list) for(size_t i=0;i<list->Rows().size();++i) if(list->Rows()[i].title==title) return static_cast<int>(i); return -1; };
+        // Fuel: the first module dragged two places down.
+        auto& fuel=First(FuelKind); const auto fuelOrder=fuel.fuel.order;
+        OpenOverlay(fuel); UpdateWindow(app.main);
+        const int first=rowOf(FuelModules[fuelOrder[0]].title), third=rowOf(FuelModules[fuelOrder[2]].title);
+        dragOk=first>=0 && third>=0 && drag(first,third) && dragOk;
+        dragOk=fuel.fuel.order[0]==fuelOrder[1] && fuel.fuel.order[1]==fuelOrder[2] && fuel.fuel.order[2]==fuelOrder[0] && dragOk;
+        // And dragged back up to the top.
+        const int moved=rowOf(FuelModules[fuelOrder[0]].title), top=rowOf(FuelModules[fuelOrder[1]].title);
+        dragOk=drag(moved,top) && fuel.fuel.order==fuelOrder && dragOk;
+        // Standings: the third column dragged to the top. The status badge has no row: it stays right after Driver.
+        auto& standings=First(StandingsKind); const auto columns=standings.table.columnOrder;
+        OpenOverlay(standings); UpdateWindow(app.main);
+        // The columns are the list's one drag group, in their order.
+        std::vector<int> group; if(auto* list=rowList()) for(size_t i=0;i<list->Rows().size();++i) if(list->Rows()[i].dragGroup) group.push_back(static_cast<int>(i));
+        const int thirdColumn=group.size()>2?group[2]:-1, firstColumn=group.empty()?-1:group.front();
+        std::vector<int> listed=columns; std::erase(listed,static_cast<int>(StatusColumn));
+        dragOk=group.size()==listed.size() && drag(thirdColumn,firstColumn) && standings.table.columnOrder.front()==listed[2] && dragOk;
+        auto statusAfterDriver=[&]{ const auto& order=standings.table.columnOrder; const auto driver=std::find(order.begin(),order.end(),static_cast<int>(DriverColumn)); return driver!=order.end() && driver+1!=order.end() && driver[1]==StatusColumn; };
+        dragOk=statusAfterDriver() && dragOk;
+        // Driver dragged three places down: the badge goes along.
+        listed=standings.table.columnOrder; std::erase(listed,static_cast<int>(StatusColumn));
+        const size_t driverRow=std::find(listed.begin(),listed.end(),static_cast<int>(DriverColumn))-listed.begin();
+        dragOk=driverRow+3<group.size() && drag(group[driverRow],group[driverRow+3]) && dragOk;
+        listed=standings.table.columnOrder; std::erase(listed,static_cast<int>(StatusColumn));
+        dragOk=driverRow+3<listed.size() && listed[driverRow+3]==DriverColumn && statusAfterDriver() && dragOk;
+        auto* list=rowList(); dragOk=list && std::none_of(list->Rows().begin(),list->Rows().end(),[](const RowList::Row& r){ return r.title==L"Status badge"; }) && dragOk;
+        standings.table.columnOrder=columns; SettingChanged();
+        // Layouts: their priority order.
+        const auto layouts=app.layouts;
+        AddLayout(true); AddLayout(true); ShowPage(Page::Overlays); UpdateWindow(app.main);
+        const int lastLayout=rowOf(app.layouts.back().name), firstLayout=rowOf(app.layouts.front().name), lastId=app.layouts.back().id;
+        dragOk=lastLayout>=0 && firstLayout>=0 && drag(lastLayout,firstLayout) && app.layouts.front().id==lastId && dragOk;
+        while(app.layouts.size()>layouts.size()) { for(const auto& l:app.layouts) if(std::none_of(layouts.begin(),layouts.end(),[&](const Layout& k){return k.id==l.id;})) { RemoveLayout(l.id); break; } }
+        app.layouts=layouts; SwitchLayout(layouts.front().id); Save(); ShowPage(Page::Overlays);
+        report<<"Dragging rows: modules, columns and layouts reorder by mouse, the status badge goes with Driver: "<<(dragOk?"PASS":"FAIL")<<"\n"; ok=dragOk && ok;
+    }
+    {
+        // Copying the Standings' columns to the Relative: the shared columns in the Standings' order with their
+        // options; the Relative's own Best/Last setting stays.
+        auto& standings=First(StandingsKind); auto& relative=First(RelativeKind);
+        const auto savedStandings=standings.table, savedRelative=relative.table;
+        MoveToPlace(standings.table.columnOrder,BrandColumn,PositionColumn); standings.table.brandName=false; standings.table.driverColumns[0]=true; standings.table.nameFormat=2;
+        relative.table.best=true; CopyColumns(standings,relative);
+        std::vector<int> shared; for(int id:standings.table.columnOrder) if(std::find(savedRelative.columnOrder.begin(),savedRelative.columnOrder.end(),id)!=savedRelative.columnOrder.end()) shared.push_back(id);
+        bool copyOk=relative.table.columnOrder==shared && relative.table.columnOrder.front()==BrandColumn && !relative.table.brandName && relative.table.driverColumns[0] && relative.table.nameFormat==2 && relative.table.best;
+        Save(); Load(); copyOk=First(RelativeKind).table.columnOrder.front()==BrandColumn && copyOk;
+        First(StandingsKind).table=savedStandings; First(RelativeKind).table=savedRelative; SettingChanged();
+        report<<"Copying columns from the Standings to the Relative: order, visibility and options: "<<(copyOk?"PASS":"FAIL")<<"\n"; ok=copyOk && ok;
+    }
     bool cornersOk=true;
     for(int kind=0;kind<OverlayCount;++kind) {
         if(kind==SideWarningKind) continue; // Its bars stay centred on their monitor; only their height is placed.

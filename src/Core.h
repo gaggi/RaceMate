@@ -263,7 +263,8 @@ struct StandingsGroup {
     int cars = 0; double best = -1; // The whole class before rows are left out: its cars and fastest lap.
 };
 std::vector<StandingsGroup> SelectStandings(const Session&, const Frame&, const StandingsOptions&);
-enum class FuelMetric { Last, Average10, Average5, Maximum, Minimum, Average, Average3, Count };
+// QualifyMaximum: the most fuel a counted lap took in this event's qualifying, in this car; kept into the race.
+enum class FuelMetric { Last, Average10, Average5, Maximum, Minimum, Average, Average3, QualifyMaximum, Count };
 constexpr int FuelMetricCount = static_cast<int>(FuelMetric::Count);
 struct FinishScenario {
     bool valid = false;
@@ -323,6 +324,8 @@ public:
     // Without a prediction the consumption estimates are still filled, but no finish distance or fuel to add.
     FuelPlan Plan(const Frame&, const RacePrediction* prediction = nullptr) const;
 private:
+    // The most a counted qualifying lap of this event and car took, and how many there were; kept across its sessions.
+    double qualifyMaximum_ = 0; int qualifySamples_ = 0;
     std::string key_;
     int session_ = -1, player_ = -1, lap_ = -1, samples_ = 0, used_ = 0, cursor_ = 0;
     bool anchored_ = false, dirty_ = false, partial_ = false, caution_ = false;

@@ -223,6 +223,32 @@ bool MoveInOrder(std::vector<int>& order,int id,int step) {
     if(target<0 || target>=static_cast<long long>(order.size())) return false;
     std::swap(order[index],order[target]); SettingChanged(); return true;
 }
+// Moves an ID to where another one stands, the ones between moving up or down a place; false when nothing moves.
+bool MoveToPlace(std::vector<int>& order,int id,int place) {
+    const auto from=std::find(order.begin(),order.end(),id), to=std::find(order.begin(),order.end(),place);
+    if(from==order.end() || to==order.end() || from==to) return false;
+    if(from<to) std::rotate(from,from+1,to+1); else std::rotate(to,from,from+1);
+    SettingChanged(); return true;
+}
+// Gives a table the columns of another, also one of the other kind: their order, which show and their options
+// (name format, short views, logo and name, status badges, headings, class colours, signs). Columns only the target
+// has keep their setting and stand before the column they stood before; Best and Last, always shown in the
+// Standings, keep the Relative's setting.
+void CopyColumns(const Overlay& from,Overlay& to) {
+    const auto& f=from.table; auto& t=to.table;
+    auto has=[](const std::vector<int>& order,int id) { return std::find(order.begin(),order.end(),id)!=order.end(); };
+    std::vector<int> order; for(int id:f.columnOrder) if(has(t.columnOrder,id)) order.push_back(id);
+    for(size_t i=0;i<t.columnOrder.size();++i) if(!has(order,t.columnOrder[i])) {
+        auto next=order.end();
+        for(size_t j=i+1;j<t.columnOrder.size() && next==order.end();++j) next=std::find(order.begin(),order.end(),t.columnOrder[j]);
+        order.insert(next,t.columnOrder[i]);
+    }
+    t.columnOrder=order; StatusAfterDriver(t.columnOrder);
+    t.driverColumns=f.driverColumns; t.extraColumns=f.extraColumns; t.driverShortView=f.driverShortView; t.driverFlags=f.driverFlags;
+    t.showDriver=f.showDriver; t.showStatus=f.showStatus; t.nameFormat=f.nameFormat; t.columnHeaders=f.columnHeaders;
+    t.classColors=f.classColors; t.brandLogo=f.brandLogo; t.brandName=f.brandName; t.gapSigns=f.gapSigns; t.interval=f.interval;
+    Fit(to); SettingChanged();
+}
 void SetColumnVisible(Overlay& o,int id,bool on) {
     auto& t=o.table;
     switch(id) {
