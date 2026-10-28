@@ -465,7 +465,7 @@ void UpdateRaceControl(bool force) {
     const auto now=GetTickCount64(); if(!force && now-raceControl.updated<500) return; raceControl.updated=now;
     UpdateRaceCameras(); UpdateRaceBanner(); UpdateRaceInfo();
     auto options=First(StandingsKind).table.standings; options.leaders=MaxCars; options.ahead=options.behind=0;
-    std::vector<Row> rows; for(const auto& group:SelectStandings(app.session,app.frame,options)) rows.insert(rows.end(),group.rows.begin(),group.rows.end());
+    std::vector<Row> rows; for(const auto& group:SelectStandings(app.session,app.frame,options,&app.passing)) rows.insert(rows.end(),group.rows.begin(),group.rows.end());
     const int reference=ReferenceCar(app.frame);
     int referenceClass=-1; for(const auto& d:app.session.drivers) if(d.index==reference) referenceClass=d.classId;
     for(const auto& driver:app.session.drivers) {

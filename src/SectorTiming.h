@@ -23,7 +23,8 @@ public:
     // previous lap's S2 and S3; a lap begun after the pits starts at the first split it completes.
     // Full sectors and mini-sectors each follow their own latest split.
     double Latest(int car,int sector,int part=-1) const;
-    // Purple: fastest observed in the car's class this session.
+    // Purple: fastest observed in the car's class this session. Splits with a pit visit, an off-track, an incident
+    // or under caution are shown but never records: yellow.
     Pace Status(int car,int sector,int part=-1) const;
     uint64_t Revision() const { return revision_; }
     uint64_t LayoutRevision() const { return layoutRevision_; }
@@ -34,7 +35,8 @@ private:
         std::string driver,car;
         std::span<double> current,recent,personal;
         std::span<int> laps; // Lap of each recent split.
-        std::span<unsigned char> improved;
+        std::span<unsigned char> improved; // Slower, improved, or NotCounted.
+        std::span<unsigned char> counted; // Per mini-sector of the current lap: representative for records.
         // progress: laps travelled, followed through the lap-distance wrap rather than the lap counter,
         // which iRacing may update a frame before or after the distance.
         double time=-1,progress=-1,pct=-1,entered=-1;
@@ -50,7 +52,8 @@ private:
     std::vector<double> fastest_;
     int Published() const { return static_cast<int>(cuts_.size())-1+Count(); }
     int ClassSlot(int classId);
-    void Publish(Sample&,int,double,int);
+    static constexpr unsigned char NotCounted=2; // Shown, never a record: pit lane, off track, incident, caution.
+    void Publish(Sample&,int,double,int,bool);
     std::vector<SectorBoundary> sectors_;
     std::vector<SectorBoundary> configured_;
     std::vector<double> cuts_;

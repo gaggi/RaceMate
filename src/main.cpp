@@ -1,6 +1,7 @@
 #include "Telemetry.h"
 #include "RaceControl.h"
 #include "SectorTiming.h"
+#include "PassingTimes.h"
 #include "TrackMapLoader.h"
 #include <windowsx.h>
 #include <commctrl.h>
@@ -314,6 +315,7 @@ struct App {
     EventRecorder events; PitHistory pitHistory; PitLimiterVisibility pitVisibility; SetupDials setupDials;
     RacePredictor predictor; FuelPlan fuelPlan;
     SectorTiming sectors;
+    PassingTimes passing; // Measured gaps for Relative, Standings, Race Control and Traffic.
     std::wstring config;
     unsigned classBestVersion=~0u; std::vector<std::pair<int,double>> classBest;
     WeatherHistory weatherHistory;
@@ -912,7 +914,7 @@ OpponentFuelStatus FuelFinishStatus(int index) {
     return app.opponentFuelStatuses[index];
 }
 const std::vector<Row>& RelativeRows(const Overlay& o) {
-    if(o.rowsVersion!=app.modelVersion) { o.relativeRows=Relative(app.session,app.frame,o.table.rows,false,o.table.hidePit); o.rowsVersion=app.modelVersion; }
+    if(o.rowsVersion!=app.modelVersion) { o.relativeRows=Relative(app.session,app.frame,o.table.rows,false,o.table.hidePit,&app.passing); o.rowsVersion=app.modelVersion; }
     return o.relativeRows;
 }
 const PitRejoin& PitExit();
@@ -921,7 +923,7 @@ const PitRejoin& PitExit();
 void AddPitExitRow(const Overlay& o) {
     const auto& rejoin=PitExit(); if(!rejoin.valid) return;
     auto everyone=o.table.standings; everyone.leaders=MaxCars; everyone.ahead=everyone.behind=0;
-    const auto full=SelectStandings(app.session,app.frame,everyone);
+    const auto full=SelectStandings(app.session,app.frame,everyone,&app.passing);
     const bool byClass=o.table.standings.separateClasses; const int ahead=byClass?rejoin.classAhead:rejoin.overallAhead;
     for(const auto& source:full) {
         const auto own=std::find_if(source.rows.begin(),source.rows.end(),[](const Row& r){ return r.player; });
@@ -950,7 +952,7 @@ void AddPitExitRow(const Overlay& o) {
 }
 const std::vector<StandingsGroup>& StandingsGroups(const Overlay& o) {
     if(o.rowsVersion!=app.modelVersion) {
-        o.standingsGroups=SelectStandings(app.session,app.frame,o.table.standings); o.rowsVersion=app.modelVersion;
+        o.standingsGroups=SelectStandings(app.session,app.frame,o.table.standings,&app.passing); o.rowsVersion=app.modelVersion;
         if(o.table.pitExit) AddPitExitRow(o);
     }
     return o.standingsGroups;
@@ -2641,7 +2643,7 @@ void UpdateRadar(const Overlay& o) {
 // The cars behind you within Traffic's gap; the preview draws a sample of its own.
 void UpdateTraffic(const Overlay& o) {
     if(app.preview) { app.traffic.clear(); return; }
-    app.traffic=CarsBehind(app.session,app.frame,o.traffic.gap,o.traffic.fasterOnly);
+    app.traffic=CarsBehind(app.session,app.frame,o.traffic.gap,o.traffic.fasterOnly,&app.passing);
     if(!app.traffic.empty()) app.trafficNear=app.now;
 }
 // Your own car on track, live: the Radar's condition, near cars or not.
@@ -2756,6 +2758,7 @@ constexpr UINT RefreshUiMessage=WM_APP+2;
 constexpr UINT TelemetryMessage=WM_APP+3;
 void ProcessFrame(bool connected) {
     if(!connected && app.sectors.Count()) app.sectors.Reset();
+    if(!connected) app.passing.Update(app.session,Frame{});
     if(app.frame.yawNorth!=app.lastYaw && std::isfinite(app.frame.yawNorth)) { app.lastYaw=app.frame.yawNorth; app.yawChanged=app.now; }
     if(!connected) { SaveBraking(); app.frame={}; app.events.Update(app.session,app.frame); app.session={}; app.pitLane.Reset(); app.refuel.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.weatherHistory.Reset(); }
     else {
@@ -2763,6 +2766,7 @@ void ProcessFrame(bool connected) {
         { ProfileScope p("analysis: pit history"); app.pitHistory.Update(app.session,app.frame); }
         // Always, about 2 us a frame: records stay complete when a sector view is opened mid-session.
         { ProfileScope p("analysis: sector timing"); app.sectors.Update(app.session,app.frame); }
+        { ProfileScope p("analysis: passing times"); app.passing.Update(app.session,app.frame); }
         { ProfileScope p("analysis: pit stop estimate"); UpdatePitStop(); }
         { ProfileScope p("analysis: race control events"); app.events.Update(app.session,app.frame); }
         { ProfileScope p("analysis: fuel"); app.fuel.Update(app.session,app.frame,true); }

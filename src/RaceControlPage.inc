@@ -49,7 +49,7 @@ private:
         RowList::Row sectors; sectors.title=L"Show sectors"; sectors.detail=L"One standings column per sector, sortable by its header. Options below appear when enabled."; sectors.toggle=raceControl.showSectors?1:0; push(std::move(sectors),Key::ShowSectors);
         if(raceControl.showSectors) {
             RowList::Row parts; parts.title=L"Sector detail"; parts.detail=raceControl.sectorParts==3?L"Three equal-distance mini-sectors per SDK sector: S1.1, S1.2 …":L"SDK sectors: S1, S2, S3 …"; parts.button=L"Choose..."; push(std::move(parts),Key::SectorParts);
-            RowList::Row times; times.title=L"Sector times"; times.detail=L"Each sector appears when completed. A new S1 clears the previous lap's later sectors; after the pits a lap starts at its first completed sector. Green personal best, purple class best, yellow slower. Estimated seconds."; push(std::move(times),Key::None);
+            RowList::Row times; times.title=L"Sector times"; times.detail=L"Each sector appears when completed. A new S1 clears the previous lap's later sectors; sectors with pit lane or off-track show in yellow and set no record. Green personal best, purple class best, yellow slower. Estimated seconds."; push(std::move(times),Key::None);
         }
         header(L"Standings columns");
         for(int i=0;i<RaceSectorTimesField;++i) {

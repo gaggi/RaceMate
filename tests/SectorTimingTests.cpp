@@ -5,6 +5,7 @@
 #include <chrono>
 #include <array>
 #include <fstream>
+#include <vector>
 #include <windows.h>
 #include "Telemetry.h"
 using namespace rm;
@@ -120,7 +121,20 @@ void SectorTimingTests() {
             if(t>66) sample.cars[0].outLap=true;
             stop.Update(one,sample);
         }
-        Close(stop.Latest(0,1),15,"out-lap S2"); Check(stop.Latest(0,0)<0 && stop.Latest(0,2)<0,"only the out lap's sectors remain");
+        Close(stop.Latest(0,0),7.5,"the sector with the pit stop is shown"); Check(stop.Status(0,0)==SectorTiming::Pace::Slower,"but never a record");
+        Close(stop.Latest(0,1),15,"out-lap S2"); Check(stop.Latest(0,2)<0,"the previous lap's S3 is gone");
+    }
+    {
+        // A short off-track or a car briefly without a position keeps the sector: shown, not a record.
+        SectorTiming wide; auto one=SessionOf(1);
+        for(int n=0;n<=4100;++n) {
+            auto sample=At(n/60.,1); const double t=n/60.;
+            if(t>62 && t<62.2) sample.cars[0].surface=0;
+            if(t>63 && t<63.3) sample.cars[0].pct=-1;
+            wide.Update(one,sample);
+        }
+        Close(wide.Latest(0,0),7.5,"off-track sector shown"); Check(wide.Status(0,0)==SectorTiming::Pace::Slower,"off-track sector is no record");
+        Check(wide.Status(0,0,2)==SectorTiming::Pace::SessionBest,"the clean mini after it still counts");
     }
     {
         // Purple per class; a local yellow does not stop the timing.
@@ -129,12 +143,12 @@ void SectorTimingTests() {
         Check(classes.Status(0,0)==SectorTiming::Pace::SessionBest && classes.Status(1,0)==SectorTiming::Pace::SessionBest,"each class has its own purple under a local yellow");
         SectorTiming caution;
         for(int n=0;n<=4100;++n) { auto sample=At(n/60.); sample.flags=SessionFlag::Caution; caution.Update(two,sample); }
-        Check(caution.Latest(0,0)<0,"a full-course caution stops the timing");
+        Check(caution.Latest(0,0)>0 && caution.Status(0,0)==SectorTiming::Pace::Slower,"under a full-course caution splits show but set no record");
     }
     for(bool formation:{false,true}) {
         SectorTiming invalid; auto race=SessionOf(1); race.type="Race";
         for(int n=0;n<=3700;++n) { f=At(n/60.,1); f.state=formation?3:4; if(!formation) f.flags=SessionFlag::CautionWaving; invalid.Update(race,f); }
-        Check(invalid.Latest(0,0)<0,"formation and caution splits never create records");
+        Check(invalid.Latest(0,0)>0 && invalid.Status(0,0)==SectorTiming::Pace::Slower,"formation and caution splits are shown but never records");
     }
 }
 int SectorTimingBenchmark() {
@@ -174,4 +188,62 @@ int SectorTimingLog(int seconds,const char* path) {
         out<<d.index<<','<<d.name<<','<<d.classId<<','<<c.wraps<<','<<c.late<<','<<c.early<<','<<c.splits[0]<<','<<c.splits[1]<<','<<c.splits[2]<<'\n';
     }
     std::cout<<frames<<" frames, "<<timing.Count()<<" sectors\n"; return 0;
+}
+// Live or TapeMate: what interrupts sector observation, counted when it starts, per reason.
+int SectorReasonLog(int seconds) {
+    Telemetry reader; Frame frame; Session session; SectorTiming timing;
+    enum { OffTrack, PitStall, PitApproach, NotInWorld, PitRoad, Towing, Incident, DriverFlag, FullCourse, Reasons };
+    const char* names[]={"off track (surface 0)","pit stall (surface 1)","approaching pits (surface 2)","not in world (surface -1)","pit road flag","towing","incident count rose","furled/DQ flag","full-course caution/red"};
+    std::array<long,Reasons> counts{}; std::array<double,MaxCars> began{}; began.fill(-1); std::array<int,MaxCars> state{}; state.fill(-1); std::array<int,MaxCars> incidents{}; incidents.fill(-1);
+    long published=0; uint64_t revision=0;
+    const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(seconds); double last=-1; int frames=0;
+    while(std::chrono::steady_clock::now()<end) {
+        if(!reader.Read(frame,session) || frame.time==last) { Sleep(1); continue; }
+        last=frame.time; ++frames; timing.Update(session,frame);
+        if(timing.Revision()!=revision) { ++published; revision=timing.Revision(); }
+        for(const auto& d:session.drivers) {
+            if(d.index<0 || d.index>=MaxCars || d.paceCar || d.spectator) continue;
+            const auto& car=frame.cars[d.index]; int reason=-1;
+            if(car.towing) reason=Towing; else if(car.pit) reason=PitRoad;
+            else if(car.surface==0) reason=OffTrack; else if(car.surface==1) reason=PitStall; else if(car.surface==2) reason=PitApproach; else if(car.surface<0) reason=NotInWorld;
+            else if(car.sessionFlags&(SessionFlag::Disqualify|SessionFlag::Furled)) reason=DriverFlag;
+            else if(frame.flags&(SessionFlag::Caution|SessionFlag::CautionWaving|SessionFlag::Red)) reason=FullCourse;
+            const int count=d.index==frame.player && frame.incidentsKnown?frame.incidents:d.incidentCount;
+            if(count>=0 && incidents[d.index]>=0 && count>incidents[d.index]) ++counts[Incident];
+            incidents[d.index]=count;
+            if(reason>=0 && reason!=state[d.index]) { ++counts[reason]; began[d.index]=frame.time; }
+            if(reason!=state[d.index] && state[d.index]>=0 && began[d.index]>=0) {
+                const double length=frame.time-began[d.index];
+                std::cout<<"  car "<<d.index<<" "<<names[state[d.index]]<<" for "<<length<<" s at "<<car.pct<<(car.pct>=0?"":" (no position)")<<"\n";
+            }
+            state[d.index]=reason;
+        }
+    }
+    std::cout<<frames<<" frames, "<<session.drivers.size()<<" drivers, sector model updates "<<published<<"\n";
+    for(int i=0;i<Reasons;++i) std::cout<<"  "<<names[i]<<": "<<counts[i]<<"\n";
+    return 0;
+}
+// Live or TapeMate: official sector boundaries each car crossed after its first, against new times published.
+int SectorCoverageLog(int seconds) {
+    Telemetry reader; Frame frame; Session session; SectorTiming timing;
+    std::array<double,MaxCars> pct{}; pct.fill(-1); std::array<int,MaxCars> crossed{},published{}; std::array<bool,MaxCars> started{};
+    std::vector<std::array<double,SectorTiming::MaxSectors>> last(MaxCars); for(auto& l:last) l.fill(-1);
+    const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(seconds); double previous=-1;
+    while(std::chrono::steady_clock::now()<end) {
+        if(!reader.Read(frame,session) || frame.time==previous) { Sleep(1); continue; }
+        previous=frame.time; timing.Update(session,frame);
+        for(const auto& d:session.drivers) {
+            if(d.index<0 || d.index>=MaxCars || d.paceCar || d.spectator) continue;
+            const double p=frame.cars[d.index].pct; if(p<0 || p>=1) continue;
+            if(pct[d.index]>=0) for(int s=0;s<timing.Count();++s) {
+                const double b=timing.Start(s*SectorTiming::Parts); double a=pct[d.index],now=p; if(now<a-.5) now+=1;
+                if((a<b && now>=b) || (a<b+1 && now>=b+1)) { if(started[d.index]) ++crossed[d.index]; started[d.index]=true; }
+            }
+            pct[d.index]=p;
+            for(int s=0;s<timing.Count();++s) { const double v=timing.Latest(d.index,s); if(v>0 && v!=last[d.index][s]) ++published[d.index]; last[d.index][s]=v; }
+        }
+    }
+    int c=0,p=0; for(int i=0;i<MaxCars;++i) { c+=crossed[i]; p+=published[i]; if(crossed[i]>published[i]+1) std::cout<<"  car "<<i<<": "<<crossed[i]<<" sectors driven, "<<published[i]<<" times\n"; }
+    std::cout<<timing.Count()<<" sectors; sectors driven after the first boundary: "<<c<<", times published: "<<p<<"\n";
+    return 0;
 }

@@ -42,7 +42,7 @@ private:
         toggle(L"Show sectors",L"Colour the full track width for your car (or the car you watch). Dark split marks and sector labels.",o_.map.sectors,SectorsKey);
         if(o_.map.sectors) {
             RowList::Row row; row.title=L"Sector detail"; row.detail=o_.map.sectorParts==3?L"Three equal-distance mini-sectors per SDK sector":L"SDK sectors"; row.button=L"Choose..."; push(std::move(row),SectorPartsKey);
-            RowList::Row note; note.title=L"Sector colours"; note.detail=L"Green: personal best. Purple: fastest observed in this session within the car's class. Yellow: slower. Grey: not yet completed this lap. A new S1 clears the previous lap's later splits. Estimated timing; no all-time history."; push(std::move(note),Info);
+            RowList::Row note; note.title=L"Sector colours"; note.detail=L"Green: personal best. Purple: fastest observed in this session within the car's class. Yellow: slower, or with pit lane, off-track or caution (never a record). Grey: not yet completed this lap. A new S1 clears the previous lap's later splits. Estimated timing; no all-time history."; push(std::move(note),Info);
         }
         heading(L"Corner labels");
         toggle(L"Corner numbers",L"Numbers at their official SVG positions. Also available with a transparent background.",o_.map.cornerNumbers,CornerNumbers);

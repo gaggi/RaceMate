@@ -1,5 +1,6 @@
 #include <cctype>
 #include "Core.h"
+#include "PassingTimes.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -85,25 +86,39 @@ double DriverLapTime(const Session& s,const Frame& f,int index) {
 double LapTime(const Session& s,const Frame& f) { return DriverLapTime(s,f,ReferenceCar(f)); }
 double Progress(const Car& car) { return (car.completed>=0?car.completed:(car.lap>=0?car.lap-1:0))+car.pct; }
 bool OnCircuit(const Car& car) { return car.surface>=0 && std::isfinite(car.pct) && car.pct>=0 && car.pct<1; }
-double Phase(const Driver& driver,const Car& car,double fallback) {
-    // SDK estimates are calibrated to the class estimate, not a driver's fastest lap.
+// Share of the lap by iRacing's estimate (CarIdxEstTime), calibrated to the class estimate, not a driver's fastest lap.
+bool TimeShare(const Driver& driver,const Car& car,double fallback,double& share) {
     const double duration=ValidTime(driver.estimatedLapTime)?driver.estimatedLapTime:fallback;
-    if(ValidTime(duration) && car.estTime>=0 && car.estTime<duration && (car.estTime>0 || car.pct<.02)) return car.estTime/duration;
-    return car.pct;
+    if(!ValidTime(duration) || !(car.estTime<duration) || !(car.estTime>0 || (car.estTime==0 && car.pct<.02))) return false;
+    share=car.estTime/duration; return true;
 }
-double LiveGap(const Session& s,const Frame& f,const Row& ahead,const Row& behind) {
+// Seconds the car ahead (by lap position) leads the one behind, within one lap. Measured passes first. Before
+// they exist both cars go on one scale: the same class's estimate for both, else lap distance for both. A time
+// share minus a distance share, or two classes' time shares, can come out as anything.
+double LapGap(const PassingTimes* passes,const Driver& ahead,const Car& a,const Driver& behind,const Car& b,double lap) {
+    if(passes) { const double measured=passes->Gap(ahead.index,behind.index); if(std::isfinite(measured)) return measured; }
+    if(!ValidTime(lap)) return std::numeric_limits<double>::quiet_NaN();
+    double distance=a.pct-b.pct; distance-=std::floor(distance);
+    double share=distance,first=0,second=0;
+    if(ahead.classId==behind.classId && TimeShare(ahead,a,lap,first) && TimeShare(behind,b,lap,second)) {
+        share=first-second; share-=std::round(share-distance); // The same side as the cars are on track.
+    }
+    return std::max(0.0,share)*lap;
+}
+double LiveGap(const Session& s,const Frame& f,const Row& ahead,const Row& behind,const PassingTimes* passes) {
     if(ahead.driver.index==behind.driver.index) return 0;
     if(!OnCircuit(ahead.car) || !OnCircuit(behind.car)) return std::numeric_limits<double>::quiet_NaN();
+    const double apart=Progress(ahead.car)-Progress(behind.car);
+    if(apart<=0) return 0;
     double pace=DriverLapTime(s,f,ahead.driver.index);
     if(!ValidTime(pace)) pace=DriverLapTime(s,f,behind.driver.index);
-    if(!ValidTime(pace)) {
-        // Nearby same-class estimates can already provide seconds before a first lap.
-        if(ahead.driver.classId==behind.driver.classId && ahead.car.estTime>0 && behind.car.estTime>0 && ahead.car.pct>=behind.car.pct)
-            return std::max(0.0,ahead.car.estTime-behind.car.estTime);
-        return std::numeric_limits<double>::quiet_NaN();
-    }
-    const double laps=Progress(ahead.car)-ahead.car.pct-Progress(behind.car)+behind.car.pct;
-    return std::max(0.0,(laps+Phase(ahead.driver,ahead.car,pace)-Phase(behind.driver,behind.car,pace))*pace);
+    const int laps=static_cast<int>(std::floor(apart));
+    const double part=LapGap(passes,ahead.driver,ahead.car,behind.driver,behind.car,pace);
+    if(std::isfinite(part) && (!laps || ValidTime(pace))) return laps*std::max(0.0,pace)+part;
+    // Nearby same-class estimates can already provide seconds before a first lap.
+    if(!laps && ahead.driver.classId==behind.driver.classId && ahead.car.estTime>0 && behind.car.estTime>0 && ahead.car.pct>=behind.car.pct)
+        return std::max(0.0,ahead.car.estTime-behind.car.estTime);
+    return std::numeric_limits<double>::quiet_NaN();
 }
 void SortKnownProgress(std::vector<Row>& rows, bool onlyUnranked = false) {
     // Preserve the original ordering when progress is missing or exactly tied.
@@ -482,7 +497,7 @@ double WeatherHistory::Change(double Sample::* value) const {
     return std::numeric_limits<double>::quiet_NaN();
 }
 int RelativeRowCount(int requested) { int count=std::clamp(requested,1,MaxCars-1); return count%2?count:count+1; }
-std::vector<Row> Relative(const Session& s, const Frame& f, int count, bool ownClass, bool hidePit) {
+std::vector<Row> Relative(const Session& s, const Frame& f, int count, bool ownClass, bool hidePit, const PassingTimes* passes) {
     std::vector<Row> rows;
     rows.reserve(s.drivers.size());
     const Driver* me = Player(s,f);
@@ -509,15 +524,10 @@ std::vector<Row> Relative(const Session& s, const Frame& f, int count, bool ownC
         if(livePositions[d.index]>0) { row.car.position=livePositions[d.index]; row.car.classPosition=liveClassPositions[d.index]; }
         if(s.type=="Race" && c.lap >= 0 && mine.lap >= 0)
             row.lapDifference = static_cast<int>(std::round(c.lap + c.pct - mine.lap - mine.pct));
+        // Ahead or behind by lap position; the seconds only say how far.
         if (row.player) row.gap = 0;
-        else if (lapTime > 0) {
-            // Same-class SDK estimates account for nonuniform speed around the circuit.
-            if (c.estTime>=0 && mine.estTime>=0 && (ValidTime(d.estimatedLapTime) || d.classId==me->classId)) {
-                double delta = (Phase(d,c,lapTime)-Phase(*me,mine,lapTime))*lapTime;
-                delta -= std::floor(delta / lapTime + 0.5) * lapTime;
-                row.gap = -delta;
-            } else row.gap = -diff * lapTime;
-        }
+        else if (diff > 0 || (diff == 0 && d.index < reference)) row.gap = -LapGap(passes,d,c,*me,mine,lapTime);
+        else row.gap = LapGap(passes,*me,mine,d,c,lapTime);
         if(!row.player && !std::isfinite(row.gap) && d.classId==me->classId && c.estTime>0 && mine.estTime>0 && std::abs(c.pct-mine.pct)<.5) row.gap=mine.estTime-c.estTime;
         rows.push_back(row);
     }
@@ -588,7 +598,7 @@ std::vector<Row> Standings(const Session& s, const Frame& f, int count, bool own
         }
         const auto leader=rows.front();
         for(auto& row:rows) {
-            if(!std::isfinite(row.gap)) row.gap=LiveGap(s,f,leader,row);
+            if(!std::isfinite(row.gap)) row.gap=LiveGap(s,f,leader,row,nullptr);
             if(ownClass && std::isfinite(row.gap) && std::isfinite(leader.gap)) row.gap=std::max(0.0,row.gap-leader.gap);
             if(row.car.lap >= 0 && leader.car.lap >= 0 && row.car.pct >= 0 && leader.car.pct >= 0)
                 row.lapDifference=std::max(0,static_cast<int>(std::floor(leader.car.lap+leader.car.pct-row.car.lap-row.car.pct)));
@@ -602,7 +612,7 @@ std::vector<Row> Standings(const Session& s, const Frame& f, int count, bool own
     }
     return rows;
 }
-std::vector<StandingsGroup> SelectStandings(const Session& s, const Frame& f, const StandingsOptions& options) {
+std::vector<StandingsGroup> SelectStandings(const Session& s, const Frame& f, const StandingsOptions& options, const PassingTimes* passes) {
     // Rank the complete field first, then select leaders and the reference car's neighbours.
     auto field=Standings(s,f,MaxCars,false,options.fallbackByRating);
     if(options.liveGaps) LiveRaceOrder(s,f,field);
@@ -636,12 +646,12 @@ std::vector<StandingsGroup> SelectStandings(const Session& s, const Frame& f, co
         }
         if(s.type=="Race" && options.liveGaps && !rows.empty()) {
             const auto leader=rows.front();
-            for(auto& row:rows) { row.gap=LiveGap(s,f,leader,row); row.lapDifference=OnCircuit(leader.car) && OnCircuit(row.car)?std::max(0,static_cast<int>(std::floor(Progress(leader.car)-Progress(row.car)))):0; }
+            for(auto& row:rows) { row.gap=LiveGap(s,f,leader,row,passes); row.lapDifference=OnCircuit(leader.car) && OnCircuit(row.car)?std::max(0,static_cast<int>(std::floor(Progress(leader.car)-Progress(row.car)))):0; }
         }
         // Calculate against the actual preceding car before hiding unselected rows.
         for(size_t i=1;i<rows.size();++i) {
             auto& row=rows[i]; const auto& ahead=rows[i-1];
-            if(s.type=="Race" && options.liveGaps) row.interval=LiveGap(s,f,ahead,row);
+            if(s.type=="Race" && options.liveGaps) row.interval=LiveGap(s,f,ahead,row,passes);
             else if(std::isfinite(row.gap) && std::isfinite(ahead.gap) && row.gap>=ahead.gap) row.interval=row.gap-ahead.gap;
             if(s.type=="Race" && row.car.lap>=0 && ahead.car.lap>=0 && row.car.pct>=0 && ahead.car.pct>=0)
                 row.intervalLaps=std::max(0,static_cast<int>(std::floor(ahead.car.lap+ahead.car.pct-row.car.lap-row.car.pct)));
@@ -868,7 +878,7 @@ SideTraffic SideTrafficOf(const Session& s,const Frame& f) {
     (t.left?t.leftAt:t.rightAt)=nearest;
     return t;
 }
-std::vector<CarBehind> CarsBehind(const Session& s,const Frame& f,double threshold,bool fasterOnly) {
+std::vector<CarBehind> CarsBehind(const Session& s,const Frame& f,double threshold,bool fasterOnly,const PassingTimes* passes) {
     std::vector<CarBehind> cars;
     if(!f.connected || !f.onTrack || f.replay || f.player<0 || f.player>=MaxCars) return cars;
     const auto& own=f.cars[f.player];
@@ -881,9 +891,10 @@ std::vector<CarBehind> CarsBehind(const Session& s,const Frame& f,double thresho
         if(fasterOnly && (d.classId==me->classId || !ValidTime(d.estimatedLapTime) || !ValidTime(me->estimatedLapTime) || lap>me->estimatedLapTime*.98)) continue;
         const auto& c=f.cars[d.index];
         if(c.pct<0 || c.surface<0 || c.surface==1 || c.pit) continue;
-        // Behind as a share of the lap in time, then in the seconds that car needs for it.
-        double behind=Phase(*me,own,ownLap)-Phase(d,c,lap); behind-=std::floor(behind); if(behind>.5) continue;
-        if(behind*lap<=threshold) cars.push_back({d.index,behind*lap});
+        // Behind by lap position; then measured seconds, or before those that car's own class time.
+        double apart=own.pct-c.pct; apart-=std::floor(apart); if(apart<=0 || apart>.5) continue;
+        const double gap=LapGap(passes,*me,own,d,c,lap);
+        if(gap<=threshold) cars.push_back({d.index,gap});
     }
     std::sort(cars.begin(),cars.end(),[](const CarBehind& a,const CarBehind& b){ return a.gap<b.gap; });
     return cars;

@@ -14,6 +14,11 @@ void ReviewRegressionTests();
 void SectorTimingTests();
 int SectorTimingBenchmark();
 int SectorTimingLog(int seconds,const char* path);
+int SectorReasonLog(int seconds);
+int SectorCoverageLog(int seconds);
+void PassingTimesTests();
+int PassingTimesBenchmark();
+int PassingTimesLog(int seconds,const char* path);
 void Require(bool c,const char* m) { if(!c) throw std::runtime_error(m); }
 void Near(double a,double b,const char* m) { Require(std::abs(a-b)<0.001,m); }
 const char* Yaml=R"(WeekendInfo:
@@ -813,6 +818,11 @@ void WeatherHistoryTests() {
 }
 int main(int argc,char** argv) {
  if(argc==2 && std::string(argv[1])=="--benchmark-sectors") return SectorTimingBenchmark();
+ if(argc==2 && std::string(argv[1])=="--benchmark-passing") return PassingTimesBenchmark();
+ try { PassingTimesTests(); } catch(const std::exception& e) { std::cerr<<"FAIL passing times: "<<e.what()<<'\n'; return 1; }
+ if(argc==4 && std::string(argv[1])=="--gap-log") return PassingTimesLog(std::stoi(argv[2]),argv[3]);
+ if(argc==3 && std::string(argv[1])=="--sector-coverage") return SectorCoverageLog(std::stoi(argv[2]));
+ if(argc==3 && std::string(argv[1])=="--sector-reasons") return SectorReasonLog(std::stoi(argv[2]));
  if(argc==4 && std::string(argv[1])=="--sector-log") return SectorTimingLog(std::stoi(argv[2]),argv[3]);
  try { SectorTimingTests(); } catch(const std::exception& e) { std::cerr<<"FAIL sectors: "<<e.what()<<'\n'; return 1; }
  if(argc==2 && std::string(argv[1])=="--benchmark-prediction") {

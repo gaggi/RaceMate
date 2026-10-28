@@ -26,7 +26,7 @@ Choose an overlay's **Settings** button on the Overlays page to customize it. Ap
 
 The Relative lists the cars **physically closest to you on track**, whatever their race position: cars just ahead of you on the road above your row, cars just behind below it. While you drive, the reference car is your own; while you watch, it is the car the camera follows. Your row always stays in the middle, even when one side has fewer cars.
 
-The **gap** is the estimated time between each car and the reference car. RaceMate uses iRacing's own time estimates for cars of the same class where it can, and otherwise the track position together with a reference lap time.
+The **gap** is measured: how long ago the car ahead was where the car behind is now, as on Formula 1 and DTM timing screens. RaceMate notes when every car passes points about every 10 m of the lap, so the gap is exact across classes and on tracks with very uneven speed such as the Nordschleife; two cars side by side read 0.0. It is known as soon as the car ahead has been watched for that long: at once side by side, after 1.5 s for a 1.5 s gap. Until then, and after a telemetry gap or a replay jump, both cars are estimated on one scale: iRacing's time estimate (`CarIdxEstTime`) for cars of the same class, otherwise their distance along the lap in the reference lap time. Whether a car is ahead or behind always comes from its position on track.
 
 ### Relative settings
 
@@ -68,7 +68,7 @@ The Standings show the race order. In races, cars are ranked by their progress; 
 | Rows in other classes | With separate classes: how many cars every other class shows from its leader, at least; default 3. With 0 a class shows only its header, so you still see how many cars it has. |
 | Classes | **Separate classes**: one section per class with its own leader, positions counted within the class, and a header with the number of cars and the class strength of field (**SOF**). **Combined overall standings**: one list for the whole field with overall positions. |
 | Only my class | Shows only the class of your car, or of the car you watch. |
-| Live positions and gaps | Updates positions, gaps and intervals continuously from track position. Off: they change only when cars cross the start/finish line, as iRacing reports them. Live values are estimates. |
+| Live positions and gaps | Updates positions, gaps and intervals continuously from track position, with the measured gaps of the Relative; a lapped car adds whole laps at the leader's pace. Off: they change only when cars cross the start/finish line, as iRacing reports them. |
 | Show + before gaps and intervals | Off by default; both always count behind the leader or the car ahead. |
 | Drivers without a lap time | Ordered by car number (default) or by iRating, highest first. |
 | Class header | With separate classes, each class starts with a band in its darkened color, the class name on the full color. Expand to choose the values beside it: **Cars**, **SOF**, **Average iRating** (on by default) and **Class best lap** (off). SOF is iRacing's weighted strength of field, which counts strong drivers more; the average is the plain mean of the class's iRatings. |
@@ -233,7 +233,7 @@ After irdashies' *faster cars from behind*: the cars of faster classes close beh
 | Within … s behind | 1, 2, 3 (default) or 5 s: it shows while a car is that close behind you |
 | Faster classes only | On (default): only classes whose estimated lap (`CarClassEstLapTime`) is at least 2 % quicker than yours. Off: every car behind you |
 
-The gap is how far behind the car is, by iRacing's estimate of each class's time around the lap (`CarIdxEstTime`), counted in **that car's own** lap time: about the time it needs to reach where you are now. The Relative counts the same share of the lap in your lap time instead, so for a faster car Traffic shows less: with your lap at 100 s and its at 80 s, 1 % of the lap is 1.0 s in the Relative and 0.8 s in Traffic. Neither is a closing time from the difference in speed, and Traffic takes no car length off. Cars in the pits are left out, and nothing shows while you are in them.
+A car counts as behind by its position on track. The gap is the Relative's measured one: how long ago you were where that car is now. Before that is known it is estimated in **that car's own** class lap time: iRacing's estimate (`CarIdxEstTime`) for your class, otherwise the distance along the lap. It is not a closing time from the difference in speed, and Traffic takes no car length off. Cars in the pits are left out, and nothing shows while you are in them.
 
 It shows while you drive your own car and a car is within the gap, and half a second after, so it doesn't flicker at the edge. While overlays are moved or previewed it always shows. Like the Side Warning and the Radar, Traffic has no header or footer and only one instance.
 
