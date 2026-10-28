@@ -113,8 +113,11 @@ public:
         for (const auto& editor : editors_)
         {
             const int controlWidth = editor.width > 0 ? editor.width : std::max(40, width - editor.x + editor.width);
-            MoveWindow(editor.control, area.left + scale(editor.x), area.top + scale(editor.y), scale(controlWidth),
-                scale(editor.height), TRUE);
+            // Painted anew at the new place: letting Windows copy their old pixels along left a neighbour's text in
+            // a label after a big scroll step, such as the mouse wheel's.
+            SetWindowPos(editor.control, nullptr, area.left + scale(editor.x), area.top + scale(editor.y), scale(controlWidth),
+                scale(editor.height), SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
+            InvalidateRect(editor.control, nullptr, TRUE);
             ShowWindow(editor.control, SW_SHOW);
         }
     }
