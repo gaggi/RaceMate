@@ -42,7 +42,7 @@ std::string SessionYaml() {
         const int c = i % 3;
         y += " - CarIdx: " + std::to_string(i) + "\n   UserName: Driver " + std::to_string(i + 1) + "\n   CarNumber: \"" + std::to_string(i + 1) +
              "\"\n   CarClassID: " + std::to_string(c + 1) + "\n   CarClassShortName: " + classes[c] + "\n   CarClassColor: " + colors[c] +
-             "\n   CarScreenName: " + carNames[c] + "\n   CarPath: " + carPaths[c] + "\n   IRating: " + std::to_string(1500 + i * 37) +
+             "\n   CarClassEstLapTime: " + std::to_string(100 + c * 8) + "\n   CarScreenName: " + carNames[c] + "\n   CarPath: " + carPaths[c] + "\n   IRating: " + std::to_string(1500 + i * 37) +
              "\n   LicString: A 3.45\n   LicColor: 0x0153db\n   CurDriverIncidentCount: 0\n";
     }
     return y;

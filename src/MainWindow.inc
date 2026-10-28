@@ -84,7 +84,8 @@ void ShowPage(Page page,Overlay* overlay=nullptr) {
         L"The pit limiter, your way through the pit lane to your box with where to brake, and what you changed in the car since the setup.",
         L"Choose and order what it shows.",L"The official iRacing track map with every car: layout, markers, pit exit and what is drawn.",
         L"Bars at the screen edges that light up while a car is beside you.",
-        L"The cars around yours from above, with the lanes beside you estimated from the spotter."};
+        L"The cars around yours from above, with the lanes beside you estimated from the spotter.",
+        L"The cars of faster classes close behind you, each with its gap."};
     if(page==Page::Overlay) {
         SetWindowTextW(ui.title,Name(*ui.overlay).c_str()); SetWindowTextW(ui.hint,hints[ui.overlay->kind]);
     } else if(page==Page::RaceControl) {

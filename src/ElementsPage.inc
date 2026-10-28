@@ -6,7 +6,7 @@ class ElementsPage : public PageWindow {
 public:
     explicit ElementsPage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
-    enum class Key { None, Layout, Rounded, Module, Band, Info, SetupChanges, PitStrip, Countdown, SideCar, SideApart, RadarBackground, RadarRange, RadarShows, RadarDistances };
+    enum class Key { None, Layout, Rounded, Module, Band, Info, SetupChanges, PitStrip, Countdown, SideCar, SideApart, RadarBackground, RadarRange, RadarShows, RadarDistances, TrafficBackground, TrafficCars, TrafficGapKey, TrafficFaster };
     static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210, HumidityEditId=212, HistoryPartEditId=213, CautionEditId=220, SlotEditId=230, HeaderRow=1000, FooterRow=1001;
 
     void OnCreate() override {
@@ -45,6 +45,28 @@ private:
                 push(std::move(row),Key::Band,id);
             }
         };
+        if(o_.kind==TrafficKind) {
+            const auto& t=o_.traffic;
+            header(L"Layout");
+            RowList::Row background; background.title=L"Background and frame"; background.toggle=t.background?1:0;
+            background.detail=L"Off: transparent, only the boxes over the game.";
+            push(std::move(background),Key::TrafficBackground);
+            RowList::Row count; count.title=t.cars==1?L"1 car":std::to_wstring(t.cars)+L" cars"; count.button=L"Choose...";
+            count.detail=L"The closest ones, one box each.";
+            push(std::move(count),Key::TrafficCars);
+            auto rounded=RoundedRow(o_); rounded.muted=!t.background; rounded.toggleEnabled=t.background; push(std::move(rounded),Key::Rounded);
+            header(L"When it shows");
+            RowList::Row gap; gap.title=L"Within "+std::to_wstring(t.gap)+L" s behind"; gap.button=L"Choose...";
+            gap.detail=L"While you drive and a car is this close behind you, by its gap as in the Relative.";
+            push(std::move(gap),Key::TrafficGapKey);
+            RowList::Row faster; faster.title=L"Faster classes only"; faster.toggle=t.fasterOnly?1:0;
+            faster.detail=L"Their estimated lap at least 2 % quicker than your class's. Off: every car behind you.";
+            push(std::move(faster),Key::TrafficFaster);
+            header(L"Colors");
+            info(L"Box",L"The car's class colour; it pulses within 1.5 s",L"Class");
+            info(L"Bar",L"Fills as the car closes in, from green to red",L"Green to red");
+            list_.SetRows(std::move(rows)); return;
+        }
         if(o_.kind==RadarKind) {
             const auto& r=o_.radar;
             header(L"Layout");
@@ -214,6 +236,17 @@ private:
         case Key::SetupChanges: if(code==RowList::kToggled) { o_.setupChanges=on; Fit(o_); Changed(); } break;
         case Key::PitStrip: if(code==RowList::kToggled) { o_.pitStrip=on; Fit(o_); Changed(); } break;
         case Key::SideCar: if(code==RowList::kToggled) { o_.sideCar=on; Changed(); } break;
+        case Key::TrafficBackground: if(code==RowList::kToggled) { o_.traffic.background=on; Fit(o_); Changed(); } break;
+        case Key::TrafficFaster: if(code==RowList::kToggled) { o_.traffic.fasterOnly=on; Changed(); } break;
+        case Key::TrafficCars:
+            if(pressed) { const int choice=ChooseFromMenu({L"1 car",L"2 cars",L"3 cars"},o_.traffic.cars-1); if(choice>=0) { o_.traffic.cars=choice+1; Fit(o_); Changed(); } }
+            break;
+        case Key::TrafficGapKey:
+            if(pressed) {
+                const int current=static_cast<int>(std::find(std::begin(TrafficGaps),std::end(TrafficGaps),o_.traffic.gap)-std::begin(TrafficGaps));
+                const int choice=ChooseFromMenu({L"1 s",L"2 s",L"3 s",L"5 s"},current); if(choice>=0) { o_.traffic.gap=TrafficGaps[choice]; Changed(); }
+            }
+            break;
         case Key::RadarBackground: if(code==RowList::kToggled) { o_.radar.background=on; Fit(o_); Changed(); } break;
         case Key::RadarDistances: if(code==RowList::kToggled) { o_.radar.distances=on; Changed(); } break;
         case Key::RadarRange:

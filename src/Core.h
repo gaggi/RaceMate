@@ -154,6 +154,12 @@ SideTraffic SideTrafficOf(const Session& s, const Frame& f);
 // - Two cars in your lane overlapping each other (3.5 m; once so, until 4.6 m) drive side by side: offset half a lane
 //   either way, each keeping the side it was last on, else the one ahead goes left; a third goes beside its neighbour.
 // Only while you drive.
+// The cars behind yours within threshold seconds while you drive, closest first, with their gap as the Relative
+// shows it: how far behind in time by iRacing's estimate of each class's time around the lap (CarIdxEstTime), in the
+// car's own class time. fasterOnly keeps cars of a faster class: its estimated lap (CarClassEstLapTime) at least 2 %
+// quicker than yours. Cars in the pits are left out, as are all while you are in them.
+struct CarBehind { int index = -1; double gap = 0; };
+std::vector<CarBehind> CarsBehind(const Session& s, const Frame& f, double threshold, bool fasterOnly);
 struct RadarCar { int index = -1; double metres = 0; int lane = 0; double offset = 0; };
 class RadarTracker {
 public:

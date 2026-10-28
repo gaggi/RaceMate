@@ -710,6 +710,24 @@ void SideTrafficTests() {
  f.replay=false; f.onTrack=false; t=SideTrafficOf(s,f); Require(!t.right,"only while you drive");
  f.onTrack=true; f.spotter=-1; t=SideTrafficOf(s,f); Require(!t.left && !t.right,"no spotter, nothing");
 }
+void TrafficTests() {
+ // You in a GT4 (class lap 100 s) on a 5 km track; a GTP (90 s) 100 m behind is 1.8 s behind in its own time.
+ auto s=DemoSession(); s.trackMeters=5000; auto f=DemoFrame(0); f.player=3; f.pit=false;
+ for(auto& c:f.cars) { c.pct=-1; c.surface=-1; c.pit=false; c.estTime=-1; }
+ for(auto& d:s.drivers) { d.classId=2; d.className="GT4"; d.estimatedLapTime=100; }
+ auto gtp=[&](int i) { auto& d=*std::find_if(s.drivers.begin(),s.drivers.end(),[&](const Driver& x){ return x.index==i; }); d.classId=1; d.className="GTP"; d.estimatedLapTime=90; };
+ auto at=[&](int i,double metres) { f.cars[i].pct=std::fmod(.5+metres/5000+1,1.); f.cars[i].surface=3; };
+ at(3,0); gtp(5); at(5,-100); gtp(6); at(6,-300); gtp(7); at(7,50); at(8,-20);
+ auto t=CarsBehind(s,f,3,true);
+ Require(t.size()==1 && t[0].index==5,"faster classes behind within the gap: not ahead, not your class, not further");
+ Near(t[0].gap,1.8,"the gap in its own time");
+ t=CarsBehind(s,f,6,true); Require(t.size()==2 && t[1].index==6,"closest first");
+ t=CarsBehind(s,f,6,false); Require(t.size()==3 && t[0].index==8,"all classes when not only faster ones: your class's car 0.4 s behind first");
+ f.cars[6].pit=true; Require(CarsBehind(s,f,6,true).size()==1,"cars in the pits apart");
+ at(3,4999.9); at(5,-100+4999.9); Require(CarsBehind(s,f,3,true).size()==1,"across the start/finish line");
+ f.cars[3].pit=true; Require(CarsBehind(s,f,3,true).empty(),"none while you are in the pits");
+ f.cars[3].pit=false; f.replay=true; Require(CarsBehind(s,f,3,true).empty(),"only while you drive");
+}
 void RadarTests() {
  auto s=DemoSession(); s.trackMeters=4000; auto f=DemoFrame(0); f.player=3; f.time=100;
  for(auto& c:f.cars) { c.pct=-1; c.surface=-1; c.pit=false; }
@@ -851,16 +869,17 @@ int main(int argc,char** argv) {
   std::cout<<"Wrote irsdk-dump.txt ("<<h->numVars<<" variables).\n"; return 0;
  }
  if(argc==4 && std::string(argv[1])=="--radar-log") {
-  // Every new frame of a live session (or a TapeMate playback) for the given seconds: the spotter, your car and every
-  // car within 20 m with the radar's lane, as CSV for checking the lane estimate against a real race.
+  // Every new frame of a live session (or a TapeMate playback) for the given seconds: the spotter, your car, every
+  // car within 20 m with the radar's lane and the faster cars within 3 s behind, as CSV for checking against a real race.
   Telemetry reader; Frame frame; Session session; RadarTracker radar; std::ofstream out(argv[3]);
-  out<<"time,spotter,onTrack,pit,speed,cars (index:metres:lane:offset:surface)\n";
+  out<<"time,spotter,onTrack,pit,speed,cars (index:metres:lane:offset:surface),faster cars within 3 s behind (index:gap)\n";
   const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(std::stoi(argv[2])); double last=-1; int frames=0;
   while(std::chrono::steady_clock::now()<end) {
    if(!reader.Read(frame,session) || frame.time==last) { Sleep(1); continue; }
    last=frame.time; ++frames; radar.Update(session,frame,20);
    out<<frame.time<<','<<frame.spotter<<','<<frame.onTrack<<','<<(frame.player>=0?frame.cars[frame.player].pit:false)<<','<<(frame.player>=0?frame.cars[frame.player].speed:-1)<<',';
    for(const auto& c:radar.Cars()) out<<c.index<<':'<<c.metres<<':'<<c.lane<<':'<<c.offset<<':'<<frame.cars[c.index].surface<<' ';
+   out<<','; for(const auto& c:CarsBehind(session,frame,3,true)) out<<c.index<<':'<<c.gap<<' ';
    out<<'\n';
   }
   std::cout<<frames<<" frames\n"; return 0;
@@ -886,6 +905,6 @@ int main(int argc,char** argv) {
    <<"; SessionNum: "<<frame.session<<"; ReplaySessionNum: "<<frame.replaySession<<'\n';
   return 0;
  }
- try { ReviewRegressionTests(); WindTests(); SideTrafficTests(); RadarTests(); WeatherHistoryTests(); ParserTests(); ResultsTests(); RowTests(); RelativeCenterTests(); StandingsSelectionTests(); EarlyAndLiveGapTests(); UntimedPracticeTests(); MissingDriverDataTests(); LivePositionAndPitVisibilityTests(); FuelMetricsTests(); FirstRaceLapFuelTests(); FuelTests(); PredictionTests(); RaceControlTests(); PitStopTests(); TelemetryTests(); std::cout<<"PASS: review regressions, parser, historical results, relative, standings, fuel metrics, finish projection, leader changes, pit learning, confidence, replay and shared memory\n"; }
+ try { ReviewRegressionTests(); WindTests(); SideTrafficTests(); RadarTests(); TrafficTests(); WeatherHistoryTests(); ParserTests(); ResultsTests(); RowTests(); RelativeCenterTests(); StandingsSelectionTests(); EarlyAndLiveGapTests(); UntimedPracticeTests(); MissingDriverDataTests(); LivePositionAndPitVisibilityTests(); FuelMetricsTests(); FirstRaceLapFuelTests(); FuelTests(); PredictionTests(); RaceControlTests(); PitStopTests(); TelemetryTests(); std::cout<<"PASS: review regressions, parser, historical results, relative, standings, fuel metrics, finish projection, leader changes, pit learning, confidence, replay and shared memory\n"; }
  catch(const std::exception& e) { std::cerr<<"FAIL: "<<e.what()<<'\n'; return 1; }
 }

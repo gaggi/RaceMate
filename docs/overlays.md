@@ -14,6 +14,7 @@
 | [Track Map](track-map.md) | Car locations on a Map, Circle or Line | 20 Hz |
 | [Side Warning](#side-warning) | Bars at the screen edges while a car is beside you | 20 Hz |
 | [Radar](#radar) | The cars around yours from above, lanes beside you estimated | 20 Hz |
+| [Traffic](#traffic) | Faster cars close behind you, with their gap | 10 Hz |
 
 Also on this page: [Position in the Relative](#position-in-the-relative) · [Table columns](#table-columns) · [Status badges](#status-badges) · [Header and footer metrics](#header-and-footer-metrics)
 
@@ -219,6 +220,21 @@ It shows only while you drive your own car, not while spotting or in replays; bo
 - Two cars in your lane, ahead or behind, that overlap each other must be side by side: they are drawn half a lane to either side, and stay so until they no longer overlap at all. Each keeps the side it was last on, beside you or beside another car; otherwise the one ahead goes left. A third car in such a row goes beside its neighbour.
 
 A car that changes lane glides across in about a quarter of a second. Cars in the pit lane appear only while you are in it too. Like the Side Warning, the Radar has no header or footer and only one instance.
+
+## Traffic
+
+After irdashies' *faster cars from behind*: the cars of faster classes close behind you, one box each, closest first. A box shows the car's number and driver in its class colour and its gap, such as **-1.4**. Under it a bar fills and turns from green to red as the car closes in; within 1.5 s the box pulses. Traffic is off by default; switch it on under **Overlays**.
+
+| Setting | Choices |
+| --- | --- |
+| Background and frame | Off (default): transparent, only the boxes over the game. On: a panel like the other overlays |
+| Cars | 1 (default), 2 or 3 boxes, the closest ones |
+| Within … s behind | 1, 2, 3 (default) or 5 s: it shows while a car is that close behind you |
+| Faster classes only | On (default): only classes whose estimated lap (`CarClassEstLapTime`) is at least 2 % quicker than yours. Off: every car behind you |
+
+The gap is the same as in the Relative: how far behind the car is in time, by iRacing's estimate of each class's time around the lap (`CarIdxEstTime`), counted in that car's own lap time. Cars in the pits are left out, and nothing shows while you are in them.
+
+It shows while you drive your own car and a car is within the gap, and half a second after, so it doesn't flicker at the edge. While overlays are moved or previewed it always shows. Like the Side Warning and the Radar, Traffic has no header or footer and only one instance.
 
 ## Weather
 

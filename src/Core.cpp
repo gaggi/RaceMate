@@ -843,6 +843,26 @@ SideTraffic SideTrafficOf(const Session& s,const Frame& f) {
     (t.left?t.leftAt:t.rightAt)=nearest;
     return t;
 }
+std::vector<CarBehind> CarsBehind(const Session& s,const Frame& f,double threshold,bool fasterOnly) {
+    std::vector<CarBehind> cars;
+    if(!f.connected || !f.onTrack || f.replay || f.player<0 || f.player>=MaxCars) return cars;
+    const auto& own=f.cars[f.player];
+    const auto me=std::find_if(s.drivers.begin(),s.drivers.end(),[&](const Driver& d){ return d.index==f.player; });
+    const double ownLap=me==s.drivers.end()?-1:(ValidTime(me->estimatedLapTime)?me->estimatedLapTime:DriverLapTime(s,f,f.player));
+    if(own.pct<0 || own.pit || !ValidTime(ownLap)) return cars;
+    for(const auto& d:s.drivers) {
+        if(d.index<0 || d.index>=MaxCars || d.index==f.player || d.paceCar || d.spectator) continue;
+        const double lap=ValidTime(d.estimatedLapTime)?d.estimatedLapTime:ownLap;
+        if(fasterOnly && (d.classId==me->classId || !ValidTime(d.estimatedLapTime) || !ValidTime(me->estimatedLapTime) || lap>me->estimatedLapTime*.98)) continue;
+        const auto& c=f.cars[d.index];
+        if(c.pct<0 || c.surface<0 || c.surface==1 || c.pit) continue;
+        // Behind as a share of the lap in time, then in the seconds that car needs for it.
+        double behind=Phase(*me,own,ownLap)-Phase(d,c,lap); behind-=std::floor(behind); if(behind>.5) continue;
+        if(behind*lap<=threshold) cars.push_back({d.index,behind*lap});
+    }
+    std::sort(cars.begin(),cars.end(),[](const CarBehind& a,const CarBehind& b){ return a.gap<b.gap; });
+    return cars;
+}
 void RadarTracker::Update(const Session& s,const Frame& f,double reach) {
     cars_.clear();
     if(!f.connected || !f.onTrack || f.replay || f.player<0 || f.player>=MaxCars || !(s.trackMeters>0)) { Reset(); return; }

@@ -294,7 +294,7 @@ int RunDiagnostics() {
         app.fuelPlan=savedPlan;
         // One registry and renderer for both bands of every kind, including the Pit Assist.
         for(int kind=0;kind<OverlayCount;++kind) {
-            if(kind==SideWarningKind || kind==RadarKind) continue; // They have no bands.
+            if(kind==SideWarningKind || kind==RadarKind || kind==TrafficKind) continue; // They have no bands.
             auto& o=First(kind); const Bands bands=o.bands;
             o.bands.header=true; o.bands.footer.enabled=true;
             o.bands.headerMetrics={LeaderDistanceMetric,WhiteFlagTimeMetric,NoMetric,NoMetric};
@@ -790,7 +790,7 @@ int RunDiagnostics() {
         };
         ShowPage(Page::Overlays); aligned("Overlays");
         ShowPage(Page::Settings); aligned("Settings");
-        constexpr const char* pages[]={"Relative","Standings","Fuel Calculator","Pit Assist","Weather","Track Map","Side Warning","Radar"};
+        constexpr const char* pages[]={"Relative","Standings","Fuel Calculator","Pit Assist","Weather","Track Map","Side Warning","Radar","Traffic"};
         static_assert(std::size(pages)==OverlayCount);
         for(int kind=0;kind<OverlayCount;++kind) { OpenOverlay(First(kind)); aligned(pages[kind]); }
         ShowPage(Page::Overlays);
@@ -1417,7 +1417,7 @@ int RunDiagnostics() {
     }
     app.pitVisibility.Reset();
     app.preview=false; app.hidden=false; app.frame.pit=false; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind))&&ok;
     const auto originalSurface=app.frame.cars[app.frame.player].surface;
     app.frame.cars[app.frame.player].surface=2; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
     ok=Export(First(3).window,L"build\\qa\\pit-approach.bmp") && ok;
@@ -1480,13 +1480,13 @@ int RunDiagnostics() {
     app.frame.cars[app.frame.player].surface=originalSurface;
     app.frame.pit=true; UpdateOverlays(); ok=IsWindowVisible(First(3).window)&&ok;
     app.frame.onTrack=false; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind))&&ok;
     app.frame.camera=4; app.frame.replay=true; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind))&&ok;
     ok=ReferenceCar(app.frame)==4 && !Rows(First(0)).empty() && ok;
     ok=Export(First(0).window,L"build\\qa\\relative-replay.bmp")&&ok;
     app.frame.replay=false; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind))&&ok;
     app.frame.connected=false; UpdateOverlays();
     for(auto& o:app.overlays) ok=!IsWindowVisible(o.window)&&ok;
     app.preview=true; app.hidden=true; UpdateOverlays();
@@ -1574,6 +1574,36 @@ int RunDiagnostics() {
         app.frame.replay=true; UpdateOverlays(); radarOk=!IsWindowVisible(radar.window) && radarOk;
         app.frame=savedFrame; app.session=savedSession; radar.place=savedPlace; radar.radar=savedRadar; app.hidden=savedHidden; app.preview=true; app.radar.Reset(); Fit(radar); UpdateOverlays();
         report<<"Radar: cars and lanes from above, distances, range, transparent, near-cars and always visibility: "<<(radarOk?"PASS":"FAIL")<<"\n"; ok=radarOk && ok;
+    }
+    {
+        // Traffic: the preview's sample, with a panel and transparent; live the faster cars within the gap behind you.
+        auto& traffic=First(TrafficKind); const auto savedPlace=traffic.place; const auto savedTraffic=traffic.traffic; const auto savedFrame=app.frame; const auto savedSession=app.session; const bool savedHidden=app.hidden;
+        app.preview=true; app.hidden=false; traffic.place.enabled=true; traffic.traffic.cars=3; Fit(traffic); UpdateOverlays();
+        auto text=[&](const std::wstring& t) { return std::any_of(traffic.scene.begin(),traffic.scene.end(),[&](const DrawCommand& c){ return c.type==DrawCommand::Text && c.text==t; }); };
+        auto boxes=[&] { return std::count_if(traffic.scene.begin(),traffic.scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::RoundFill; }); };
+        bool trafficOk=IsWindowVisible(traffic.window) && boxes()==3 && text(L"#21  Luca Weber") && text(L"-0.8") && text(L"-2.6") && traffic.layeredAlpha;
+        trafficOk=Export(traffic.window,L"build\\qa\\traffic.bmp",true) && trafficOk;
+        traffic.traffic.background=true; Fit(traffic); UpdateOverlays(); trafficOk=!traffic.layeredAlpha && Export(traffic.window,L"build\\qa\\traffic-panel.bmp") && trafficOk;
+        traffic.traffic.cars=1; Fit(traffic); UpdateOverlays(); trafficOk=boxes()==1 && !text(L"-1.9") && trafficOk;
+        // Live: you in a class lapping in 53 s; car 9, a GTP (45 s), 30 m behind on a 2470 m track: 0.55 s in its time.
+        app.preview=false; app.frame.connected=app.frame.onTrack=true; app.frame.replay=false; app.frame.pit=false;
+        for(auto& d:app.session.drivers) d.estimatedLapTime=53;
+        auto& gtp=*std::find_if(app.session.drivers.begin(),app.session.drivers.end(),[](const Driver& d){ return d.index==9; });
+        gtp.classId=9; gtp.className="GTP"; gtp.classColor=0xffda59; gtp.estimatedLapTime=45;
+        auto& car=app.frame.cars[9]; const auto& own=app.frame.cars[app.frame.player];
+        // Placed by lap distance alone, without iRacing's time estimates.
+        car.pit=false; car.surface=3; car.estTime=app.frame.cars[app.frame.player].estTime=-1;
+        car.pct=std::fmod(own.pct-30/app.session.trackMeters+1,1.);
+        app.frame.cars[app.frame.player].pit=false; app.now+=5000; UpdateOverlays();
+        trafficOk=IsWindowVisible(traffic.window) && boxes()==1 && text(L"#"+Wide(gtp.number)+L"  "+Wide(gtp.name)) && text(L"-0.5") && trafficOk;
+        // 300 m behind, 5.5 s: gone half a second later. 200 m, 3.6 s: back within a gap of 5 s.
+        car.pct=std::fmod(own.pct-300/app.session.trackMeters+1,1.); app.now+=200; UpdateOverlays(); trafficOk=IsWindowVisible(traffic.window) && trafficOk;
+        app.now+=500; UpdateOverlays(); trafficOk=!IsWindowVisible(traffic.window) && trafficOk;
+        traffic.traffic.gap=5; Save(); Load(); trafficOk=traffic.traffic.gap==5 && traffic.traffic.background && trafficOk;
+        car.pct=std::fmod(own.pct-200/app.session.trackMeters+1,1.); app.now+=100; UpdateOverlays(); trafficOk=IsWindowVisible(traffic.window) && text(L"-3.6") && trafficOk;
+        app.frame.replay=true; app.now+=1000; UpdateOverlays(); trafficOk=!IsWindowVisible(traffic.window) && trafficOk;
+        app.frame=savedFrame; app.session=savedSession; traffic.place=savedPlace; traffic.traffic=savedTraffic; app.hidden=savedHidden; app.preview=true; Fit(traffic); UpdateOverlays();
+        report<<"Traffic: faster cars behind with their gap, boxes and bar, transparent, gap and count settings, visibility: "<<(trafficOk?"PASS":"FAIL")<<"\n"; ok=trafficOk && ok;
     }
     app.preview=true; PreviewData(0);
     bool orderOk=true;
