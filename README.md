@@ -6,7 +6,7 @@ RaceMate puts nearby traffic, standings, fuel planning, weather, pit-limiter war
 
 [**Download releases**](https://github.com/gaggi/RaceMate/releases) · [**Documentation**](docs/README.md) · [**First setup**](docs/getting-started.md) · [**Build from source**](docs/development.md)
 
-> These guides describe **version 0.2.2** and the development state after it. Side Warning, Radar, Traffic, dragging rows by their six dots, copying columns to another table, the qualifying maximum and the fuel to add per target came after 0.2.2: they are in the development build from this repository and not yet in a release. Screenshots show the real application with diagnostic sample data and selected optional features enabled.
+> These guides describe **version 0.2.2** and the development state after it. Side Warning, Radar, Traffic, dragging rows by their six dots, copying columns to another table, the qualifying maximum, the fuel to add per target and **One lap shorter** came after 0.2.2: they are in the development build from this repository and not yet in a release. Screenshots show the real application with diagnostic sample data and selected optional features enabled.
 >
 > Reading this README from a release ZIP? Open the [full documentation on GitHub](https://github.com/gaggi/RaceMate/tree/main/docs).
 

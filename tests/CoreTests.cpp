@@ -11,6 +11,9 @@ void PredictionTests();
 void RaceControlTests();
 void PitStopTests();
 void ReviewRegressionTests();
+void SectorTimingTests();
+int SectorTimingBenchmark();
+int SectorTimingLog(int seconds,const char* path);
 void Require(bool c,const char* m) { if(!c) throw std::runtime_error(m); }
 void Near(double a,double b,const char* m) { Require(std::abs(a-b)<0.001,m); }
 const char* Yaml=R"(WeekendInfo:
@@ -809,6 +812,9 @@ void WeatherHistoryTests() {
  f.replayTime=-1; f.replaySession=-1; f.replay=false; f.onTrack=true; f.session=f.session+1; f.time=10; spectating.Update(s,f); Require(spectating.Count()==1,"a new session restarts the history");
 }
 int main(int argc,char** argv) {
+ if(argc==2 && std::string(argv[1])=="--benchmark-sectors") return SectorTimingBenchmark();
+ if(argc==4 && std::string(argv[1])=="--sector-log") return SectorTimingLog(std::stoi(argv[2]),argv[3]);
+ try { SectorTimingTests(); } catch(const std::exception& e) { std::cerr<<"FAIL sectors: "<<e.what()<<'\n'; return 1; }
  if(argc==2 && std::string(argv[1])=="--benchmark-prediction") {
   auto session=DemoSession(); auto frame=DemoFrame(0); session.drivers.clear(); session.number=0;
   frame.pit=false; frame.state=4; frame.timeLeft=7200;

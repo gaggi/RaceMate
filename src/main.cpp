@@ -1,5 +1,6 @@
 #include "Telemetry.h"
 #include "RaceControl.h"
+#include "SectorTiming.h"
 #include "TrackMapLoader.h"
 #include <windowsx.h>
 #include <commctrl.h>
@@ -48,26 +49,26 @@ constexpr int DefaultRates[]={10,1,1,10,1,20,20,20,10};
 enum Column {
     PositionColumn, NumberColumn, DriverColumn, GapColumn, IntervalColumn, BestColumn, LastColumn,
     LicenseColumn, IRatingColumn, TiresColumn, PitLapColumn, PitTimeColumn, PitStopColumn,
-    LapsColumn, GainedColumn, StatusColumn, BrandColumn, RatingChangeColumn, StintColumn, StopsColumn, FuelColumn, CombinedRatingColumn
+    LapsColumn, GainedColumn, StatusColumn, BrandColumn, RatingChangeColumn, StintColumn, StopsColumn, FuelColumn, CombinedRatingColumn, SectorsColumn
 };
-constexpr int ColumnCount=CombinedRatingColumn+1;
+constexpr int ColumnCount=SectorsColumn+1;
 // License..PitStop are the optional driver columns, also used by Race Control; Brand..Stint came later with their own keys.
-constexpr int DriverColumnCount=PitStopColumn-LicenseColumn+1, ExtraColumnCount=CombinedRatingColumn-BrandColumn+1;
+constexpr int DriverColumnCount=PitStopColumn-LicenseColumn+1, ExtraColumnCount=SectorsColumn-BrandColumn+1;
 // Widths include the 8 px gap to the next column; Status is the badge after the driver's name, not a column.
 struct ColumnInfo { const wchar_t* title; int width, compactWidth; UINT align=DT_RIGHT; };
 constexpr ColumnInfo Columns[]={
     {L"P",36,32},{L"#",50,50,DT_CENTER},{L"DRIVER",180,170,DT_LEFT},{L"GAP",70,60},{L"INT",64,56},{L"BEST",80,72},{L"LAST",80,72},
     {L"LICENSE",70,58,DT_CENTER},{L"iRATING",66,48},{L"TIRES",54,30,DT_CENTER},{L"PIT LAP",64,48},{L"PIT TIME",74,66},{L"PIT STOP",80,72},
-    {L"LAPS",50,42},{L"GAIN",50,42},{L"STATUS",0,0,DT_LEFT},{L"CAR",124,116,DT_LEFT},{L"iR ±",54,46},{L"STINT",58,46,DT_CENTER},{L"STOPS",56,32,DT_CENTER},{L"FUEL",62,58,DT_CENTER},{L"RATING",70,58,DT_CENTER}};
+    {L"LAPS",50,42},{L"GAIN",50,42},{L"STATUS",0,0,DT_LEFT},{L"CAR",124,116,DT_LEFT},{L"iR ±",54,46},{L"STINT",58,46,DT_CENTER},{L"STOPS",56,32,DT_CENTER},{L"FUEL",62,58,DT_CENTER},{L"RATING",70,58,DT_CENTER},{L"SECTORS ~",240,240}};
 static_assert(std::size(Columns)==ColumnCount);
 const wchar_t* DriverColumnKeys[]={L"ShowLicense",L"ShowIRating",L"ShowTires",L"ShowLastPitLap",L"ShowPitTime",L"ShowPitStopTime"};
-const wchar_t* ExtraColumnKeys[]={L"ShowCar",L"ShowIRatingChange",L"ShowStint",L"ShowStops",L"ShowFuelFinish",L"ShowCombinedRating"};
+const wchar_t* ExtraColumnKeys[]={L"ShowCar",L"ShowIRatingChange",L"ShowStint",L"ShowStops",L"ShowFuelFinish",L"ShowCombinedRating",L"ShowSectors"};
 // Saved orders keep their place; columns a file does not list yet go before their default successor.
 const std::vector<int> DefaultColumns[]={
     {PositionColumn,NumberColumn,DriverColumn,StatusColumn,BrandColumn,LicenseColumn,IRatingColumn,CombinedRatingColumn,RatingChangeColumn,StintColumn,StopsColumn,BestColumn,LastColumn,GapColumn,
-     TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn,FuelColumn},
+     SectorsColumn,TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn,FuelColumn},
     {PositionColumn,GainedColumn,NumberColumn,DriverColumn,StatusColumn,BrandColumn,GapColumn,IntervalColumn,BestColumn,LastColumn,StintColumn,StopsColumn,LapsColumn,
-     LicenseColumn,IRatingColumn,CombinedRatingColumn,RatingChangeColumn,TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn,FuelColumn}};
+     SectorsColumn,LicenseColumn,IRatingColumn,CombinedRatingColumn,RatingChangeColumn,TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn,FuelColumn}};
 // Header and footer metrics. The values are stored in the Header*/Footer* keys.
 enum Metric {
     NoMetric, TrackMetric, IncidentsMetric, TrackTempMetric, AirTempMetric, TemperaturesMetric, TimeRemainingMetric, TimeElapsedMetric,
@@ -183,6 +184,7 @@ struct TableSettings {
     // classPositions: the Position column counts within each car's class instead of overall (the Standings follow their class view).
     StandingsOptions standings; bool interval=false, laps=false, gained=false, progress=true, pitExit=false; // Standings.
     int pitExitAhead=2, pitExitBehind=2; // Cars shown around the pit exit row.
+    int sectorParts=1; // Sector times: one column per SDK sector, or 3 mini-sectors each.
     // The class header in separate classes: cars, SOF, average iRating and the class's best lap.
     std::array<bool,4> classHeader{true,true,true,false};
 };
@@ -207,6 +209,8 @@ struct TrackMapSettings {
     // iRacing's optional layers: the drawing around the track, and the track's other configurations.
     bool surroundings=false, allConfigs=false;
     bool northUp=false; // Turned so north points up, where iRacing turned the drawing to fit.
+    bool sectors=false; // Optional observed sector/minisector comparison.
+    int sectorParts=1; // 1: SDK sectors, 3: three mini-sectors each.
 };
 // The Radar: what it shows and when. range: metres ahead and behind, 10 to 40.
 struct RadarSettings { bool background=true, always=false, distances=true; int range=20; };
@@ -256,6 +260,13 @@ struct Overlay {
     struct Logo { int index, size; HBITMAP bitmap; };
     std::vector<Logo> logos; // Car brand logos at this overlay's size, premultiplied for AlphaBlend.
     HBITMAP mapBitmap=nullptr; int mapWidth=0,mapHeight=0,mapStyle=-1; unsigned mapRevision=~0u;
+    HBITMAP sectorBitmap=nullptr; std::uint32_t* sectorPixels=nullptr;
+    uint64_t sectorLayout=~uint64_t{0};
+    float sectorScene=-1;
+    std::vector<std::vector<Gdiplus::PointF>> sectorPaths;
+    std::vector<COLORREF> sectorColors;
+    struct SectorPixel { uint32_t offset; uint16_t segment; unsigned char alpha; };
+    std::vector<SectorPixel> sectorMask;
     // A marker with the number on it, if any: one blend per car. used: the last pass that drew it.
     struct MapMarker { int width,height,stroke; COLORREF color; bool hollow; std::wstring text; COLORREF textColor; HBITMAP bitmap; const std::uint32_t* bits; unsigned used; };
     std::vector<MapMarker> mapMarkers; unsigned mapPass=0;
@@ -274,6 +285,8 @@ struct Overlay {
         for(const auto& logo:logos) DeleteObject(logo.bitmap);
         logos.clear();
         if(mapBitmap) DeleteObject(mapBitmap);
+        if(sectorBitmap) DeleteObject(sectorBitmap);
+        sectorBitmap=nullptr; sectorPixels=nullptr; sectorPaths.clear(); sectorColors.clear(); sectorMask.clear(); sectorLayout=~uint64_t{0};
         mapBitmap=nullptr; mapWidth=mapHeight=0; mapStyle=-1; mapRevision=~0u;
         for(const auto& marker:mapMarkers) DeleteObject(marker.bitmap);
         mapMarkers.clear();
@@ -300,6 +313,7 @@ struct App {
     Frame frame; Session session; TelemetryPump pump; FuelCalculator fuel;
     EventRecorder events; PitHistory pitHistory; PitLimiterVisibility pitVisibility; SetupDials setupDials;
     RacePredictor predictor; FuelPlan fuelPlan;
+    SectorTiming sectors;
     std::wstring config;
     unsigned classBestVersion=~0u; std::vector<std::pair<int,double>> classBest;
     WeatherHistory weatherHistory;
@@ -416,6 +430,8 @@ bool ColumnVisible(const Overlay& o,int id) {
 // Without column headings, columns shrink to fit their values.
 int ColumnWidth(const Overlay& o,int id) {
     const auto& t=o.table; const bool compact=!t.columnHeaders;
+    // One sub-column per sector or mini-sector, each with its own heading.
+    if(id==SectorsColumn) return std::clamp(app.preview?3:static_cast<int>(app.session.sectors.size()),1,SectorTiming::MaxSectors)*t.sectorParts*(t.sectorParts==3?54:62);
     if(id==BrandColumn && !t.brandName) return compact?30:44;
     if(id==BrandColumn && !t.brandLogo) return compact?92:100;
     if(compact && id==DriverColumn && t.nameFormat!=0) return 150;
@@ -598,6 +614,7 @@ void ReadTable(const wchar_t* section,int kind,TableSettings& t) {
     t.classColors=ReadBool(section,L"ShowClassColor",true);
     t.brandLogo=ReadBool(section,L"ShowCarLogo",true); t.brandName=ReadBool(section,L"ShowCarName",true);
     t.gapSigns=ReadBool(section,L"ShowGapSigns",false);
+    t.sectorParts=ReadInt(section,L"SectorParts",1)==3?3:1;
     t.driverFlags={ReadBool(section,L"ShowBlackFlag",true),ReadBool(section,L"ShowSlowdown",true),ReadBool(section,L"ShowRequiredRepairs",true)};
     t.showDriver=ReadBool(section,L"ShowDriver",true);
     t.showStatus=ReadBool(section,L"ShowStatus",true);
@@ -671,6 +688,9 @@ void ReadInstance(Overlay& o) {
         o.map.markerText=std::clamp(ReadInt(section.c_str(),L"MarkerText",0),0,2); o.map.whiteTrack=ReadBool(section.c_str(),L"WhiteTrack",true);
         o.map.surroundings=ReadBool(section.c_str(),L"ShowMapBackground",false); o.map.allConfigs=ReadBool(section.c_str(),L"ShowAllConfigs",false);
         o.map.northUp=ReadBool(section.c_str(),L"NorthUp",false);
+        o.map.sectors=ReadBool(section.c_str(),L"ShowSectors",false);
+        // Older versions kept one mini-sector choice for every map in General.
+        o.map.sectorParts=ReadInt(section.c_str(),L"SectorParts",ReadInt(L"General",L"SectorParts",1))==3?3:1;
         o.map.pit=ReadBool(section.c_str(),L"ShowPitCars",true); o.map.details=ReadBool(section.c_str(),L"ShowMapDetails",false);
         o.map.background=ReadBool(section.c_str(),L"ShowBackground",true); o.map.pitLane=ReadBool(section.c_str(),L"ShowPitLane",true);
         o.map.startFinish=ReadBool(section.c_str(),L"ShowStartFinish",true);
@@ -760,7 +780,7 @@ void Save() {
             number(section,L"ShowClassColor",t.classColors); number(section,L"ShowCarLogo",t.brandLogo); number(section,L"ShowCarName",t.brandName);
             number(section,L"ShowBlackFlag",t.driverFlags[0]); number(section,L"ShowSlowdown",t.driverFlags[1]); number(section,L"ShowRequiredRepairs",t.driverFlags[2]);
             number(section,L"ShowDriver",t.showDriver); number(section,L"ShowStatus",t.showStatus); number(section,L"DriverNameFormat",t.nameFormat);
-            number(section,L"ShowColumnHeaders",t.columnHeaders); number(section,L"ShowGapSigns",t.gapSigns);
+            number(section,L"ShowColumnHeaders",t.columnHeaders); number(section,L"ShowGapSigns",t.gapSigns); number(section,L"SectorParts",t.sectorParts);
             number(section,L"ShowInterval",t.interval);
             if(o.kind==RelativeKind) {
                 number(section,L"Rows",t.rows); number(section,L"GapDecimals",t.gapDecimals); number(section,L"HideDriversInPit",t.hidePit);
@@ -794,6 +814,7 @@ void Save() {
         if(o.kind==TrackMapKind) {
             number(section,L"ShowCarNumbers",o.map.numbers); number(section,L"OwnClass",o.map.ownClass); number(section,L"MarkerText",o.map.markerText); number(section,L"WhiteTrack",o.map.whiteTrack);
             number(section,L"ShowMapBackground",o.map.surroundings); number(section,L"ShowAllConfigs",o.map.allConfigs); number(section,L"NorthUp",o.map.northUp);
+            number(section,L"ShowSectors",o.map.sectors); number(section,L"SectorParts",o.map.sectorParts);
             number(section,L"ShowPitCars",o.map.pit); number(section,L"ShowMapDetails",o.map.details);
             number(section,L"ShowBackground",o.map.background); number(section,L"ShowPitLane",o.map.pitLane); number(section,L"ShowStartFinish",o.map.startFinish);
             number(section,L"ShowCornerNumbers",o.map.cornerNumbers); number(section,L"ShowCornerNames",o.map.cornerNames);
@@ -1136,7 +1157,7 @@ PitStripModel PitStrip(const Overlay& o) {
     return m;
 }
 int HeightWithTitle(const Overlay& o) {
-    if(o.kind==TrackMapKind) return 32+TrackMapBody(o.map,MapOnly(o),o.map.details)+FooterHeight(o);
+    if(o.kind==TrackMapKind) return 32+TrackMapBody(o.map,MapOnly(o),o.map.details || o.map.sectors)+FooterHeight(o);
     if(o.kind==SideWarningKind) return 32+SideBarHeight;
     if(o.kind==RadarKind) return 32+RadarHeight;
     if(o.kind==TrafficKind) return 32+6+o.traffic.cars*TrafficRow;
@@ -1299,7 +1320,8 @@ const CellRenderer CellRenderers[]={
     // iRating on the license color: safety class and rating in one badge, with its own short view.
     +[](const Row& r,const Overlay& o,Cell& c) {
         c.text=IRatingText(r.driver.rating,o.table.driverShortView[2]); if(c.text==L"—") { c.ink=Ink::Muted; return; }
-        c.box=Cell::Filled; c.boxColor=r.driver.license.empty()?Ink::NeutralBadge:LicenseFill(r.driver); c.ink=RGB(255,255,255); c.font=SmallBold; }
+        c.box=Cell::Filled; c.boxColor=r.driver.license.empty()?Ink::NeutralBadge:LicenseFill(r.driver); c.ink=RGB(255,255,255); c.font=SmallBold; },
+    +[](const Row&,const Overlay&,Cell&) {} // Sector cells are drawn individually in BuildScene.
 };
 static_assert(std::size(CellRenderers)==ColumnCount);
 bool Editing(const Overlay& o); // Its own page is open in the visible main window.
@@ -1319,6 +1341,7 @@ struct MarkerStats { LONGLONG lookup=0, create=0, blend=0; long long calls=0, cr
 LONGLONG DiagnosticTicks() { LARGE_INTEGER now{}; QueryPerformanceCounter(&now); return now.QuadPart; }
 #endif
 // Describes an overlay in physical pixels. Comparing it with the previous scene yields the exact changed areas.
+#include "SectorUi.inc"
 #include "TrackMap.inc"
 void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCommand>& out) {
     out.clear();
@@ -1490,7 +1513,12 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             if(done<right) out.push_back({DrawCommand::Hatch,Regular,0,{done,top-titleOffset,right,top+px(10)-titleOffset},Ink::HatchGrey,{static_cast<float>(Ink::BarBack)}});
             label(Format(progress*100,0)+L" %",{right,px(32),width-px(14),px(56)},Ink::Muted,Small,DT_RIGHT);
         }
-        if(o.table.columnHeaders) for(int id:columns) { label(id==GapColumn && o.kind==RelativeKind?L"GAP ≈":ColumnTitle(id),rect(headerX,34+ProgressHeight(o),ColumnWidth(o,id)-8,24),Ink::Label,Regular,Columns[id].align); headerX+=ColumnWidth(o,id); }
+        if(o.table.columnHeaders) for(int id:columns) {
+            if(id==SectorsColumn && SectorCount()) {
+                for(int i=0;i<SectorCount()*o.table.sectorParts;++i) label(SectorColumnTitle(i,o.table.sectorParts),rect(headerX+i*(o.table.sectorParts==3?54:62),34+ProgressHeight(o),(o.table.sectorParts==3?54:62)-8,24),Ink::Label,Regular,DT_RIGHT);
+                headerX+=ColumnWidth(o,id); continue;
+            }
+            label(id==GapColumn && o.kind==RelativeKind?L"GAP ≈":ColumnTitle(id),rect(headerX,34+ProgressHeight(o),ColumnWidth(o,id)-8,24),Ink::Label,Regular,Columns[id].align); headerX+=ColumnWidth(o,id); }
         int y=TableRowsTop(o);
         static const std::vector<Row> noRows; static const std::vector<StandingsGroup> noGroups;
         const auto& rows=o.kind==RelativeKind?RelativeRows(o):noRows;
@@ -1523,6 +1551,13 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             int x=12;
             for(int id:columns) {
                 const int w=ColumnWidth(o,id), inner=w-8; Cell cell{{},color};
+                if(id==SectorsColumn) {
+                    const int count=SectorCount();
+                    if(!count) label(L"No SDK splits",rect(x,y,inner,27),Ink::Muted,Small);
+                    const int parts=o.table.sectorParts,step=parts==3?54:62;
+                    for(int i=0;i<count*parts;++i) label(Format(SectorColumnTime(r.driver.index,i,parts),2),rect(x+i*step,y,step-8,27),SectorColumnColor(r.driver.index,i,parts),SmallBold,DT_RIGHT);
+                    x+=w; continue;
+                }
                 CellRenderers[id](r,o,cell);
                 if(cell.box==Cell::Ringed) {
                     const int left=x+(inner-19)/2;
@@ -2720,11 +2755,14 @@ constexpr UINT RefreshUiMessage=WM_APP+2;
 // Posted by the telemetry thread when iRacing has a new frame.
 constexpr UINT TelemetryMessage=WM_APP+3;
 void ProcessFrame(bool connected) {
+    if(!connected && app.sectors.Count()) app.sectors.Reset();
     if(app.frame.yawNorth!=app.lastYaw && std::isfinite(app.frame.yawNorth)) { app.lastYaw=app.frame.yawNorth; app.yawChanged=app.now; }
     if(!connected) { SaveBraking(); app.frame={}; app.events.Update(app.session,app.frame); app.session={}; app.pitLane.Reset(); app.refuel.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.weatherHistory.Reset(); }
     else {
         if(app.frame.time!=app.lastFrameTime) { app.lastFrameTime=app.frame.time; ++app.framesProcessed; }
         { ProfileScope p("analysis: pit history"); app.pitHistory.Update(app.session,app.frame); }
+        // Always, about 2 us a frame: records stay complete when a sector view is opened mid-session.
+        { ProfileScope p("analysis: sector timing"); app.sectors.Update(app.session,app.frame); }
         { ProfileScope p("analysis: pit stop estimate"); UpdatePitStop(); }
         { ProfileScope p("analysis: race control events"); app.events.Update(app.session,app.frame); }
         { ProfileScope p("analysis: fuel"); app.fuel.Update(app.session,app.frame,true); }

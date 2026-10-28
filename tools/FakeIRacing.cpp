@@ -35,6 +35,7 @@ std::string SessionYaml() {
         "WeekendInfo:\n TrackName: benchmarkring\n TrackID: 99999\n TrackLength: 5.20 km\n TrackDisplayName: Benchmark Ring\n"
         " TrackConfigName: Grand Prix\n TrackPitSpeedLimit: 80.00 kph\n SessionID: 1\n SubSessionID: 2\n"
         "SessionInfo:\n Sessions:\n - SessionNum: 0\n   SessionType: Race\n   SessionLaps: unlimited\n"
+        "SplitTimeInfo:\n Sectors:\n - SectorNum: 0\n   SectorStartPct: 0.000\n - SectorNum: 1\n   SectorStartPct: 0.333\n - SectorNum: 2\n   SectorStartPct: 0.667\n"
         "DriverInfo:\n DriverCarIdx: 7\n DriverCarFuelMaxLtr: 120.0\n DriverCarMaxFuelPct: 1.000\n Drivers:\n";
     const char* classes[] = {"GTP","LMP2","GT3"}; const char* colors[] = {"0xffda59","0x33ceff","0xff5888"};
     const char* carNames[] = {"Porsche 963","Dallara P217","BMW M4 GT3"}; const char* carPaths[] = {"porsche963gtp","dallarap217","bmwm4gt3"};

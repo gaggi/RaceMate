@@ -2,7 +2,7 @@ class TrackMapPage : public PageWindow {
 public:
     explicit TrackMapPage(Overlay& overlay) : PageWindow(ui.heading,ui.text), o_(overlay) {}
 private:
-    enum Key { Info, LayoutKey, WhiteTrackKey, SurroundingsKey, AllConfigsKey, NorthUpKey, Numbers, OwnClass, Pit, PitExitKey, Details, Rounded, Header, Footer, Retry, NorthKey, StartKey, Cache, Background, PitLane, StartFinish, CornerNumbers, CornerNames, LabelSize, LabelContrast };
+    enum Key { Info, LayoutKey, WhiteTrackKey, SurroundingsKey, AllConfigsKey, NorthUpKey, Numbers, OwnClass, Pit, PitExitKey, Details, Rounded, Header, Footer, Retry, NorthKey, StartKey, Cache, Background, PitLane, StartFinish, CornerNumbers, CornerNames, LabelSize, LabelContrast, SectorsKey, SectorPartsKey };
     static constexpr int ListId=100, SlotEditId=230, LabelSizeId=240;
     void OnCreate() override { list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont()); editors_.Attach(list_,Instance(),TextFont()); Refresh(); }
     void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
@@ -38,6 +38,12 @@ private:
         toggle(L"Projection details",L"A line under the map with track ID, cache source, refresh rate and the projection notice. With background only.",o_.map.details,Details);
         rows.back().muted=MapOnly(o_); rows.back().toggleEnabled=!MapOnly(o_);
         auto rounded=RoundedRow(o_); rounded.muted=MapOnly(o_); rounded.toggleEnabled=!MapOnly(o_); push(std::move(rounded),Rounded);
+        heading(L"Sectors and mini-sectors");
+        toggle(L"Show sectors",L"Colour the full track width for your car (or the car you watch). Dark split marks and sector labels.",o_.map.sectors,SectorsKey);
+        if(o_.map.sectors) {
+            RowList::Row row; row.title=L"Sector detail"; row.detail=o_.map.sectorParts==3?L"Three equal-distance mini-sectors per SDK sector":L"SDK sectors"; row.button=L"Choose..."; push(std::move(row),SectorPartsKey);
+            RowList::Row note; note.title=L"Sector colours"; note.detail=L"Green: personal best. Purple: fastest observed in this session within the car's class. Yellow: slower. Grey: not yet completed this lap. A new S1 clears the previous lap's later splits. Estimated timing; no all-time history."; push(std::move(note),Info);
+        }
         heading(L"Corner labels");
         toggle(L"Corner numbers",L"Numbers at their official SVG positions. Also available with a transparent background.",o_.map.cornerNumbers,CornerNumbers);
         toggle(L"Corner names",L"Official names where iRacing supplies them. Tracks with numbers only do not get invented names.",o_.map.cornerNames,CornerNames);
@@ -121,10 +127,12 @@ private:
             if(key==CornerNames) o_.map.cornerNames=on;
             if(key==LabelContrast) o_.map.labelContrast=on;
             if(key==Rounded) SetRounded(o_,on);
+            if(key==SectorsKey) { o_.map.sectors=on; Fit(o_); }
             if(key==Header || key==Footer) SetBand(o_,key==Footer,on);
             SettingChanged(); Refresh(); return true;
         }
         if(code==RowList::kButton || code==RowList::kActivated || code==RowList::kIconButton) {
+            if(key==SectorPartsKey) { const int choice=ChooseFromMenu({L"SDK sectors",L"3 mini-sectors per sector"},o_.map.sectorParts==3?1:0); if(choice>=0) { o_.map.sectorParts=choice?3:1; SettingChanged(); Refresh(); } }
             if(key==Header || key==Footer || key==LabelSize) { expanded_=expanded_==key?Info:key; Refresh(); BuildEditors(); if(key==LabelSize && expanded_==LabelSize) list_.ScrollIntoView(index); }
             if(key==Retry) { RetryTrackMap(true); UpdateOverlays(); }
             if(key==NorthKey) { ForgetNorth(); ++trackMap.revision; UpdateOverlays(); Refresh(); }

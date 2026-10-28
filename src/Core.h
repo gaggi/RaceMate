@@ -38,6 +38,7 @@ struct SessionResult {
     int completed = -1;
 };
 struct CameraGroup { int number=-1; std::string name; bool scenic=false; };
+struct SectorBoundary { int number=0; double start=0; bool operator==(const SectorBoundary&) const = default; };
 struct Session {
     std::string track, type, key, trackUsage;
     std::string trackName, trackConfig;
@@ -51,6 +52,7 @@ struct Session {
     double trackNorthOffset = std::numeric_limits<double>::quiet_NaN();
     std::vector<Driver> drivers;
     std::vector<CameraGroup> cameras;
+    std::vector<SectorBoundary> sectors; // SplitTimeInfo: SDK boundaries, not assumed thirds.
     std::array<SessionResult, MaxCars> results{};
     std::array<int,MaxCars> gridPositions{};
     // CarSetup, own car only: every value with its key as iRacing lists it; setupUpdate is its UpdateCount.

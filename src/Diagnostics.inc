@@ -43,6 +43,7 @@ bool MainDpiDiagnostics(std::ostream& report) {
     return ok;
 }
 
+#include "SectorDiagnostics.inc"
 int RunDiagnostics() {
     MONITORINFO monitor{sizeof(monitor)};
     GetMonitorInfoW(MonitorFromPoint({0,0},MONITOR_DEFAULTTOPRIMARY),&monitor);
@@ -58,6 +59,7 @@ int RunDiagnostics() {
     SetWindowPos(app.main,nullptr,-30000,-30000,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
     ShowWindow(app.main,SW_SHOWNOACTIVATE); UpdateWindow(app.main);
     bool ok=Export(app.main,L"build\\qa\\main-overlays.bmp");
+    bool sectorChecked=false;
     {
         auto& o=First(TrackMapKind); const auto settings=o.map; const auto savedSession=app.session; const auto savedFrame=app.frame;
         bool mapOk=true, exercised=false;
@@ -77,6 +79,7 @@ int RunDiagnostics() {
             trackMap.task.Cancel(); trackMap.identity=std::to_string(id)+":"+trackmap::NormalizeName(app.session.trackName); trackMap.id=id;
             trackMap.geometry=std::move(loaded.map.geometry); trackMap.ready=trackMap.cached=true; ++trackMap.revision;
             o.map={}; UpdateOverlays();
+            if(id==353) { ok=SectorDiagnostics(report) && ok; sectorChecked=true; }
             const auto bitmap=o.mapBitmap;
             mapOk=bitmap && Export(o.window,L"build\\qa\\trackmap-"+std::to_wstring(id)+L".bmp") && mapOk;
             auto markers=[&] { return std::count_if(o.scene.begin(),o.scene.end(),[](const DrawCommand& c){return c.type==DrawCommand::MapCar;}); };
@@ -151,6 +154,7 @@ int RunDiagnostics() {
         ok=mapOk && ok;
         ShowPage(Page::Overlays);
     }
+    if(!sectorChecked) ok=SectorDiagnostics(report) && ok;
     {
         // --profile: ticks are measured per part and written to profile.txt beside settings.ini.
         bool profileOk=true; auto& map=First(TrackMapKind); const auto placement=map.place; map.place.enabled=true; SettingChanged();
@@ -1198,6 +1202,8 @@ int RunDiagnostics() {
         const int savedSort=raceControl.sortColumn, savedEventSort=raceControl.eventSortColumn;
         const bool savedDescending=raceControl.sortDescending, savedEventDescending=raceControl.eventSortDescending;
         // Old configurations enable none of the newly added options.
+        const bool savedShowSectors=raceControl.showSectors;
+        WritePrivateProfileStringW(L"RaceControl",L"ShowSectors",nullptr,app.config.c_str());
         for(int i=RaceFuelField;i<RaceFieldCount;++i) WritePrivateProfileStringW(L"RaceControl",(L"Field"+std::to_wstring(i)).c_str(),nullptr,app.config.c_str());
         WritePrivateProfileStringW(L"RaceControl",L"EventField7",nullptr,app.config.c_str());
         for(const auto key:RaceInfoKeys) WritePrivateProfileStringW(L"RaceControl",key,nullptr,app.config.c_str());
@@ -1219,7 +1225,7 @@ int RunDiagnostics() {
         const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr);
         auto* settings=reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA));
         int switches=0; if(settings) for(const auto& row:settings->Rows()) if(row.toggle>=0) ++switches;
-        extrasOk=switches==RaceFieldCount+RaceEventFieldCount-FirstEventField+RaceInfoCount+1 && extrasOk;
+        extrasOk=raceControl.showSectors && switches==RaceFieldCount+RaceEventFieldCount-FirstEventField+RaceInfoCount+1 && extrasOk;
         Export(app.main,L"build\\qa\\race-control-extra-settings.bmp"); ShowPage(Page::Overlays);
         Row leader{app.session.drivers[0],app.frame.cars[0]}, saver{app.session.drivers[4],app.frame.cars[4]}, unknown{app.session.drivers[6],app.frame.cars[6]};
         extrasOk=RaceStandingCell(leader,RaceFuelField)==L"END" && RaceStandingCell(saver,RaceFuelField)==L"SAVE" && RaceStandingCell(unknown,RaceFuelField).empty() && extrasOk;
@@ -1277,6 +1283,7 @@ int RunDiagnostics() {
         SetRaceField(true,RaceEventLapField,false); extrasOk=raceControl.eventSortColumn==FirstEventField && extrasOk;
         app.session=savedSession; app.frame=savedFrame; InvalidateModel();
         raceControl.fields=savedFields; raceControl.eventFields=savedEvents; raceControl.info=savedInfo;
+        raceControl.showSectors=savedShowSectors;
         raceControl.sortColumn=savedSort; raceControl.sortDescending=savedDescending; raceControl.eventSortColumn=savedEventSort; raceControl.eventSortDescending=savedEventDescending;
         SetRaceSplit(savedSplit,false); SaveRaceFields(); LayoutRaceControl(); UpdateRaceControl(true);
         report<<"Race Control extras: defaults off, independent settings, shared fuel badges and cache, stint time, signed rating, numeric/missing sorting, event lap, optional forecasts and persistence: "<<(extrasOk?"PASS":"FAIL")<<"\n";

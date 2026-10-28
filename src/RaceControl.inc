@@ -1,7 +1,7 @@
 // Race Control window: live/replay banner, event feed and full standings. The replay bar
 // sets what a double-click on an event or a driver does: watch live, or replay 5 / 10 s back. Event recording runs independently of the window.
 // Append stored field IDs so existing configurations keep their meaning.
-enum { RaceIncidentsField=18, RaceFuelField, RaceStintLapsField, RaceStintTimeField, RaceStopsField, RaceRatingChangeField, RaceBrandField, RaceFieldCount };
+enum { RaceIncidentsField=18, RaceFuelField, RaceStintLapsField, RaceStintTimeField, RaceStopsField, RaceRatingChangeField, RaceBrandField, RaceSectorTimesField, RaceFieldCount };
 constexpr int FirstEventField=2, RaceEventLapField=7, RaceEventFieldCount=8;
 enum { RaceLeaderDistanceInfo, RaceWhiteFlagInfo, RaceInfoCount };
 const wchar_t* RaceInfoKeys[]={L"ShowLeaderDistance",L"ShowWhiteFlagTime"};
@@ -17,7 +17,8 @@ struct RaceControlWindow {
     // Event filter: 0 all, 1 incidents (offtracks, incidents, crashes), 2 pit, 3 passes; car -1 for all cars.
     int category=0, car=-1; uint64_t selectedEvent=0;
     // What a double-click does: 0 watch live, 1 replay from 5 s before, 2 from 10 s before.
-    int replayMode=1; bool onTop=false;
+    int replayMode=1; bool onTop=false,showSectors=false;
+    int sectorParts=1; // Sector columns: 1 per SDK sector, or 3 mini-sectors each.
     int splitPermille=560, splitBeforeDrag=560, splitGrab=0;
     bool splitDragging=false;
     std::vector<CameraGroup> cameras; std::wstring cameraName;
@@ -27,6 +28,10 @@ struct RaceControlWindow {
     // end), and when to stop waiting.
     std::string pendingNumber; int pendingGroup=1, pendingSession=-1; double pendingTime=-1; ULONGLONG pendingUntil=0;
 } raceControl;
+// The sector times field becomes one column per sector or mini-sector: these IDs follow the session's sectors and are not stored as fields.
+constexpr int RaceSectorColumn=1000;
+bool RaceSectorShown() { return raceControl.showSectors && raceControl.fields[RaceSectorTimesField]; }
+int RaceFieldOf(int column) { return column>=RaceSectorColumn?RaceSectorTimesField:column; }
 enum RaceControlId {
     RaceStandingsId=810, RaceFeedId=811, RaceMessageId=816, RaceGoLiveId=820, RaceFilterId=821, RaceCarPillId=822, RaceCountId=823,
     RaceCameraId=824, RaceOnTopId=825, RaceReplayLabelId=829, RaceReplayId=830, RaceOnlyCarId=833, RaceSelectedId=834, RaceWatchId=840, RaceCarEventsId=841, RaceSplitterId=842, RaceInfoId=843,
@@ -417,7 +422,8 @@ std::wstring RaceStandingCell(const Row& row,int column) {
     case RaceStopsField: return row.car.stops>=0?std::to_wstring(row.car.stops):L"\u2014";
     case RaceRatingChangeField: { const int change=RaceRatingChange(row); return change==NoRatingChange?L"\u2014":(change>0?L"+":L"")+std::to_wstring(change); }
     case RaceBrandField: return row.driver.brand.empty()?L"\u2014":Wide(row.driver.brand);
-    default:return DriverValue(row,column-9);
+    case RaceSectorTimesField: return L"No SDK splits";
+    default:return column>=RaceSectorColumn?Format(SectorColumnTime(row.driver.index,column-RaceSectorColumn,raceControl.sectorParts),2):DriverValue(row,column-9);
     }
 }
 #include "RaceControlFields.inc"
@@ -489,7 +495,12 @@ void UpdateRaceControl(bool force) {
         SortRaceEvents(events); raceControl.total=all.size(); raceControl.feedKey=feedKey;
     }
     const auto& events=raceControl.events;
-    std::vector<int> columns; for(int id:RaceFieldOrder) if(raceControl.fields[id]) columns.push_back(id);
+    std::vector<int> columns;
+    for(int id:RaceFieldOrder) {
+        if(!raceControl.fields[id] || (id==RaceSectorTimesField && !raceControl.showSectors)) continue;
+        if(id==RaceSectorTimesField && SectorCount()) for(int i=0;i<SectorCount()*raceControl.sectorParts;++i) columns.push_back(RaceSectorColumn+i);
+        else columns.push_back(id);
+    }
     std::vector<int> feedColumns; for(int id:RaceEventOrder) if(raceControl.eventFields[id]) feedColumns.push_back(id);
     const std::wstring count=std::to_wstring(events.size())+L" of "+std::to_wstring(raceControl.total)+L" events";
     SetRaceText(RaceItem(RaceCountId),count);
@@ -497,6 +508,7 @@ void UpdateRaceControl(bool force) {
     if(pill!=(IsWindowVisible(RaceItem(RaceCarPillId))!=FALSE)) { ShowWindow(RaceItem(RaceCarPillId),pill?SW_SHOW:SW_HIDE); LayoutRaceControl(); }
     if(pill) SetRaceText(RaceItem(RaceCarPillId),RaceCarName(raceControl.car)+L"  \u00D7");
     std::wstring signature=std::to_wstring(raceControl.car)+L":"+std::to_wstring(raceControl.category)+L":"+std::to_wstring(raceControl.sortColumn)+std::to_wstring(raceControl.sortDescending)+std::to_wstring(raceControl.eventSortColumn)+std::to_wstring(raceControl.eventSortDescending)+std::to_wstring(First(StandingsKind).table.standings.separateClasses)+std::to_wstring(app.frame.connected)+std::to_wstring(app.frame.onTrack);
+    if(RaceSectorShown()) signature+=L"S"+std::to_wstring(app.sectors.Revision())+L":"+std::to_wstring(View(app.frame)==ViewMode::Replay); // Colours change without the text.
     for(int col:columns) signature+=L"|"+std::to_wstring(col); for(int col:feedColumns) signature+=L"E"+std::to_wstring(col);
     for(const auto& row:rows) { signature+=std::to_wstring(row.driver.index); for(int col:columns) signature+=L"|"+RaceStandingCell(row,col); }
     signature+=L"#"+feedKey;
@@ -510,7 +522,8 @@ void UpdateRaceControl(bool force) {
         while(ListView_DeleteColumn(raceControl.standings,0)) {}
         for(int i=0;i<static_cast<int>(columns.size());++i) {
             const int c=columns[i]; LVCOLUMNW col{}; col.mask=LVCF_TEXT|LVCF_WIDTH|LVCF_FMT;
-            col.pszText=const_cast<wchar_t*>(RaceFieldTitle(c)); col.cx=MulDiv(RaceFieldWidth(c),dpi,96); col.fmt=c==2 || c==3 || c==8 || c==15 || c==RaceBrandField?LVCFMT_LEFT:LVCFMT_RIGHT;
+            std::wstring title=c>=RaceSectorColumn?SectorColumnTitle(c-RaceSectorColumn,raceControl.sectorParts)+L" ~":RaceFieldTitle(c);
+            col.pszText=title.data(); col.cx=MulDiv(RaceFieldWidth(c),dpi,96); col.fmt=c==2 || c==3 || c==8 || c==15 || c==RaceBrandField?LVCFMT_LEFT:LVCFMT_RIGHT;
             ListView_InsertColumn(raceControl.standings,i,&col);
         }
         raceControl.columns=columns;
@@ -585,6 +598,19 @@ LRESULT RaceCustomDraw(NMLVCUSTOMDRAW& draw) {
         return CDRF_SKIPDEFAULT;
     }
     const bool inactive=RaceCarInactive(*row) || !app.frame.connected;
+    if(column>=RaceSectorColumn) {
+        // A completed split in its pace colour; nothing yet this lap is a plain dash.
+        const int i=column-RaceSectorColumn,parts=raceControl.sectorParts; const double time=SectorColumnTime(row->driver.index,i,parts);
+        fillCell(); SetBkMode(dc,TRANSPARENT); RECT area=cell; area.right-=MulDiv(5,dpi,96);
+        if(time>=0) {
+            const RECT block{cell.left+MulDiv(3,dpi,96),cell.top+MulDiv(3,dpi,96),cell.right-MulDiv(2,dpi,96),cell.bottom-MulDiv(3,dpi,96)};
+            SetDCBrushColor(dc,SectorColumnColor(row->driver.index,i,parts)); FillRect(dc,&block,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+            SetTextColor(dc,Ink::Panel);
+        } else SetTextColor(dc,RGB(145,150,157));
+        const auto text=Format(time,2);
+        DrawTextW(dc,text.c_str(),-1,&area,DT_SINGLELINE|DT_RIGHT|DT_VCENTER|DT_NOPREFIX);
+        return CDRF_SKIPDEFAULT;
+    }
     draw.clrText=inactive?RGB(145,150,157):(row->player?RGB(140,96,0):Text);
     if(column==9) { const unsigned c=row->driver.licenseColor; draw.clrText=RGB((c>>16)&255,(c>>8)&255,c&255); }
     if(column==11) draw.clrText=TireTextColor(*row);

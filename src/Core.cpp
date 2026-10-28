@@ -328,6 +328,15 @@ Session ParseSession(const std::string& yaml, int sessionNumber) {
                 if(key=="IsScenic" || key=="IsSenic") s.cameras.back().scenic=value=="true" || value=="1";
             }
         }
+        if(section=="SplitTimeInfo") {
+            if(key=="- SectorNum" || key=="SectorNum") {
+                const int sector=Integer(value,-1,0,63);
+                if(s.sectors.size()<=64) s.sectors.push_back({sector,std::numeric_limits<double>::quiet_NaN()});
+            } else if(key=="SectorStartPct" && !s.sectors.empty()) {
+                char* sectorEnd=nullptr; const double sectorStart=std::strtod(value.c_str(),&sectorEnd);
+                s.sectors.back().start=sectorEnd!=value.c_str() && *sectorEnd=='\0'?sectorStart:std::numeric_limits<double>::quiet_NaN();
+            }
+        }
         if (section == "CarSetup" && !value.empty()) {
             if (key == "UpdateCount" && indent == 1) s.setupUpdate = Integer(value,-1);
             else s.setup.emplace_back(key,value);
@@ -402,6 +411,13 @@ Session ParseSession(const std::string& yaml, int sessionNumber) {
     if (inDrivers) save();
     if (inResults) saveResult();
     if(std::isfinite(tank) && tank>0 && std::isfinite(fuelFraction) && fuelFraction>0 && fuelFraction<=1) s.fuelCapacity=tank*fuelFraction;
+    std::sort(s.sectors.begin(),s.sectors.end(),[](const SectorBoundary& a,const SectorBoundary& b){return a.number<b.number;});
+    bool sectorsValid=!s.sectors.empty() && s.sectors.front().start==0 && s.sectors.size()<=64;
+    for(size_t i=0;i<s.sectors.size();++i) {
+        const auto& b=s.sectors[i];
+        if(b.number<0 || !std::isfinite(b.start) || b.start<0 || b.start>=1 || (i && (b.number==s.sectors[i-1].number || b.start<=s.sectors[i-1].start))) sectorsValid=false;
+    }
+    if(!sectorsValid) s.sectors.clear();
     s.key = sessionId + ":" + subSession;
     return s;
 }

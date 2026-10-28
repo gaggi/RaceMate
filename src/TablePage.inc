@@ -5,7 +5,7 @@ public:
     explicit TablePage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
     enum class Key { None, Rounded, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, OtherClassRows, ClassHeader, ClassView, OwnClass, LiveGaps, UntimedOrder, ClassColors, LapColors, Progress, PitExit, Column, Header, Footer, ColumnHeadings, CopyColumns };
-    static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, PitAheadEditId=215, PitBehindEditId=216, OtherClassesEditId=217, ClassHeaderEditId=240, NameFormatEditId=201, FlagEditId=202, StatusEditId=218, ShortViewEditId=205, SlotEditId=206, BrandLogoEditId=213, BrandNameEditId=214, PositionEditId=230;
+    static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, PitAheadEditId=215, PitBehindEditId=216, OtherClassesEditId=217, ClassHeaderEditId=240, NameFormatEditId=201, FlagEditId=202, StatusEditId=218, ShortViewEditId=205, SlotEditId=206, BrandLogoEditId=213, BrandNameEditId=214, PositionEditId=230, SectorPartsEditId=219;
     static constexpr UINT_PTR TypingTimer=1;
     struct ColumnText { const wchar_t* name; const wchar_t* detail; };
     static constexpr ColumnText ColumnTexts[]={
@@ -18,7 +18,8 @@ private:
         {L"Car brand",L"Manufacturer, with its initial until logos arrive"},{L"iRating change",L"Estimated, as if the race ended in the current order"},
         {L"Laps since stop",L"L12; L- until a stop or the start was seen"},{L"Pit stops",L"Observed in this race; ? after joining late"},
         {L"Fuel to finish",L"Own-class estimate: green END at normal range, yellow SAVE with fuel saving. Full tank assumed; extra laps in Settings."},
-        {L"Safety and iRating",L"iRating on the license color, in one badge"}};
+        {L"Safety and iRating",L"iRating on the license color, in one badge"},
+        {L"Sector times",L"S1, S2, S3 … in seconds, one column each. A new S1 clears the previous lap's later sectors. Green personal best, purple class best, yellow slower; estimated."}};
     static constexpr const wchar_t* NameFormats[]={L"First name Last name",L"F. Last name",L"F Last name"};
     static constexpr const wchar_t* ClassHeaderNames[]={L"Cars",L"SOF",L"Average iRating",L"Class best lap"};
     static constexpr const wchar_t* FlagNames[]={L"Black flag",L"Slowdown",L"Required repairs"};
@@ -36,7 +37,7 @@ private:
         if(id==BestColumn || id==LastColumn) return o_.kind==RelativeKind;
         return id==DriverColumn || id==IntervalColumn || id==LapsColumn || id==GainedColumn || id>=LicenseColumn && id<=PitStopColumn || id>=BrandColumn;
     }
-    bool HasOptions(int id) const { return (id==PositionColumn && o_.kind==RelativeKind) || id==DriverColumn || id==LicenseColumn || id==IRatingColumn || id==CombinedRatingColumn || id==BrandColumn; }
+    bool HasOptions(int id) const { return (id==PositionColumn && o_.kind==RelativeKind) || id==DriverColumn || id==LicenseColumn || id==IRatingColumn || id==CombinedRatingColumn || id==BrandColumn || id==SectorsColumn; }
     // Short views: License, iRating, Safety and iRating.
     static int ShortViewIndex(int id) { return id==CombinedRatingColumn?2:id-LicenseColumn; }
     std::wstring ColumnDetail(int id) const {
@@ -50,6 +51,7 @@ private:
             for(int i=0;i<3;++i) if(o_.table.driverFlags[i]) text+=std::wstring(L", ")+FlagNames[i];
             return text;
         }
+        case SectorsColumn: return o_.table.sectorParts==3?L"S1.1, S1.2 … one column per mini-sector. Green personal best, purple class best, yellow slower; estimated.":ColumnTexts[id].detail;
         case GapColumn: return o_.kind==RelativeKind?L"Time to each car, estimated":L"Gap to the class leader";
         case BrandColumn: return o_.table.brandLogo && o_.table.brandName?L"Logo and name":(o_.table.brandLogo?L"Logo":(o_.table.brandName?L"Name":L"Nothing chosen"));
         case LicenseColumn: case IRatingColumn: case CombinedRatingColumn: {
@@ -200,6 +202,9 @@ private:
             editors_.Combo(NameFormatEditId,std::vector<std::wstring>(std::begin(NameFormats),std::end(NameFormats)),o_.table.nameFormat,94,10,200);
             editors_.Check(StatusEditId,L"Status badge after the name: PIT, TOW, OUT",o_.table.showStatus,0,46,360);
             for(int i=0;i<3;++i) editors_.Check(FlagEditId+i,FlagNames[i],o_.table.driverFlags[i],20+i*170,74,150);
+        } else if(expandedId_==SectorsColumn) {
+            editors_.Label(L"Columns",0,10,90);
+            editors_.Combo(SectorPartsEditId,{L"SDK sectors",L"3 mini-sectors per sector"},o_.table.sectorParts==3?1:0,94,10,200);
         } else if(expandedId_==BrandColumn) {
             editors_.Check(BrandLogoEditId,L"Show logo",o_.table.brandLogo,0,10,160);
             editors_.Check(BrandNameEditId,L"Show name",o_.table.brandName,170,10,160);
@@ -272,6 +277,10 @@ private:
         }
         if(id==BrandLogoEditId || id==BrandNameEditId) {
             if(!syncing_ && code==BN_CLICKED) { (id==BrandLogoEditId?o_.table.brandLogo:o_.table.brandName)=editors_.Checked(id); Changed(); }
+            return true;
+        }
+        if(id==SectorPartsEditId) {
+            if(!syncing_ && code==CBN_SELCHANGE && editors_.Selection(id)>=0) { o_.table.sectorParts=editors_.Selection(id)==1?3:1; Changed(); }
             return true;
         }
         if(id==PositionEditId) {

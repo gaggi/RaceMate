@@ -247,7 +247,7 @@ void CopyColumns(const Overlay& from,Overlay& to) {
     t.columnOrder=order; StatusAfterDriver(t.columnOrder);
     t.driverColumns=f.driverColumns; t.extraColumns=f.extraColumns; t.driverShortView=f.driverShortView; t.driverFlags=f.driverFlags;
     t.showDriver=f.showDriver; t.showStatus=f.showStatus; t.nameFormat=f.nameFormat; t.columnHeaders=f.columnHeaders;
-    t.classColors=f.classColors; t.brandLogo=f.brandLogo; t.brandName=f.brandName; t.gapSigns=f.gapSigns; t.interval=f.interval;
+    t.classColors=f.classColors; t.brandLogo=f.brandLogo; t.brandName=f.brandName; t.gapSigns=f.gapSigns; t.interval=f.interval; t.sectorParts=f.sectorParts;
     if(from.kind==to.kind && to.kind==RelativeKind) { t.best=f.best; t.last=f.last; t.classPositions=f.classPositions; }
     if(from.kind==to.kind && to.kind==StandingsKind) { t.laps=f.laps; t.gained=f.gained; }
     Fit(to); SettingChanged();

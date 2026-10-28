@@ -1,5 +1,7 @@
 # Track Map
 
+Optional [sectors and mini-sectors](sector-timing.md) colour the full track width by the latest completed splits of your car (or the car watched live): green personal best, purple best observed in the car's class this session, yellow slower. Enable **Show sectors** to reveal its options.
+
 [Documentation](README.md) · [Overlay reference](overlays.md) · [Simulator validation](track-map-validation.md)
 
 Track Map is experimental and starts disabled. Enable it on **Overlays**, then open its **Settings**. It can display the official track shape or a schematic layout based only on lap position.

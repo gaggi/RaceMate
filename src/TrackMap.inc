@@ -243,11 +243,32 @@ void DrawMapLayer(Gdiplus::Graphics& graphics,const trackmap::Layer& layer,const
         if(shape.strokeWidth>0) { Gdiplus::Pen pen(ink,width(shape)); pen.SetLineJoin(Gdiplus::LineJoinRound); graphics.DrawPath(&pen,paths[i].get()); }
     }
 }
+void DrawMapLabels(Gdiplus::Graphics& graphics,const Overlay& o,const MapTransform& transform) {
+    Gdiplus::FontFamily family(L"Segoe UI");
+    Gdiplus::StringFormat format(Gdiplus::StringFormat::GenericTypographic()); format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
+    Gdiplus::SolidBrush brush(Gdiplus::Color(255,232,237,242));
+    Gdiplus::Pen outline(Gdiplus::Color(255,12,15,19),static_cast<float>(std::max(1.,1.4*o.place.scale/100.))); outline.SetLineJoin(Gdiplus::LineJoinRound);
+    for(const auto& item:trackMap.geometry.labels) if(ShowMapLabel(item,o.map)) {
+        const auto text=Wide(item.text); const auto p=transform.Apply(item.position);
+        const float size=static_cast<float>(item.size*transform.scale*o.map.labelScale/100.);
+        const auto style=item.number?Gdiplus::FontStyleBold:Gdiplus::FontStyleRegular;
+        const float ascent=size*family.GetCellAscent(style)/family.GetEmHeight(style);
+        format.SetAlignment(item.anchor==1?Gdiplus::StringAlignmentCenter:(item.anchor==2?Gdiplus::StringAlignmentFar:Gdiplus::StringAlignmentNear));
+        Gdiplus::GraphicsPath path; path.AddString(text.c_str(),static_cast<int>(text.size()),&family,style,size,Gdiplus::PointF(0,-ascent),&format);
+        Gdiplus::Matrix matrix; matrix.Translate(static_cast<float>(p.x),static_cast<float>(p.y)); matrix.Rotate(static_cast<float>(item.angle*180/3.141592653589793)); path.Transform(&matrix);
+        if(o.map.labelContrast) graphics.DrawPath(&outline,&path);
+        graphics.FillPath(&brush,&path);
+    }
+}
+#include "TrackMapSectors.inc"
 void PaintMap(Overlay& o,const DrawCommand& c,HRGN dirty) {
     if(o.map.layout==MapLayout && !trackMap.ready) return;
     const int width=c.r.right-c.r.left,height=c.r.bottom-c.r.top;
     const int style=MapStyle(o.map);
     if(!o.mapBitmap || o.mapRevision!=trackMap.revision || o.mapWidth!=width || o.mapHeight!=height || o.mapStyle!=style) {
+        o.sectorPaths.clear(); o.sectorColors.clear(); o.sectorMask.clear();
+        if(o.sectorBitmap) DeleteObject(o.sectorBitmap);
+        o.sectorBitmap=nullptr; o.sectorPixels=nullptr;
         if(o.mapBitmap) DeleteObject(o.mapBitmap);
         // A DIB, so a whole-map pass copies its rows straight into the buffer.
         BITMAPINFO info{}; info.bmiHeader={sizeof(BITMAPINFOHEADER),width,-height,1,32,BI_RGB}; void* bits=nullptr;
@@ -288,30 +309,13 @@ void PaintMap(Overlay& o,const DrawCommand& c,HRGN dirty) {
                 DrawMapLayer(graphics,trackMap.geometry.active,transform,o.map.whiteTrack?Ink::White:RGB(110,120,134),edge);
                 // The stripe is clear on the map; the arrow may lie outside its tight bounds.
                 if(o.map.startFinish) DrawMapLayer(graphics,trackMap.geometry.finish,transform,Ink::White,edge);
-                Gdiplus::FontFamily family(L"Segoe UI");
-                Gdiplus::StringFormat format(Gdiplus::StringFormat::GenericTypographic());
-                format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
-                Gdiplus::SolidBrush brush(Gdiplus::Color(255,232,237,242));
-                Gdiplus::Pen outline(Gdiplus::Color(255,12,15,19),static_cast<float>(std::max(1.,1.4*o.place.scale/100.)));
-                outline.SetLineJoin(Gdiplus::LineJoinRound);
-                for(const auto& item:trackMap.geometry.labels) if(ShowMapLabel(item,o.map)) {
-                    const auto text=Wide(item.text); const auto p=transform.Apply(item.position);
-                    const float size=static_cast<float>(item.size*transform.scale*o.map.labelScale/100.);
-                    const auto fontStyle=item.number?Gdiplus::FontStyleBold:Gdiplus::FontStyleRegular;
-                    const float ascent=size*family.GetCellAscent(fontStyle)/family.GetEmHeight(fontStyle);
-                    format.SetAlignment(item.anchor==1?Gdiplus::StringAlignmentCenter:(item.anchor==2?Gdiplus::StringAlignmentFar:Gdiplus::StringAlignmentNear));
-                    Gdiplus::GraphicsPath path;
-                    path.AddString(text.c_str(),static_cast<int>(text.size()),&family,fontStyle,size,Gdiplus::PointF(0,-ascent),&format);
-                    Gdiplus::Matrix matrix;
-                    matrix.Translate(static_cast<float>(p.x),static_cast<float>(p.y));
-                    matrix.Rotate(static_cast<float>(item.angle*180/3.141592653589793)); path.Transform(&matrix);
-                    if(o.map.labelContrast) graphics.DrawPath(&outline,&path);
-                    graphics.FillPath(&brush,&path);
-                }
+                DrawMapLabels(graphics,o,transform);
             }
         }
         GdiFlush();
     }
+    const std::uint32_t* mapPixels=o.mapPixels;
+    const HBITMAP mapBitmap=SectorMapBitmap(o,width,height,mapPixels);
     // The whole map in this pass: its rows straight into the buffer, and the cars and numbers after it too.
     RECT box{}; const bool whole=!dirty || (GetRgnBox(dirty,&box)==SIMPLEREGION && box.left<=c.r.left && box.top<=c.r.top && box.right>=c.r.right && box.bottom>=c.r.bottom);
     o.direct=o.pixels && o.mapPixels && whole;
@@ -319,10 +323,10 @@ void PaintMap(Overlay& o,const DrawCommand& c,HRGN dirty) {
         GdiFlush(); // GDI may still be drawing the background.
         const int left=std::max(0,static_cast<int>(-c.r.left)), right=std::min(width,o.width-static_cast<int>(c.r.left));
         for(int y=std::max(0,static_cast<int>(-c.r.top));y<height && c.r.top+y<o.height && right>left;++y)
-            std::memcpy(o.pixels+(c.r.top+y)*o.width+c.r.left+left,o.mapPixels+y*width+left,(right-left)*sizeof(std::uint32_t));
+            std::memcpy(o.pixels+(c.r.top+y)*o.width+c.r.left+left,mapPixels+y*width+left,(right-left)*sizeof(std::uint32_t));
         return;
     }
-    HDC source=CreateCompatibleDC(o.dc); const auto old=SelectObject(source,o.mapBitmap);
+    HDC source=CreateCompatibleDC(o.dc); const auto old=SelectObject(source,mapBitmap);
     BitBlt(o.dc,c.r.left,c.r.top,width,height,source,0,0,SRCCOPY);
     SelectObject(source,old); DeleteDC(source);
 }

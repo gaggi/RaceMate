@@ -1,5 +1,7 @@
 # Race Control
 
+Enable **Show sectors** for one standings column per sector (**Sector detail**: SDK sectors or 3 mini-sectors each), each sortable by its header. Times appear as each sector is completed; a new S1 clears the previous lap's later sectors. See [sector timing and its limits](sector-timing.md).
+
 [Documentation](README.md) · [Fuel and pit strategy](fuel-and-pit-strategy.md)
 
 Race Control is a separate resizable window with an event feed on the left and full standings on the right. Open it from the **Race Control** page or the tray menu. The global previous/next-event shortcuts also open it when necessary.

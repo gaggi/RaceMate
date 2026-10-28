@@ -2,7 +2,7 @@
         // Track and layout are in the header; the map takes the body, with one line under it for a warning or the details.
         const bool svg=o.map.layout==MapLayout, line=o.map.layout==LineLayout;
         const bool warning=svg && trackMap.ready && !trackMap.geometry.direction;
-        const bool note=!MapOnly(o) && (warning || o.map.details);
+        const bool note=!MapOnly(o) && (warning || o.map.details || o.map.sectors);
         const int end=32+TrackMapBody(o.map,MapOnly(o),note);
         // Circle and line place cars by lap fraction alone: 0 % at the top or left, clockwise or to the right.
         const bool live=app.preview || app.frame.connected;
@@ -11,7 +11,9 @@
         const bool ready=svg?trackMap.ready:live;
         if(ready) {
             RECT physical=area; physical.top-=titleOffset; physical.bottom-=titleOffset;
-            out.push_back({DrawCommand::Map,Regular,0,physical,0,{static_cast<float>(trackMap.revision),static_cast<float>(MapStyle(o.map))}});
+            out.push_back({DrawCommand::Map,Regular,0,physical,0,{static_cast<float>(trackMap.revision),static_cast<float>(MapStyle(o.map)),
+                o.map.sectors?SectorSceneRevision():0.f,0.f,
+                static_cast<float>(o.map.sectors?o.map.sectorParts:0)}});
             if(!svg || trackMap.geometry.direction) {
                 const auto transform=svg?MapFit(trackMap.geometry,area.right-area.left,area.bottom-area.top,o.map):MapTransform{};
                 const auto ring=MapShape(o,area.right-area.left,area.bottom-area.top);
@@ -68,7 +70,9 @@
         } else label(svg?trackMap.message:L"Waiting for iRacing",line?rect(20,40,W-40,40):rect(20,MapOnly(o)?100:120,W-40,80),Ink::Muted,Regular,DT_CENTER);
         if(note) {
             std::wstring text=trackMap.message;
-            if(!warning) {
+            if(!warning && o.map.sectors) {
+                text=SectorMapCaption();
+            } else if(!warning) {
                 if(!svg) text=L"Lap position  ·  "+std::to_wstring(o.place.rate)+L" Hz";
                 else {
                     text=L"ID "+std::to_wstring(trackMap.id)+(trackMap.ready?(trackMap.cached?L" · local SVG cache":L" · SVG in memory"):L"")+L" · "+std::to_wstring(o.place.rate)+L" Hz";

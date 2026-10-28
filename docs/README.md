@@ -2,7 +2,7 @@
 
 [Project home](../README.md) · [Download releases](https://github.com/gaggi/RaceMate/releases)
 
-These guides describe the implementation in **RaceMate 0.2.2** and the development state after it. Side Warning, Radar, Traffic, dragging rows by their six dots, copying columns to another table, the qualifying maximum and the fuel to add per target came after 0.2.2: they are in the development build from this repository and not yet in a release. Screenshots show the real Windows interface with diagnostic sample data. Some screenshots deliberately enable optional modules and columns; they do not represent the factory defaults or a live race.
+These guides describe the implementation in **RaceMate 0.2.2** and the development state after it. Side Warning, Radar, Traffic, dragging rows by their six dots, copying columns to another table, the qualifying maximum, the fuel to add per target and **One lap shorter** came after 0.2.2: they are in the development build from this repository and not yet in a release. Screenshots show the real Windows interface with diagnostic sample data. Some screenshots deliberately enable optional modules and columns; they do not represent the factory defaults or a live race.
 
 ## User guides
 
@@ -13,6 +13,7 @@ These guides describe the implementation in **RaceMate 0.2.2** and the developme
 | [Layouts and settings](layouts-and-settings.md) | Automatic layouts, extra instances, appearance, shortcuts, startup and backups |
 | [Fuel and pit strategy](fuel-and-pit-strategy.md) | Consumption learning, finish forecasts, opponent estimates and pit exit predictions |
 | [Track Map](track-map.md) | Map, Circle and Line, transparency, markers, labels and cached assets |
+| [Sector timing (development)](sector-timing.md) | F1-style map colours, one column per sector in Relative, Standings and Race Control, and three mini-sectors per SDK sector |
 | [Race Control](race-control.md) | Events, standings, filtering, replay navigation and camera controls |
 | [Troubleshooting](troubleshooting.md) | Visibility, connection, missing values, maps, updates and useful bug reports |
 

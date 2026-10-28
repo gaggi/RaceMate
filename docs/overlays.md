@@ -105,6 +105,7 @@ Relative and Standings use the same set of columns. Each overlay has its own cho
 | Last pit lap (PIT LAP) | Lap of the last observed pit entry. | – |
 | Pit lane time (PIT TIME) | Time from pit entry to pit exit. | – |
 | Pit stop time (PIT STOP) | Estimated time standing in the pit stall, marked `≈`. | – |
+| Sector times (S1, S2 … or S1.1, S1.2 …) | One column per sector with its observed time, colored green (personal best), purple (class best this session) or yellow (slower). A new S1 clears the previous lap's later sectors; see [sector timing](sector-timing.md). | **Columns**: SDK sectors or 3 mini-sectors per sector. |
 | Fuel to finish (FUEL) | For cars of your class: green **END** if they can reach the finish at normal consumption, yellow **SAVE** if only with fuel saving; see the [strategy guide](fuel-and-pit-strategy.md#opponent-fuel-end-and-save). | – |
 | Completed laps (LAPS) | Laps completed instead of the current lap number. Standings only. | – |
 | Positions gained (GAIN) | ▲/▼ places won or lost against the starting grid. Standings only. | – |
