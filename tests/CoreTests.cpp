@@ -420,6 +420,20 @@ void LivePositionAndPitVisibilityTests() {
   Require(dials.Update(setup,g).size()==1 && dials.Changes()[0].dial==TractionDial,"a dial changed after getting in is reported");
   g.onTrack=false; Require(dials.Update(setup,g).empty(),"nothing outside the car");
  }
+ // The adjustment being made, for the Adjustments overlay.
+ {
+  Frame g; g.connected=g.onTrack=true; g.player=0; g.session=0; g.time=10; g.dialsKnown=1u<<AbsDial|1u<<AntiRollFrontDial;
+  g.dials[AbsDial]=3; g.dials[AntiRollFrontDial]=4;
+  DialWatcher w; Require(!w.Update(g,1000,3000) && w.Shown()<0,"nothing shown on getting in");
+  g.time=11; g.dials[AbsDial]=5; Require(!w.Update(g,2000,3000) && w.Shown()<0,"the dials settle in the first 2 s");
+  g.time=13; g.dials[AbsDial]=4; Require(w.Update(g,4000,3000) && w.Shown()==AbsDial && w.Was()==5,"a change shows with the value before");
+  g.time=14; g.dials[AbsDial]=3; w.Update(g,5000,3000); Require(w.Shown()==AbsDial && w.Was()==5,"two steps down keep the first value as was");
+  g.time=15; g.dials[AntiRollFrontDial]=5; w.Update(g,6000,3000); Require(w.Shown()==AntiRollFrontDial && w.Was()==4,"another dial takes over");
+  g.time=16; w.Update(g,9001,3000); Require(w.Shown()<0,"gone after the hold time");
+  g.time=17; g.dials[AntiRollFrontDial]=6; w.Update(g,9500,3000); Require(w.Shown()==AntiRollFrontDial && w.Was()==5,"counted afresh after it was gone");
+  g.replay=true; w.Update(g,9600,3000); Require(w.Shown()<0,"nothing in a replay");
+  Require(GroupOf(AbsDial)==BrakesGroup && GroupOf(Traction2Dial)==TractionGroup && GroupOf(AntiRollRearDial)==ChassisGroup && GroupOf(DeployModeDial)==HybridGroup,"dial groups");
+ }
  // Where the user is, for when overlays show.
  {
   Frame g; g.connected=g.onTrack=true; Require(CurrentSituation(g)==InCarSituation,"driving is in car");

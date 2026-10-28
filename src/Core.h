@@ -60,8 +60,13 @@ struct Session {
 };
 Session ParseSession(const std::string& yaml, int sessionNumber);
 // In-car adjustments that can be changed while driving (the dc variables), against the loaded setup.
-enum Dial { BrakeBiasDial, AbsDial, TractionDial, Traction2Dial, ThrottleDial, MixtureDial, EngineBrakingDial, DialCount };
+enum Dial { BrakeBiasDial, AbsDial, TractionDial, Traction2Dial, ThrottleDial, MixtureDial, EngineBrakingDial,
+    PeakBrakeBiasDial, Traction3Dial, Traction4Dial, EnginePowerDial, BoostDial, AntiRollFrontDial, AntiRollRearDial,
+    JackerLeftDial, JackerRightDial, DiffEntryDial, DiffMiddleDial, DiffExitDial, DeployModeDial, DeployFixedDial, RegenGainDial, DialCount };
 const wchar_t* DialName(int dial);
+// What a dial acts on, for its color: brakes, traction, chassis, engine or hybrid.
+enum DialGroup { BrakesGroup, TractionGroup, ChassisGroup, EngineGroup, HybridGroup };
+DialGroup GroupOf(int dial);
 struct Car {
     int position = 0, classPosition = 0, lap = -1, surface = -1, completed = -1;
     double pct = -1, estTime = -1, f2Time = -1, best = -1, last = -1;
@@ -124,6 +129,23 @@ public:
 private:
     std::string key_; int session_=-1, player_=-1, setupUpdate_=-1; size_t setupSize_=0; bool inCar_=false; double entered_=-1;
     std::array<bool, DialCount> ignored_{}; std::array<SetupValue, DialCount> values_{}; std::vector<DialChange> changes_;
+};
+// The in-car adjustment you are making, for the Adjustments overlay: the dial changed last while you drive your own
+// car, shown for hold milliseconds after its last change. was is its value before the first of these changes, so
+// two steps down from 3 read "1, was 3". Getting in, a new session or another car start afresh: the first 2 s in the
+// car, the dials settle to the setup without being shown.
+class DialWatcher {
+public:
+    void Reset() { *this={}; }
+    // now: a clock in milliseconds; shown: bit d lets dial d show. True when a shown dial changed in this frame.
+    bool Update(const Frame&, unsigned long long now, unsigned long long hold, unsigned shown = ~0u);
+    int Shown() const { return shown_; } // -1 while none is shown
+    double Was() const { return was_; }
+    unsigned long long ChangedAt() const { return changedAt_; }
+private:
+    std::array<double, DialCount> last_{}; unsigned known_ = 0;
+    int session_ = -1, player_ = -1; bool inCar_ = false; double entered_ = -1;
+    int shown_ = -1; double was_ = 0; unsigned long long changedAt_ = 0;
 };
 // Clockwise source bearing on screen: 0 is ahead, pi/2 is right.
 // While you drive, always; while you watch another car or a replay, only with headingLive: iRacing then reports in

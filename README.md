@@ -6,7 +6,7 @@ RaceMate puts nearby traffic, standings, fuel planning, weather, pit-limiter war
 
 [**Download releases**](https://github.com/gaggi/RaceMate/releases) · [**Documentation**](docs/README.md) · [**First setup**](docs/getting-started.md) · [**Build from source**](docs/development.md)
 
-> These guides describe **version 0.2.2** and the development state after it. Side Warning, Radar, Traffic, dragging rows by their six dots, copying columns to another table, the qualifying maximum, the fuel to add per target and **One lap shorter** came after 0.2.2: they are in the development build from this repository and not yet in a release. Screenshots show the real application with diagnostic sample data and selected optional features enabled.
+> These guides describe **version 0.2.2** and the development state after it. Side Warning, Radar, Traffic, dragging rows by their six dots, copying columns to another table, the qualifying maximum, the fuel to add per target, **One lap shorter** and Adjustments came after 0.2.2: they are in the development build from this repository and not yet in a release. Screenshots show the real application with diagnostic sample data and selected optional features enabled.
 >
 > Reading this README from a release ZIP? Open the [full documentation on GitHub](https://github.com/gaggi/RaceMate/tree/main/docs).
 
@@ -28,6 +28,7 @@ RaceMate puts nearby traffic, standings, fuel planning, weather, pit-limiter war
 | **Side Warning** | Bars at the screen edges while a car is beside you, from iRacing's spotter |
 | **Radar** | The cars around yours from above, with distances along the lap and lanes estimated from the spotter |
 | **Traffic** | Faster cars close behind you in multiclass races, with their gap |
+| **Adjustments** | ABS, TC, brake bias or another in-car adjustment you make, big for a moment, also in place of another overlay |
 | **Race Control** | Observed incidents, pit visits and estimated passes, with camera/replay navigation |
 | **Layouts** | Independent arrangements that switch for driving, spectating or the garage |
 

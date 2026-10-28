@@ -298,7 +298,7 @@ int RunDiagnostics() {
         app.fuelPlan=savedPlan;
         // One registry and renderer for both bands of every kind, including the Pit Assist.
         for(int kind=0;kind<OverlayCount;++kind) {
-            if(kind==SideWarningKind || kind==RadarKind || kind==TrafficKind) continue; // They have no bands.
+            if(kind==SideWarningKind || kind==RadarKind || kind==TrafficKind || kind==AdjustmentsKind) continue; // They have no bands.
             auto& o=First(kind); const Bands bands=o.bands;
             o.bands.header=true; o.bands.footer.enabled=true;
             o.bands.headerMetrics={LeaderDistanceMetric,WhiteFlagTimeMetric,NoMetric,NoMetric};
@@ -793,7 +793,7 @@ int RunDiagnostics() {
         };
         ShowPage(Page::Overlays); aligned("Overlays");
         ShowPage(Page::Settings); aligned("Settings");
-        constexpr const char* pages[]={"Relative","Standings","Fuel Calculator","Pit Assist","Weather","Track Map","Side Warning","Radar","Traffic"};
+        constexpr const char* pages[]={"Relative","Standings","Fuel Calculator","Pit Assist","Weather","Track Map","Side Warning","Radar","Traffic","Adjustments"};
         static_assert(std::size(pages)==OverlayCount);
         for(int kind=0;kind<OverlayCount;++kind) { OpenOverlay(First(kind)); aligned(pages[kind]); }
         ShowPage(Page::Overlays);
@@ -1423,7 +1423,7 @@ int RunDiagnostics() {
     }
     app.pitVisibility.Reset();
     app.preview=false; app.hidden=false; app.frame.pit=false; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind && i!=AdjustmentsKind))&&ok;
     const auto originalSurface=app.frame.cars[app.frame.player].surface;
     app.frame.cars[app.frame.player].surface=2; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
     ok=Export(First(3).window,L"build\\qa\\pit-approach.bmp") && ok;
@@ -1486,13 +1486,13 @@ int RunDiagnostics() {
     app.frame.cars[app.frame.player].surface=originalSurface;
     app.frame.pit=true; UpdateOverlays(); ok=IsWindowVisible(First(3).window)&&ok;
     app.frame.onTrack=false; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind && i!=AdjustmentsKind))&&ok;
     app.frame.camera=4; app.frame.replay=true; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind && i!=AdjustmentsKind))&&ok;
     ok=ReferenceCar(app.frame)==4 && !Rows(First(0)).empty() && ok;
     ok=Export(First(0).window,L"build\\qa\\relative-replay.bmp")&&ok;
     app.frame.replay=false; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind && i!=AdjustmentsKind))&&ok;
     app.frame.connected=false; UpdateOverlays();
     for(auto& o:app.overlays) ok=!IsWindowVisible(o.window)&&ok;
     app.preview=true; app.hidden=true; UpdateOverlays();
@@ -1610,6 +1610,35 @@ int RunDiagnostics() {
         app.frame.replay=true; app.now+=1000; UpdateOverlays(); trafficOk=!IsWindowVisible(traffic.window) && trafficOk;
         app.frame=savedFrame; app.session=savedSession; traffic.place=savedPlace; traffic.traffic=savedTraffic; app.hidden=savedHidden; app.preview=true; Fit(traffic); UpdateOverlays();
         report<<"Traffic: faster cars behind with their gap, boxes and bar, transparent, gap and count settings, visibility: "<<(trafficOk?"PASS":"FAIL")<<"\n"; ok=trafficOk && ok;
+    }
+    {
+        // Adjustments: a sample in its own window; live, the dial you change for its time, with the value before the
+        // first change, and in place of the Relative and the Standings at their sizes.
+        auto& adjust=First(AdjustmentsKind); auto& relative=First(RelativeKind); auto& standings=First(StandingsKind);
+        const auto savedPlace=adjust.place; const auto savedAdjust=adjust.adjust; const auto savedFrame=app.frame; const bool savedHidden=app.hidden;
+        app.preview=true; app.hidden=false; adjust.place.enabled=true; adjust.adjust=AdjustmentSettings{}; Fit(adjust); UpdateOverlays();
+        auto text=[&](const Overlay& o,const std::wstring& t) { return std::any_of(o.scene.begin(),o.scene.end(),[&](const DrawCommand& c){ return c.type==DrawCommand::Text && c.text==t; }); };
+        bool adjustOk=IsWindowVisible(adjust.window) && text(adjust,L"ABS") && text(adjust,L"4");
+        adjustOk=Export(adjust.window,L"build\\qa\\adjustments.bmp") && adjustOk;
+        // Live: 3 s in the car, then ABS from 3 down to 1 in two steps.
+        app.preview=false; app.frame.connected=app.frame.onTrack=true; app.frame.replay=false; app.frame.time=100;
+        app.frame.dialsKnown=1u<<AbsDial|1u<<AntiRollFrontDial; app.frame.dials[AbsDial]=3; app.frame.dials[AntiRollFrontDial]=4;
+        app.dialWatcher.Reset(); app.now+=1000; UpdateOverlays(); adjustOk=!IsWindowVisible(adjust.window) && adjustOk;
+        app.frame.time+=3; app.frame.dials[AbsDial]=2; app.now+=1000; UpdateOverlays();
+        adjust.adjust.was=true; app.frame.time+=.5; app.frame.dials[AbsDial]=1; app.now+=500; UpdateOverlays();
+        adjustOk=IsWindowVisible(adjust.window) && text(adjust,L"1") && text(adjust,L"was 3") && adjustOk;
+        app.now+=3100; UpdateOverlays(); adjustOk=!IsWindowVisible(adjust.window) && adjustOk;
+        // In place of the Relative, then of the Standings with the time left; each back after 3 s.
+        adjust.adjust.replace=RelativeKind; app.frame.time+=1; app.frame.dials[AntiRollFrontDial]=5; app.now+=100; UpdateOverlays();
+        adjustOk=!IsWindowVisible(adjust.window) && text(relative,L"ARB front") && adjustOk;
+        adjustOk=Export(relative.window,L"build\\qa\\adjustments-relative.bmp") && adjustOk;
+        adjust.adjust.replace=StandingsKind; adjust.adjust.timer=true; app.frame.time+=1; app.frame.dials[AntiRollFrontDial]=6; app.now+=100; UpdateOverlays();
+        adjustOk=text(standings,L"ARB front") && !text(relative,L"ARB front") && adjustOk;
+        adjustOk=Export(standings.window,L"build\\qa\\adjustments-standings.bmp") && adjustOk;
+        app.now+=3100; UpdateOverlays(); adjustOk=!text(standings,L"ARB front") && adjustOk;
+        Save(); Load(); adjustOk=adjust.adjust.replace==StandingsKind && adjust.adjust.timer && adjust.adjust.was && adjustOk;
+        app.frame=savedFrame; adjust.place=savedPlace; adjust.adjust=savedAdjust; app.hidden=savedHidden; app.preview=true; app.dialWatcher.Reset(); Fit(adjust); UpdateOverlays();
+        report<<"Adjustments: sample, a changed dial with the value before, gone after its time, in place of the Relative and Standings, settings: "<<(adjustOk?"PASS":"FAIL")<<"\n"; ok=adjustOk && ok;
     }
     app.preview=true; PreviewData(0);
     bool orderOk=true;

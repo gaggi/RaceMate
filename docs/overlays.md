@@ -15,6 +15,7 @@
 | [Side Warning](#side-warning) | Bars at the screen edges while a car is beside you | 20 Hz |
 | [Radar](#radar) | The cars around yours from above, lanes beside you estimated | 20 Hz |
 | [Traffic](#traffic) | Faster cars close behind you, with their gap | 10 Hz |
+| [Adjustments](#adjustments) | An in-car adjustment you make, big for a moment | 20 Hz |
 
 Also on this page: [Position in the Relative](#position-in-the-relative) · [Table columns](#table-columns) · [Status badges](#status-badges) · [Header and footer metrics](#header-and-footer-metrics)
 
@@ -236,6 +237,31 @@ After irdashies' *faster cars from behind*: the cars of faster classes close beh
 A car counts as behind by its position on track. The gap is the Relative's measured one: how long ago you were where that car is now. Before that is known it is estimated in **that car's own** class lap time: iRacing's estimate (`CarIdxEstTime`) for your class, otherwise the distance along the lap. It is not a closing time from the difference in speed, and Traffic takes no car length off. Cars in the pits are left out, and nothing shows while you are in them.
 
 It shows while you drive your own car and a car is within the gap, and half a second after, so it doesn't flicker at the edge. While overlays are moved or previewed it always shows. Like the Side Warning and the Radar, Traffic has no header or footer and only one instance.
+
+## Adjustments
+
+When you change an in-car adjustment while you drive, such as ABS, traction control, brake bias or an anti-roll bar, Adjustments shows it big for a moment: the dial's name in its group's color and its new value in the middle. Under the value, the dial's steps light up to where it now stands, such as 4 of 12. Another change starts the time again; a change to another dial takes its place. Adjustments is off by default; switch it on under **Overlays**.
+
+| Setting | Choices |
+| --- | --- |
+| Where it shows | Its own window (default), placed and sized like the other overlays and hidden until you change a dial. Or in place of the **Relative**, **Standings**, **Fuel Calculator** or **Weather**: every one of them that is shown shows it instead for that moment, at its own size, on the dial's color |
+| For … s | 1, 2, 3 (default), 4 or 5 s after your last change |
+| Sample | **Show** displays ABS 4 for that long, as a change would |
+| Value before | Off (default). On: **was 3** under the value. It is the value before your first change, so two steps from 3 down to 1 read **1**, **was 3** |
+| Time left | Off (default). On: a bar along the bottom edge runs down until it goes |
+| Brakes, Traction, Chassis, Engine, Hybrid | Which dials it shows, all by default |
+
+| Group | Color | Dials (iRacing's `dc` variables; each car has only some) |
+| --- | --- | --- |
+| Brakes | Red | Brake bias, ABS, peak brake bias |
+| Traction | Yellow | TC, TC 2 to TC 4 |
+| Chassis | Violet | ARB front and rear, weight jackers, differential entry, middle and exit |
+| Engine | Teal | Throttle map, fuel mixture, engine braking, engine power, boost |
+| Hybrid | Blue | MGU-K deploy mode and fixed deploy, regen gain |
+
+iRacing reports a dial's value but not its lowest and highest step. RaceMate learns them per car as you drive and keeps them for its next session. The steps appear once three or more of them have been seen, so the first sessions in a new car may show the value without them. Brake bias shows no steps.
+
+For the first 2 s after you get in, the dials settle to the setup and nothing shows. Nothing shows in replays or while you watch another car. Like Traffic, Adjustments has no header or footer and only one instance.
 
 ## Weather
 

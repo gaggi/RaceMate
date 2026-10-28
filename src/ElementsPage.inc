@@ -6,7 +6,8 @@ class ElementsPage : public PageWindow {
 public:
     explicit ElementsPage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
-    enum class Key { None, Layout, Rounded, Module, Band, Info, SetupChanges, PitStrip, Countdown, SideCar, SideApart, RadarBackground, RadarRange, RadarShows, RadarDistances, TrafficBackground, TrafficCars, TrafficGapKey, TrafficFaster };
+    enum class Key { None, Layout, Rounded, Module, Band, Info, SetupChanges, PitStrip, Countdown, SideCar, SideApart, RadarBackground, RadarRange, RadarShows, RadarDistances, TrafficBackground, TrafficCars, TrafficGapKey, TrafficFaster,
+        AdjustPlace, AdjustTime, AdjustWas, AdjustTimer, AdjustGroup, AdjustSample };
     static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210, HumidityEditId=212, HistoryPartEditId=213, CautionEditId=220, TargetRefuelEditId=221, SlotEditId=230, HeaderRow=1000, FooterRow=1001;
 
     void OnCreate() override {
@@ -45,6 +46,37 @@ private:
                 push(std::move(row),Key::Band,id);
             }
         };
+        if(o_.kind==AdjustmentsKind) {
+            const auto& a=o_.adjust;
+            header(L"Where it shows");
+            RowList::Row place; place.title=a.replace<0?L"Its own window":L"In place of the "+std::wstring(Titles[a.replace]); place.button=L"Choose...";
+            place.detail=a.replace<0?L"Placed and sized like the other overlays; hidden until you change a dial."
+                :L"Every shown "+std::wstring(Titles[a.replace])+L" shows it instead for a moment, at its size, on the dial's color.";
+            push(std::move(place),Key::AdjustPlace);
+            RowList::Row time; time.title=L"For "+Format(a.tenths/10.0,a.tenths%10?1:0)+L" s"; time.button=L"Choose...";
+            time.detail=L"After your last change; another change starts it again.";
+            push(std::move(time),Key::AdjustTime);
+            RowList::Row sample; sample.title=L"Sample"; sample.button=L"Show";
+            sample.detail=L"Shows ABS 4 for that long, as a change would.";
+            push(std::move(sample),Key::AdjustSample);
+            header(L"On it");
+            RowList::Row was; was.title=L"Value before"; was.toggle=a.was?1:0;
+            was.detail=L"“was 3” under the value: before your first change, so two steps from 3 to 1 read was 3.";
+            push(std::move(was),Key::AdjustWas);
+            RowList::Row timer; timer.title=L"Time left"; timer.toggle=a.timer?1:0;
+            timer.detail=L"A bar along the bottom edge that runs down until it goes.";
+            push(std::move(timer),Key::AdjustTimer);
+            info(L"Steps",L"Under the value, once the lowest and highest steps of the dial have been seen in this car");
+            header(L"Dials");
+            const wchar_t* members[]={L"Brake bias, ABS, peak brake bias",L"TC 1 to 4",L"Anti-roll bars, weight jackers, differential",
+                L"Throttle map, fuel mixture, engine braking, power, boost",L"MGU-K deploy mode and fixed, regen gain"};
+            for(int g=0;g<static_cast<int>(a.groups.size());++g) {
+                RowList::Row group; group.title=DialGroupNames[g]; group.toggle=a.groups[g]?1:0;
+                group.detail=std::wstring(members[g])+L"; in "+(g==0?L"red":g==1?L"yellow":g==2?L"violet":g==3?L"teal":L"blue")+L". Each car has only some.";
+                push(std::move(group),Key::AdjustGroup,g);
+            }
+            list_.SetRows(std::move(rows)); return;
+        }
         if(o_.kind==TrafficKind) {
             const auto& t=o_.traffic;
             header(L"Layout");
@@ -238,6 +270,21 @@ private:
         case Key::SetupChanges: if(code==RowList::kToggled) { o_.setupChanges=on; Fit(o_); Changed(); } break;
         case Key::PitStrip: if(code==RowList::kToggled) { o_.pitStrip=on; Fit(o_); Changed(); } break;
         case Key::SideCar: if(code==RowList::kToggled) { o_.sideCar=on; Changed(); } break;
+        case Key::AdjustWas: if(code==RowList::kToggled) { o_.adjust.was=on; Changed(); } break;
+        case Key::AdjustTimer: if(code==RowList::kToggled) { o_.adjust.timer=on; Changed(); } break;
+        case Key::AdjustGroup: if(code==RowList::kToggled) { o_.adjust.groups[element]=on; Changed(); } break;
+        case Key::AdjustSample: if(pressed) { app.now=GetTickCount64(); app.adjustSample=app.now; Changed(); } break;
+        case Key::AdjustTime:
+            if(pressed) { const int choice=ChooseFromMenu({L"1 s",L"2 s",L"3 s",L"4 s",L"5 s"},o_.adjust.tenths/10-1); if(choice>=0) { o_.adjust.tenths=10*(choice+1); Changed(); } }
+            break;
+        case Key::AdjustPlace:
+            if(pressed) {
+                std::vector<std::wstring> items{L"Its own window"}; for(int kind:AdjustmentTargets) items.push_back(L"In place of the "+std::wstring(Titles[kind]));
+                const int current=o_.adjust.replace<0?0:static_cast<int>(std::find(std::begin(AdjustmentTargets),std::end(AdjustmentTargets),o_.adjust.replace)-std::begin(AdjustmentTargets))+1;
+                const int choice=ChooseFromMenu(items,current);
+                if(choice>=0) { o_.adjust.replace=choice?AdjustmentTargets[choice-1]:-1; Changed(); }
+            }
+            break;
         case Key::TrafficBackground: if(code==RowList::kToggled) { o_.traffic.background=on; Fit(o_); Changed(); } break;
         case Key::TrafficFaster: if(code==RowList::kToggled) { o_.traffic.fasterOnly=on; Changed(); } break;
         case Key::TrafficCars:

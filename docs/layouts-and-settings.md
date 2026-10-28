@@ -61,7 +61,7 @@ The original **Default** layout keeps the settings from versions before layouts 
 
 ## Multiple instances
 
-**Add overlay** creates another **Relative**, **Standings**, **Fuel Calculator**, **Weather** or **Track Map**. Each has independent settings and placement, and a numbered name such as **Weather 2**. Pit Assist, Side Warning, Radar and Traffic are not offered as additional instances.
+**Add overlay** creates another **Relative**, **Standings**, **Fuel Calculator**, **Weather** or **Track Map**. Each has independent settings and placement, and a numbered name such as **Weather 2**. Pit Assist, Side Warning, Radar, Traffic and Adjustments are not offered as additional instances.
 
 Useful arrangements include a second Weather overlay showing only the wind rose, a compact Relative beside a fuller Standings table, or an official Map alongside a wide Line map.
 

@@ -685,9 +685,38 @@ bool PitLimiterVisibility::Update(const Session& s,const Frame& f) {
     return on || (!exited_ && (inLane || surface==2));
 }
 const wchar_t* DialName(int dial) {
-    constexpr const wchar_t* names[]={L"Brake bias",L"ABS",L"TC",L"TC 2",L"Throttle map",L"Fuel mixture",L"Engine braking"};
+    constexpr const wchar_t* names[]={L"Brake bias",L"ABS",L"TC",L"TC 2",L"Throttle map",L"Fuel mixture",L"Engine braking",
+        L"Peak brake bias",L"TC 3",L"TC 4",L"Engine power",L"Boost",L"ARB front",L"ARB rear",L"Jacker left",L"Jacker right",
+        L"Diff entry",L"Diff middle",L"Diff exit",L"Deploy mode",L"Deploy fixed",L"Regen gain"};
     static_assert(std::size(names)==DialCount);
     return dial>=0 && dial<DialCount?names[dial]:L"";
+}
+DialGroup GroupOf(int dial) {
+    constexpr DialGroup groups[]={BrakesGroup,BrakesGroup,TractionGroup,TractionGroup,EngineGroup,EngineGroup,EngineGroup,
+        BrakesGroup,TractionGroup,TractionGroup,EngineGroup,EngineGroup,ChassisGroup,ChassisGroup,ChassisGroup,ChassisGroup,
+        ChassisGroup,ChassisGroup,ChassisGroup,HybridGroup,HybridGroup,HybridGroup};
+    static_assert(std::size(groups)==DialCount);
+    return dial>=0 && dial<DialCount?groups[dial]:EngineGroup;
+}
+bool DialWatcher::Update(const Frame& f,unsigned long long now,unsigned long long hold,unsigned shown) {
+    if(shown_>=0 && now-changedAt_>hold) shown_=-1;
+    const bool inCar=f.connected && f.onTrack && !f.replay && f.player>=0;
+    if(!inCar || f.session!=session_ || f.player!=player_) { known_=0; shown_=-1; }
+    if(inCar && (!inCar_ || f.session!=session_ || f.player!=player_)) entered_=f.time;
+    inCar_=inCar; session_=f.session; player_=f.player;
+    if(!inCar) return false;
+    const bool settling=f.time>=entered_ && f.time-entered_<2;
+    bool changed=false;
+    for(int dial=0;dial<DialCount;++dial) {
+        if(!(f.dialsKnown>>dial&1) || !std::isfinite(f.dials[dial])) { known_&=~(1u<<dial); continue; }
+        const double value=f.dials[dial];
+        if(known_>>dial&1 && !settling && shown>>dial&1 && std::abs(value-last_[dial])>1e-4) {
+            if(shown_!=dial) was_=last_[dial];
+            shown_=dial; changedAt_=now; changed=true;
+        }
+        last_[dial]=value; known_|=1u<<dial;
+    }
+    return changed;
 }
 namespace {
 // A setup key in lower case without spaces or punctuation: "TC setting" and "TcSetting" alike.

@@ -35,17 +35,17 @@ namespace {
 using namespace rm;
 constexpr COLORREF Background=RGB(246,247,249), Text=RGB(40,47,58);
 constexpr UINT TrayMessage=WM_APP+1;
-enum OverlayKind { RelativeKind, StandingsKind, FuelKind, PitLimiterKind, WeatherKind, TrackMapKind, SideWarningKind, RadarKind, TrafficKind };
-constexpr int OverlayCount=TrafficKind+1;
+enum OverlayKind { RelativeKind, StandingsKind, FuelKind, PitLimiterKind, WeatherKind, TrackMapKind, SideWarningKind, RadarKind, TrafficKind, AdjustmentsKind };
+constexpr int OverlayCount=AdjustmentsKind+1;
 constexpr bool IsTable(int kind) { return kind==RelativeKind || kind==StandingsKind; }
-constexpr bool SingleInstance(int kind) { return kind==PitLimiterKind || kind==SideWarningKind || kind==RadarKind || kind==TrafficKind; }
-const wchar_t* Titles[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pit Assist",L"Weather",L"Track Map",L"Side Warning",L"Radar",L"Traffic"};
-const wchar_t* Sections[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pitlimiter",L"Weather",L"Track Map",L"Side Warning",L"Radar",L"Traffic"};
+constexpr bool SingleInstance(int kind) { return kind==PitLimiterKind || kind==SideWarningKind || kind==RadarKind || kind==TrafficKind || kind==AdjustmentsKind; }
+const wchar_t* Titles[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pit Assist",L"Weather",L"Track Map",L"Side Warning",L"Radar",L"Traffic",L"Adjustments"};
+const wchar_t* Sections[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pitlimiter",L"Weather",L"Track Map",L"Side Warning",L"Radar",L"Traffic",L"Adjustments"};
 // The Side Warning's place is its left bar's, at the screen's left edge; the right bar mirrors it.
-constexpr POINT DefaultPositions[]={{40,120},{480,120},{40,470},{40,720},{40,820},{960,120},{8,380},{860,560},{840,420}};
+constexpr POINT DefaultPositions[]={{40,120},{480,120},{40,470},{40,720},{40,820},{960,120},{8,380},{860,560},{840,420},{840,240}};
 // Refresh rates an overlay can choose, and each overlay's default; telemetry is read at least as often as the fastest.
 constexpr int OverlayRates[]={1,2,5,10,15,20};
-constexpr int DefaultRates[]={10,1,1,10,1,20,20,20,10};
+constexpr int DefaultRates[]={10,1,1,10,1,20,20,20,10,20};
 // Relative and Standings columns. The values are stored in ColumnOrder.
 enum Column {
     PositionColumn, NumberColumn, DriverColumn, GapColumn, IntervalColumn, BestColumn, LastColumn,
@@ -159,7 +159,8 @@ enum LayoutCondition { AlwaysCondition, InCarCondition, OutOfCarCondition, Garag
 const wchar_t* ConditionNames[]={L"Always",L"In car",L"Out of car",L"Garage"};
 const wchar_t* ConditionDetails[]={L"Whenever no layout above it applies",L"While you drive",L"Spotting and replays",L"With the garage screen open"};
 struct Layout { int id=1; std::wstring name=L"Default"; int condition=AlwaysCondition; };
-enum FontId : unsigned char { Regular, Bold, Large, Small, Hero, SmallBold, FontCount };
+// DialTitle, DialValue and DialValueNarrow follow the overlay's size: the Adjustments' name and value, as big as fits.
+enum FontId : unsigned char { Regular, Bold, Large, Small, Hero, SmallBold, DialTitle, DialValue, DialValueNarrow, FontCount };
 struct DrawCommand {
     enum Type : unsigned char { Fill, Text, DottedLine, WindRing, Outline, RoundFill, Ring, Hatch, Sparkline, Logo, Map, MapCar, MapLabel };
     Type type=Fill; FontId font=Regular; UINT align=DT_LEFT; RECT r{}; COLORREF color=0;
@@ -223,6 +224,13 @@ constexpr int TrafficWidth=260, TrafficRow=38;
 constexpr int TrafficGaps[]={1,2,3,5};
 int TrafficGap(int seconds) { for(int choice:TrafficGaps) if(seconds<=choice) return choice; return 5; }
 int RadarRange(int metres) { return ((std::clamp(metres,10,40)+5)/10)*10; }
+// Adjustments: the in-car adjustment you make, big, for tenths/10 seconds after its last change. In its own window,
+// or in place of every shown overlay of the kind replace names (-1: its own window). groups: which dials it shows,
+// by DialGroup; was: the value before; timer: a bar running down the time left.
+struct AdjustmentSettings { int tenths=30, replace=-1; bool was=false, timer=false; std::array<bool,5> groups{true,true,true,true,true}; };
+constexpr int AdjustmentsWidth=280, AdjustmentsHeight=160;
+// The overlays it can take the place of.
+constexpr int AdjustmentTargets[]={RelativeKind,StandingsKind,FuelKind,WeatherKind};
 enum TrackMapLayout { MapLayout, CircleLayout, LineLayout };
 constexpr int TrackMapWidth=440, TrackMapBodyHeight=264;
 int TrackMapWidthOf(const TrackMapSettings& m) { return m.layout==CircleLayout?280:(m.layout==LineLayout?880:TrackMapWidth); }
@@ -238,7 +246,7 @@ constexpr COLORREF TrackMapTransparentKey=RGB(1,2,3), TrackMapMoveKey=RGB(1,2,4)
 // One overlay window. A kind can have several instances; the first keeps the kind's plain name and settings section.
 struct Overlay {
     HWND window=nullptr; int kind=0, number=1; Placement place;
-    Bands bands; TableSettings table; FuelSettings fuel; WeatherSettings weather; TrackMapSettings map; RadarSettings radar; TrafficSettings traffic;
+    Bands bands; TableSettings table; FuelSettings fuel; WeatherSettings weather; TrackMapSettings map; RadarSettings radar; TrafficSettings traffic; AdjustmentSettings adjust;
     bool setupChanges=true; // Pit Assist: in the pit lane, list in-car adjustments that differ from the setup.
     bool pitStrip=true;     // Pit Assist: the pit lane with your car, your box, where to brake and where the limiter can go off.
     bool pitSeconds=false;  // Pit Assist: count down to the brake points, box and exit in seconds instead of metres.
@@ -313,6 +321,10 @@ struct App {
     std::vector<Layout> layouts{Layout{}}; int layout=1, layoutSituation=-1, pendingSituation=-1; ULONGLONG pendingSince=0; bool layoutIdle=false;
     Frame frame; Session session; TelemetryPump pump; FuelCalculator fuel;
     EventRecorder events; PitHistory pitHistory; PitLimiterVisibility pitVisibility; SetupDials setupDials;
+    // The adjustment being made, and each dial's lowest and highest value seen in this car (CarPath), kept for its
+    // next session: the Adjustments' steps.
+    DialWatcher dialWatcher; std::wstring dialCar; std::array<double,DialCount> dialLow{}, dialHigh{}; unsigned dialRanges=0;
+    ULONGLONG adjustSample=0; // When the Adjustments' settings asked for a sample.
     RacePredictor predictor; FuelPlan fuelPlan;
     SectorTiming sectors;
     PassingTimes passing; // Measured gaps for Relative, Standings, Race Control and Traffic.
@@ -510,6 +522,7 @@ int OverlayWidth(const Overlay& o) {
     if(o.kind==SideWarningKind) return SideBarWidth;
     if(o.kind==RadarKind) return RadarWidth;
     if(o.kind==TrafficKind) return TrafficWidth;
+    if(o.kind==AdjustmentsKind) return AdjustmentsWidth;
     return 365;
 }
 COLORREF TireTextColor(const Row& row) {
@@ -531,8 +544,8 @@ std::wstring CompletedLaps(const Row& row) {
 bool MapOnly(const Overlay& o) { return o.kind==TrackMapKind && !o.map.background; }
 // Per-pixel alpha over the game: a map, radar or traffic without background.
 bool PerPixel(const Overlay& o) { return MapOnly(o) || (o.kind==RadarKind && !o.radar.background) || (o.kind==TrafficKind && !o.traffic.background); }
-// The Side Warning's bars, the Radar and Traffic are instruments to glance at, without header or footer.
-bool NoBands(const Overlay& o) { return MapOnly(o) || o.kind==SideWarningKind || o.kind==RadarKind || o.kind==TrafficKind; }
+// The Side Warning's bars, the Radar, Traffic and Adjustments are instruments to glance at, without header or footer.
+bool NoBands(const Overlay& o) { return MapOnly(o) || o.kind==SideWarningKind || o.kind==RadarKind || o.kind==TrafficKind || o.kind==AdjustmentsKind; }
 bool ShowOverlayHeader(const Overlay& o) { return o.bands.header && !NoBands(o); }
 int FooterHeight(const Overlay& o) { return o.bands.footer.enabled && !NoBands(o)?28:0; }
 double SessionProgress();
@@ -662,7 +675,7 @@ void ReadInstance(Overlay& o) {
     p.scale=NormalizeScale(ReadInt(section.c_str(),L"Scale",100)); p.opacity=std::clamp(ReadInt(section.c_str(),L"Opacity",90),40,100);
     const int rate=ReadInt(section.c_str(),L"RefreshHz",DefaultRates[kind]);
     p.rate=*std::find_if(std::begin(OverlayRates),std::end(OverlayRates)-1,[&](int choice){return choice>=rate;});
-    p.enabled=ReadBool(section.c_str(),L"Enabled",kind!=TrackMapKind && kind!=SideWarningKind && kind!=RadarKind && kind!=TrafficKind); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
+    p.enabled=ReadBool(section.c_str(),L"Enabled",kind!=TrackMapKind && kind!=SideWarningKind && kind!=RadarKind && kind!=TrafficKind && kind!=AdjustmentsKind); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
     p.rounded=ReadBool(section.c_str(),L"RoundedCorners",false);
     const Bands defaults=DefaultBands(kind); auto& b=o.bands;
     b.header=ReadBool(section.c_str(),L"ShowHeader",kind==PitLimiterKind?ReadBool(L"General",L"ShowTitleBar",false):defaults.header); b.headerMetrics=ReadSlots(section.c_str(),HeaderKeys,defaults.headerMetrics);
@@ -678,6 +691,13 @@ void ReadInstance(Overlay& o) {
     if(kind==TrafficKind) {
         auto& t=o.traffic; t.gap=TrafficGap(ReadInt(section.c_str(),L"GapSeconds",3)); t.cars=std::clamp(ReadInt(section.c_str(),L"Cars",1),1,3);
         t.fasterOnly=ReadBool(section.c_str(),L"FasterClassesOnly",true); t.background=ReadBool(section.c_str(),L"ShowBackground",false);
+    }
+    if(kind==AdjustmentsKind) {
+        auto& a=o.adjust; a.tenths=std::clamp(ReadInt(section.c_str(),L"ShowTenths",30),10,100);
+        const int replace=ReadInt(section.c_str(),L"InPlaceOf",-1);
+        a.replace=std::find(std::begin(AdjustmentTargets),std::end(AdjustmentTargets),replace)!=std::end(AdjustmentTargets)?replace:-1;
+        a.was=ReadBool(section.c_str(),L"ShowPrevious",false); a.timer=ReadBool(section.c_str(),L"ShowTimer",false);
+        for(int g=0;g<static_cast<int>(a.groups.size());++g) a.groups[g]=ReadBool(section.c_str(),(L"Group"+std::to_wstring(g)).c_str(),true);
     }
     if(kind==RadarKind) {
         auto& r=o.radar; r.background=ReadBool(section.c_str(),L"ShowBackground",true); r.always=ReadBool(section.c_str(),L"AlwaysWhileDriving",false);
@@ -810,6 +830,10 @@ void Save() {
             number(section,L"Layout",o.weather.strip); order(section,L"ModuleOrder",o.weather.order);
         }
         if(o.kind==TrafficKind) { const auto& t=o.traffic; number(section,L"GapSeconds",t.gap); number(section,L"Cars",t.cars); number(section,L"FasterClassesOnly",t.fasterOnly); number(section,L"ShowBackground",t.background); }
+        if(o.kind==AdjustmentsKind) {
+            const auto& a=o.adjust; number(section,L"ShowTenths",a.tenths); number(section,L"InPlaceOf",a.replace); number(section,L"ShowPrevious",a.was); number(section,L"ShowTimer",a.timer);
+            for(int g=0;g<static_cast<int>(a.groups.size());++g) number(section,(L"Group"+std::to_wstring(g)).c_str(),a.groups[g]);
+        }
         if(o.kind==RadarKind) { const auto& r=o.radar; number(section,L"ShowBackground",r.background); number(section,L"AlwaysWhileDriving",r.always); number(section,L"ShowDistances",r.distances); number(section,L"Range",r.range); }
         if(o.kind==SideWarningKind) { number(section,L"ShowCarPosition",o.sideCar); number(section,L"BarsApart",o.sideApart); }
         if(o.kind==PitLimiterKind) { number(section,L"ShowSetupChanges",o.setupChanges); number(section,L"ShowPitLaneProgress",o.pitStrip); number(section,L"CountdownInSeconds",o.pitSeconds); }
@@ -1163,6 +1187,7 @@ int HeightWithTitle(const Overlay& o) {
     if(o.kind==SideWarningKind) return 32+SideBarHeight;
     if(o.kind==RadarKind) return 32+RadarHeight;
     if(o.kind==TrafficKind) return 32+6+o.traffic.cars*TrafficRow;
+    if(o.kind==AdjustmentsKind) return 32+AdjustmentsHeight;
     const auto& t=o.table;
     if(o.kind==RelativeKind) return TableRowsTop(o)+t.rows*27+FooterHeight(o);
     if(o.kind==StandingsKind) {
@@ -1345,6 +1370,46 @@ LONGLONG DiagnosticTicks() { LARGE_INTEGER now{}; QueryPerformanceCounter(&now);
 // Describes an overlay in physical pixels. Comparing it with the previous scene yields the exact changed areas.
 #include "SectorUi.inc"
 #include "TrackMap.inc"
+// A dial's value as the car steps it: whole steps without decimals, brake bias in percent with the decimals it has.
+std::wstring DialText(int dial,double value) {
+    const bool whole=std::abs(value-std::round(value))<1e-4, tenths=std::abs(value*10-std::round(value*10))<1e-3;
+    std::wstring text=Format(value,whole?0:(tenths?1:2));
+    if((dial==BrakeBiasDial || dial==PeakBrakeBiasDial) && value>25) text+=L"%";
+    return text;
+}
+// The Adjustments' color for each DialGroup: brakes, traction, chassis, engine, hybrid.
+constexpr COLORREF DialInks[]={Ink::Red,Ink::Yellow,Ink::Purple,RGB(118,214,186),Ink::Accent};
+const wchar_t* DialGroupNames[]={L"Brakes",L"Traction",L"Chassis",L"Engine",L"Hybrid"};
+// What the Adjustments show now: the dial changed last, or the sample its settings page shows on request.
+// left: the share of the time still to go. Steps from low to high, when the car's range is known and in whole steps.
+struct ShownAdjustment { int dial=-1; double value=0, was=0, left=0, low=0, high=0; bool steps=false; };
+ShownAdjustment CurrentAdjustment(const AdjustmentSettings& a) {
+    const unsigned long long hold=a.tenths*100ull;
+    ShownAdjustment s;
+    if(app.adjustSample && app.now-app.adjustSample<hold) {
+        s={AbsDial,4,6,1-static_cast<double>(app.now-app.adjustSample)/hold,1,12,true}; return s;
+    }
+    const int dial=app.dialWatcher.Shown();
+    if(dial<0 || !(app.frame.dialsKnown>>dial&1)) return s;
+    s.dial=dial; s.value=app.frame.dials[dial]; s.was=app.dialWatcher.Was();
+    s.left=std::clamp(1-static_cast<double>(app.now-app.dialWatcher.ChangedAt())/hold,0.,1.);
+    if(app.dialRanges>>dial&1) {
+        s.low=app.dialLow[dial]; s.high=app.dialHigh[dial];
+        auto whole=[](double v){ return std::abs(v-std::round(v))<1e-4; };
+        s.steps=whole(s.low) && whole(s.high) && whole(s.value) && s.high-s.low>=2 && s.high-s.low<=15;
+    }
+    return s;
+}
+// The Adjustments overlay when enabled, else null.
+const Overlay* AdjustmentsOverlay() {
+    for(const auto& o:app.overlays) if(o.kind==AdjustmentsKind && o.place.enabled) return &o;
+    return nullptr;
+}
+// The settings for an adjustment shown in place of o now, else null.
+const AdjustmentSettings* AdjustmentInPlaceOf(const Overlay& o) {
+    const auto* a=AdjustmentsOverlay();
+    return a && a->adjust.replace==o.kind && CurrentAdjustment(a->adjust).dial>=0?&a->adjust:nullptr;
+}
 void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCommand>& out) {
     out.clear();
     auto px=[&](int v){return MulDiv(v,dpi*o.place.scale,9600);};
@@ -1402,6 +1467,50 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         int x=std::max(width-margin-right,margin+widths[0]+gap);
         for(int slot=1;slot<SlotCount;++slot) if(widths[slot]) { draw(slot,x); x+=widths[slot]+gap; }
     };
+    // The Adjustments, in their own window or for a moment in place of this overlay, on their group's color: the
+    // dial's name in that color, its value big beneath, the car's steps under it; the value before and a bar running
+    // down the time left when chosen. Sizes follow the overlay's, so it fills a wide Relative as a tall Standings.
+    const AdjustmentSettings* inPlace=o.kind==AdjustmentsKind?nullptr:AdjustmentInPlaceOf(o);
+    if(o.kind==AdjustmentsKind || inPlace) {
+        const auto& a=inPlace?*inPlace:o.adjust; auto s=CurrentAdjustment(a);
+        // Its own window shows a sample in the preview and while overlays are moved.
+        if(s.dial<0 && !inPlace && (app.preview || app.edit)) s={AbsDial,4,6,.6,1,12,true};
+        if(s.dial<0) {
+            out.push_back({DrawCommand::Text,Regular,DT_CENTER,{0,0,width,height},Ink::Muted,{},L"In-car adjustments"});
+        } else {
+            const COLORREF ink=DialInks[GroupOf(s.dial)];
+            out[0].color=Mix(Ink::Panel,ink,inPlace?.22:.08);
+            out.push_back({DrawCommand::Fill,Regular,0,{0,0,width,std::max(2,px(4))},ink});
+            const std::wstring value=DialText(s.dial,s.value), was=a.was && s.was!=s.value?L"was "+DialText(s.dial,s.was):L"";
+            const int margin=width*7/100, inner=width-2*margin;
+            const FontId valueFont=measure(value,DialValue)<=inner?DialValue:DialValueNarrow;
+            auto lineHeight=[&](FontId font){ TEXTMETRICW m{}; if(o.dc) { SelectObject(o.dc,o.fonts[font]); GetTextMetricsW(o.dc,&m); } return static_cast<int>(m.tmHeight); };
+            const int titleHeight=lineHeight(DialTitle), valueHeight=lineHeight(valueFont)*86/100, wasHeight=was.empty()?0:lineHeight(Bold);
+            const int stepHeight=s.steps?std::max(px(6),height*3/100):0, gap=height*3/100;
+            const int total=titleHeight+gap+valueHeight+(wasHeight?gap/2+wasHeight:0)+(stepHeight?2*gap+stepHeight:0);
+            int y=std::max(px(6),(height-total)/2);
+            out.push_back({DrawCommand::Text,DialTitle,DT_CENTER,{margin,y,width-margin,y+titleHeight},ink,{},DialName(s.dial)}); y+=titleHeight+gap;
+            // The value's line has room above its digits; drawn a little higher, they sit under the name.
+            const int valueTop=y-lineHeight(valueFont)*8/100;
+            out.push_back({DrawCommand::Text,valueFont,DT_CENTER,{margin,valueTop,width-margin,valueTop+lineHeight(valueFont)},Ink::White,{},value}); y+=valueHeight;
+            if(wasHeight) { y+=gap/2; out.push_back({DrawCommand::Text,Bold,DT_CENTER,{margin,y,width-margin,y+wasHeight},Ink::Muted,{},was}); y+=wasHeight; }
+            if(stepHeight) {
+                y+=2*gap; const int count=static_cast<int>(std::lround(s.high-s.low))+1, at=static_cast<int>(std::lround(s.value-s.low));
+                const int space=std::max(1,px(4)), step=(inner-(count-1)*space)/count, start=(width-(count*step+(count-1)*space))/2;
+                for(int i=0;i<count;++i) {
+                    const int x=start+i*(step+space);
+                    out.push_back({DrawCommand::RoundFill,Regular,0,{x,y,x+step,y+stepHeight},i<=at?ink:Mix(Ink::Panel,Ink::White,.14),{static_cast<float>(px(2))}});
+                }
+            }
+            if(a.timer) {
+                const int bar=std::max(2,px(3));
+                out.push_back({DrawCommand::Fill,Regular,0,{0,height-bar,width,height},Mix(Ink::Panel,Ink::White,.1)});
+                out.push_back({DrawCommand::Fill,Regular,0,{0,height-bar,static_cast<int>(std::lround(width*s.left)),height},ink});
+            }
+        }
+        out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{static_cast<float>(o.place.rounded?px(CornerRadius):0)}});
+        return;
+    }
     if(ShowOverlayHeader(o)) {
         fill({0,0,width,px(32)},Ink::Band);
         fill({0,px(31),width,px(32)},Ink::Line);
@@ -2341,7 +2450,11 @@ bool EnsureBuffer(Overlay& o,int width,int height,int dpi) {
     const int size=std::max(8,MulDiv(14,dpi*o.place.scale,9600));
     auto font=[&](int pixels,int weight){ return CreateFontW(-pixels,0,0,0,weight,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI"); };
     auto scaled=[&](int pixels){ return MulDiv(pixels,dpi*o.place.scale,9600); };
-    o.fonts={font(size,FW_NORMAL),font(size,FW_SEMIBOLD),font(scaled(32),FW_SEMIBOLD),font(std::max(7,scaled(11)),FW_NORMAL),font(scaled(22),FW_SEMIBOLD),font(std::max(7,scaled(11)),FW_BOLD)};
+    // The Adjustments' name in about an eighth of the height; the value in two fifths of it, or in a size that fits
+    // six characters across a narrow overlay.
+    const int title=std::clamp(std::min(height*13/100,width*2/17),std::max(7,scaled(11)),height),value=std::max(title,height*42/100);
+    o.fonts={font(size,FW_NORMAL),font(size,FW_SEMIBOLD),font(scaled(32),FW_SEMIBOLD),font(std::max(7,scaled(11)),FW_NORMAL),font(scaled(22),FW_SEMIBOLD),font(std::max(7,scaled(11)),FW_BOLD),
+        font(title,FW_SEMIBOLD),font(value,FW_SEMIBOLD),font(std::clamp(width*6/25,title,value),FW_SEMIBOLD)};
     o.originalFont=SelectObject(o.dc,o.fonts[Regular]);
     SetBkMode(o.dc,TRANSPARENT);
     o.width=width; o.height=height; o.dpi=dpi;
@@ -2592,6 +2705,8 @@ bool RefreshDue(ULONGLONG& due,ULONGLONG now,int period,int slack) {
 int RefreshRate(const Overlay& o) {
     const auto& d=o.weather.display;
     const bool windArrow=o.kind==WeatherKind && d[WindModule] && d[WindRose] && d[WindRelative] && std::isfinite(RelativeWindAngle(app.frame,HeadingLive(),MapHeading()));
+    // In place of the Adjustments, at their pace, so the time left runs down smoothly.
+    if(o.kind!=AdjustmentsKind && AdjustmentInPlaceOf(o)) { const auto* a=AdjustmentsOverlay(); return std::max(o.place.rate,a->place.rate); }
     return (o.kind==PitLimiterKind && app.pitVisibility.Warning()) || windArrow?std::max(o.place.rate,10):o.place.rate;
 }
 // While iRacing's frames set the pace, an overlay refreshes on every n-th frame (n = 60 / rate), so 15 Hz is
@@ -2646,6 +2761,41 @@ void UpdateTraffic(const Overlay& o) {
     app.traffic=CarsBehind(app.session,app.frame,o.traffic.gap,o.traffic.fasterOnly,&app.passing);
     if(!app.traffic.empty()) app.trafficNear=app.now;
 }
+bool Driving();
+// Each dial's range in this car, read on getting into another car and written as a value goes beyond it.
+void UpdateDialRanges() {
+    const auto* own=PlayerDriver(); const std::wstring car=own?Wide(own->carPath):L"";
+    if(car!=app.dialCar) {
+        app.dialCar=car; app.dialRanges=0;
+        if(!car.empty()) for(int d=0;d<DialCount;++d) {
+            wchar_t text[64]{}; GetPrivateProfileStringW(L"Dial ranges",(car+L" "+std::to_wstring(d)).c_str(),L"",text,64,app.config.c_str());
+            double low=0,high=0;
+            if(swscanf_s(text,L"%lf %lf",&low,&high)==2 && low<=high) { app.dialLow[d]=low; app.dialHigh[d]=high; app.dialRanges|=1u<<d; }
+        }
+    }
+    const auto& f=app.frame;
+    if(car.empty() || !Driving()) return;
+    for(int d=0;d<DialCount;++d) if(f.dialsKnown>>d&1 && std::isfinite(f.dials[d])) {
+        const double v=f.dials[d]; const bool known=app.dialRanges>>d&1;
+        if(known && v>=app.dialLow[d] && v<=app.dialHigh[d]) continue;
+        app.dialLow[d]=known?std::min(app.dialLow[d],v):v; app.dialHigh[d]=known?std::max(app.dialHigh[d],v):v; app.dialRanges|=1u<<d;
+        wchar_t text[64]{}; swprintf_s(text,L"%g %g",app.dialLow[d],app.dialHigh[d]);
+        WritePrivateProfileStringW(L"Dial ranges",(car+L" "+std::to_wstring(d)).c_str(),text,app.config.c_str());
+    }
+}
+// The adjustment being made. While one shows in place of other overlays, they refresh at once as it comes and goes.
+void UpdateAdjustments() {
+    const auto* overlay=AdjustmentsOverlay();
+    if(!overlay) { app.dialWatcher.Reset(); return; }
+    const auto& a=overlay->adjust; unsigned shown=0;
+    for(int d=0;d<DialCount;++d) if(a.groups[GroupOf(d)]) shown|=1u<<d;
+    UpdateDialRanges();
+    const int before=CurrentAdjustment(a).dial;
+    app.dialWatcher.Update(app.frame,app.now,a.tenths*100ull,shown);
+    const auto now=CurrentAdjustment(a);
+    if(now.dial!=before || app.dialWatcher.ChangedAt()==app.now)
+        for(auto& o:app.overlays) if(o.kind==AdjustmentsKind || o.kind==a.replace) o.due=0;
+}
 // Your own car on track, live: the Radar's condition, near cars or not.
 bool Driving() { const auto& f=app.frame; return f.connected && f.onTrack && !f.replay && f.player>=0 && f.player<MaxCars && ReferenceCar(f)==f.player; }
 // Ticks refresh each overlay at its own rate; everything else (settings, hide, diagnostics) forces a refresh.
@@ -2655,6 +2805,7 @@ void UpdateOverlays(bool force=true) {
     InvalidateModel();
     const bool pitVisible=app.pitVisible=app.pitVisibility.Update(app.session,app.frame);
     app.setupDials.Update(app.session,app.frame);
+    UpdateAdjustments();
     UpdateSide();
     for(auto& o:app.overlays) {
         bool visible=o.place.enabled && !app.hidden && (!app.layoutIdle || app.preview || app.edit) && (o.kind!=WeatherKind || std::any_of(o.weather.display.begin(),o.weather.display.begin()+WeatherPanelCount,[](bool value){return value;})) && (app.preview || (app.frame.connected && (o.kind!=PitLimiterKind || pitVisible)));
@@ -2671,6 +2822,10 @@ void UpdateOverlays(bool force=true) {
             // While you drive with a car within the gap, and half a second after, so it doesn't flicker at its edge.
             if(visible) UpdateTraffic(o);
             shown=visible=visible && (app.preview || app.edit || (Driving() && app.now-app.trafficNear<500));
+        }
+        if(o.kind==AdjustmentsKind) {
+            // Its own window: for a moment after you change a dial; never while it shows in place of other overlays.
+            shown=visible=visible && o.adjust.replace<0 && (app.preview || app.edit || CurrentAdjustment(o.adjust).dial>=0);
         }
         if(o.kind==RadarKind) {
             // While you drive: with a car in range and 2 s after the last one left it, or always if so chosen.
@@ -3018,6 +3173,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
         for(auto& o:app.overlays) {
             o.weather.display.fill(true); o.bands=DefaultBands(o.kind); o.table.columnHeaders=false; o.table.rows=9; o.table.standings={}; o.fuel.figures.fill(true); o.fuel.display.fill(true);
             auto& p=o.place; p={}; p.x=DefaultPositions[o.kind].x; p.y=DefaultPositions[o.kind].y;
+            // Adjustments only in their own check: elsewhere dials change and would show it among the overlays checked.
+            if(o.kind==AdjustmentsKind) p.enabled=false;
         }
     }
     INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_STANDARD_CLASSES|ICC_LISTVIEW_CLASSES|ICC_HOTKEY_CLASS}; InitCommonControlsEx(&controls);
