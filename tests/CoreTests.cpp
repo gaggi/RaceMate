@@ -710,6 +710,46 @@ void SideTrafficTests() {
  f.replay=false; f.onTrack=false; t=SideTrafficOf(s,f); Require(!t.right,"only while you drive");
  f.onTrack=true; f.spotter=-1; t=SideTrafficOf(s,f); Require(!t.left && !t.right,"no spotter, nothing");
 }
+void RadarTests() {
+ auto s=DemoSession(); s.trackMeters=4000; auto f=DemoFrame(0); f.player=3; f.time=100;
+ for(auto& c:f.cars) { c.pct=-1; c.surface=-1; c.pit=false; }
+ auto at=[&](int i,double metres) { f.cars[i].pct=.5+metres/4000; f.cars[i].surface=3; };
+ at(3,0); at(5,2); at(6,30); at(7,-12); f.cars[8].pct=.5+1/4000.0; f.cars[8].surface=3; f.cars[8].pit=true;
+ RadarTracker radar; auto lane=[&](int i) { for(const auto& c:radar.Cars()) if(c.index==i) return c.lane; return 99; };
+ f.spotter=1; radar.Update(s,f,20);
+ Require(radar.Cars().size()==2 && radar.Cars()[0].index==5 && lane(5)==-1 && lane(7)==0 && lane(6)==99 && lane(8)==99,"within reach, nearest first; a car overlapping yours is beside you even unreported; pit cars apart");
+ Near(radar.Cars()[0].metres,2,"metres ahead along the lap");
+ f.spotter=2; radar.Update(s,f,20); Require(lane(5)==-1 && lane(7)==0,"the spotter's car left is the nearest");
+ at(5,-7); f.spotter=1; f.time=101; radar.Update(s,f,20); Require(lane(5)==-1,"it keeps its lane as it drops back");
+ f.time=104.5; radar.Update(s,f,20); Require(lane(5)==0,"after 3 s without being beside you, in line");
+ // Three wide: the car that was on the left stays left, the other goes right, whichever is nearer.
+ at(5,3); at(7,-1); f.spotter=2; f.time=105; radar.Update(s,f,20); Require(lane(7)==-1,"the nearer car beside you on the left");
+ at(5,-.5); at(7,2); f.spotter=4; f.time=105.5; radar.Update(s,f,20); Require(lane(7)==-1 && lane(5)==1,"three wide: the left car keeps its side, the new one takes the other");
+ f.spotter=5; f.time=106; radar.Update(s,f,20); Require(lane(7)==-1 && lane(5)==-2,"two cars left: you are at the edge of three wide, they in two lanes");
+ {
+  // Two cars side by side ahead: half a lane apart either way, and they keep their sides as one draws ahead.
+  RadarTracker pair; f.spotter=1; f.time=200; at(5,-30); at(7,-30); at(9,10); at(10,11.5);
+  auto offset=[&](int i) { for(const auto& c:pair.Cars()) if(c.index==i) return c.offset; return 99.; };
+  pair.Update(s,f,20); Require(offset(10)==-.5 && offset(9)==.5,"side by side ahead: the one ahead left, the other right");
+  at(9,12); f.time=200.5; pair.Update(s,f,20); Require(offset(9)==.5 && offset(10)==-.5,"they keep their sides as the order changes");
+  at(9,18); f.time=201; pair.Update(s,f,20); Require(offset(9)==0 && offset(10)==0,"apart again, in line");
+  at(9,10); at(10,1.5); f.spotter=3; f.time=202; pair.Update(s,f,20);
+  at(10,11); f.spotter=1; f.time=206; pair.Update(s,f,20); Require(offset(10)==.5 && offset(9)==-.5,"a car last beside you on the right stays right");
+ }
+ {
+  // Cars passing yours while the spotter is silent (you off the track) go by on one side, a row of three spread out.
+  RadarTracker silent; f.spotter=1; f.time=300; at(5,-30); at(7,-30); at(9,-30); at(10,-30);
+  at(9,2); silent.Update(s,f,20);
+  auto laneOf=[&](int i) { for(const auto& c:silent.Cars()) if(c.index==i) return c.lane; return 99; };
+  auto offsetOf=[&](int i) { for(const auto& c:silent.Cars()) if(c.index==i) return c.offset; return 99.; };
+  Require(laneOf(9)==-1,"an unreported car overlapping yours is beside you");
+  at(9,-1); f.time=300.2; silent.Update(s,f,20); Require(laneOf(9)==-1,"and stays on that side as it passes");
+  at(5,10); at(7,12); at(10,14); f.time=301; silent.Update(s,f,20);
+  Require(offsetOf(5)!=0 && offsetOf(7)==-offsetOf(5) && offsetOf(10)==-offsetOf(7),"a row of three overlapping cars ahead spreads out");
+ }
+ f.replay=true; radar.Update(s,f,20); Require(radar.Cars().empty(),"nothing while not driving");
+ f.replay=false; f.time=10; f.spotter=1; at(5,-7); radar.Update(s,f,20); Require(lane(5)==0,"a clock that went back forgets the lanes");
+}
 void WeatherHistoryTests() {
  auto s=DemoSession(); auto f=DemoFrame(0); WeatherHistory history;
  f.trackTemperature=26; f.time=0; history.Update(s,f);
@@ -810,6 +850,21 @@ int main(int argc,char** argv) {
   UnmapViewOfFile(memory); CloseHandle(map);
   std::cout<<"Wrote irsdk-dump.txt ("<<h->numVars<<" variables).\n"; return 0;
  }
+ if(argc==4 && std::string(argv[1])=="--radar-log") {
+  // Every new frame of a live session (or a TapeMate playback) for the given seconds: the spotter, your car and every
+  // car within 20 m with the radar's lane, as CSV for checking the lane estimate against a real race.
+  Telemetry reader; Frame frame; Session session; RadarTracker radar; std::ofstream out(argv[3]);
+  out<<"time,spotter,onTrack,pit,speed,cars (index:metres:lane:offset:surface)\n";
+  const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(std::stoi(argv[2])); double last=-1; int frames=0;
+  while(std::chrono::steady_clock::now()<end) {
+   if(!reader.Read(frame,session) || frame.time==last) { Sleep(1); continue; }
+   last=frame.time; ++frames; radar.Update(session,frame,20);
+   out<<frame.time<<','<<frame.spotter<<','<<frame.onTrack<<','<<(frame.player>=0?frame.cars[frame.player].pit:false)<<','<<(frame.player>=0?frame.cars[frame.player].speed:-1)<<',';
+   for(const auto& c:radar.Cars()) out<<c.index<<':'<<c.metres<<':'<<c.lane<<':'<<c.offset<<':'<<frame.cars[c.index].surface<<' ';
+   out<<'\n';
+  }
+  std::cout<<frames<<" frames\n"; return 0;
+ }
  if(argc==2 && std::string(argv[1])=="--live-summary") {
   Telemetry reader; Frame frame; Session session;
   if(!reader.Read(frame,session)) { std::cout<<"No connected iRacing telemetry available.\n"; return 2; }
@@ -831,6 +886,6 @@ int main(int argc,char** argv) {
    <<"; SessionNum: "<<frame.session<<"; ReplaySessionNum: "<<frame.replaySession<<'\n';
   return 0;
  }
- try { ReviewRegressionTests(); WindTests(); SideTrafficTests(); WeatherHistoryTests(); ParserTests(); ResultsTests(); RowTests(); RelativeCenterTests(); StandingsSelectionTests(); EarlyAndLiveGapTests(); UntimedPracticeTests(); MissingDriverDataTests(); LivePositionAndPitVisibilityTests(); FuelMetricsTests(); FirstRaceLapFuelTests(); FuelTests(); PredictionTests(); RaceControlTests(); PitStopTests(); TelemetryTests(); std::cout<<"PASS: review regressions, parser, historical results, relative, standings, fuel metrics, finish projection, leader changes, pit learning, confidence, replay and shared memory\n"; }
+ try { ReviewRegressionTests(); WindTests(); SideTrafficTests(); RadarTests(); WeatherHistoryTests(); ParserTests(); ResultsTests(); RowTests(); RelativeCenterTests(); StandingsSelectionTests(); EarlyAndLiveGapTests(); UntimedPracticeTests(); MissingDriverDataTests(); LivePositionAndPitVisibilityTests(); FuelMetricsTests(); FirstRaceLapFuelTests(); FuelTests(); PredictionTests(); RaceControlTests(); PitStopTests(); TelemetryTests(); std::cout<<"PASS: review regressions, parser, historical results, relative, standings, fuel metrics, finish projection, leader changes, pit learning, confidence, replay and shared memory\n"; }
  catch(const std::exception& e) { std::cerr<<"FAIL: "<<e.what()<<'\n'; return 1; }
 }

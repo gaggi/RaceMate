@@ -843,6 +843,79 @@ SideTraffic SideTrafficOf(const Session& s,const Frame& f) {
     (t.left?t.leftAt:t.rightAt)=nearest;
     return t;
 }
+void RadarTracker::Update(const Session& s,const Frame& f,double reach) {
+    cars_.clear();
+    if(!f.connected || !f.onTrack || f.replay || f.player<0 || f.player>=MaxCars || !(s.trackMeters>0)) { Reset(); return; }
+    const auto& own=f.cars[f.player]; if(own.pct<0) return;
+    // A session clock that went back (a new session, a reset) forgets the lanes.
+    if(std::any_of(seen_.begin(),seen_.end(),[&](double t){ return t>f.time; })) Reset();
+    for(int i=0;i<MaxCars;++i) {
+        const auto& c=f.cars[i];
+        // Cars in the pit lane only beside yours in it: on track the pit wall is between you.
+        if(i==f.player || c.pct<0 || c.surface<0 || c.surface==1 || c.pit!=own.pit) continue;
+        double apart=c.pct-own.pct; apart-=std::floor(apart+.5); apart*=s.trackMeters;
+        if(std::abs(apart)<=std::max(reach,Reach)) cars_.push_back({i,apart,0});
+    }
+    std::sort(cars_.begin(),cars_.end(),[](const RadarCar& a,const RadarCar& b){ return std::abs(a.metres)<std::abs(b.metres); });
+    int left=0,right=0;
+    switch(f.spotter) { case 2: left=1; break; case 3: right=1; break; case 4: left=right=1; break; case 5: left=2; break; case 6: right=2; break; default: break; }
+    // Beside you: as many of the nearest cars as the spotter reports, those that had a side keeping it.
+    // Candidates nearest first: a car within 5.5 m that had the side keeps it, else the nearest within 8 m takes it.
+    std::vector<RadarCar*> beside;
+    for(auto& c:cars_) if(std::abs(c.metres)<=Reach) beside.push_back(&c);
+    // Two cars on a side are in two lanes: you are at the edge of three wide.
+    std::vector<int> lanes; for(int i=1;i<=left;++i) lanes.push_back(-i); for(int i=1;i<=right;++i) lanes.push_back(i);
+    std::vector<int> open;
+    // A lane the spotter gave counts before one only guessed.
+    for(int l:lanes) {
+        auto had=[&](bool guessed) { return std::find_if(beside.begin(),beside.end(),[&](const RadarCar* c){ return !c->lane && std::abs(c->metres)<=Overlap && lane_[c->index]==l && guess_[c->index]==guessed && f.time-seen_[c->index]<=Hold; }); };
+        auto kept=had(false); if(kept==beside.end()) kept=had(true);
+        if(kept!=beside.end()) (*kept)->lane=l; else open.push_back(l);
+    }
+    for(int l:open) for(auto* c:beside) if(!c->lane) { c->lane=l; break; }
+    // The others keep the lane they had for 3 s, also while the spotter no longer reports them but they are still
+    // close: it clears as soon as the cars no longer touch, while the lap distance still has them a few metres apart.
+    for(auto& c:cars_) {
+        if(c.lane) { lane_[c.index]=c.lane; guess_[c.index]=false; side_[c.index]=c.lane>0?1:-1; seen_[c.index]=sided_[c.index]=f.time; }
+        else if(f.time-seen_[c.index]<=Hold) c.lane=lane_[c.index];
+    }
+    // A car still near yours (within 8 m) or beside another one stays on its side as long as it is: the 3 s start again.
+    for(auto& c:cars_) if(c.lane && f.time-seen_[c.index]>0)
+        if(std::abs(c.metres)<Reach || std::any_of(cars_.begin(),cars_.end(),[&](const RadarCar& other){ return &other!=&c && std::abs(other.metres-c.metres)<CarLength; })) seen_[c.index]=f.time;
+    // A car that overlaps yours is beside it, reported or not (the spotter says nothing while you are off the track,
+    // nor for a moment as a car comes alongside): on the one side the spotter reports, as the other is clear; else on
+    // the side it was last on, else the one without a car.
+    // A car that was just beside another one keeps that side as it comes alongside, from a little further away.
+    for(auto& c:cars_) if(!c.lane && std::abs(c.metres)<(side_[c.index] && f.time-paired_[c.index]<=Hold?Overlap:SideBySide)) {
+        const bool leftTaken=std::any_of(cars_.begin(),cars_.end(),[](const RadarCar& o){ return o.lane<0 && std::abs(o.metres)<SideBySide; });
+        const int reported=left && !right?-1:(right && !left?1:0);
+        c.lane=reported?reported:(side_[c.index]?side_[c.index]:(leftTaken?1:-1));
+        if(side_[c.index]!=c.lane) { side_[c.index]=c.lane; sided_[c.index]=f.time; }
+        lane_[c.index]=c.lane; guess_[c.index]=true; seen_[c.index]=f.time;
+    }
+    // Side by side in your lane, ahead or behind: the spotter knows nothing of them, so they keep the side they had.
+    std::vector<RadarCar*> line; for(auto& c:cars_) if(!c.lane) line.push_back(&c);
+    std::sort(line.begin(),line.end(),[](const RadarCar* a,const RadarCar* b){ return a->metres<b->metres; });
+    for(size_t i=0;i+1<line.size();) {
+        auto* behind=line[i]; auto* ahead=line[i+1];
+        // Once side by side, they stay so until they no longer overlap at all.
+        const bool were=side_[behind->index] && side_[behind->index]==-side_[ahead->index] && f.time-paired_[behind->index]<=.5 && f.time-paired_[ahead->index]<=.5;
+        if(ahead->metres-behind->metres>=(were?CarLength:SideBySide)) { ++i; continue; }
+        // The side learnt last wins when both had the same one.
+        int back=side_[behind->index], front=side_[ahead->index];
+        if(!back && !front) front=-1;
+        if(front && (!back || (front==back && sided_[ahead->index]>=sided_[behind->index]))) back=-front; else front=-back;
+        behind->offset=back*.5; ahead->offset=front*.5;
+        for(auto* c:{behind,ahead}) { if(side_[c->index]!=(c->offset>0?1:-1)) { side_[c->index]=c->offset>0?1:-1; sided_[c->index]=f.time; } paired_[c->index]=f.time; }
+        i+=2;
+    }
+    // A third car of such a row goes beside its neighbour, on the other side.
+    for(auto* c:line) if(!c->offset)
+        for(const auto* other:line) if(other->offset && std::abs(other->metres-c->metres)<SideBySide) { c->offset=-other->offset; side_[c->index]=c->offset>0?1:-1; sided_[c->index]=paired_[c->index]=f.time; break; }
+    // A car whose neighbour just went beside you stays on its side a moment, rather than jumping into your lane.
+    for(auto* c:line) if(!c->offset && side_[c->index] && f.time-paired_[c->index]<.3) c->offset=side_[c->index]*.5;
+    std::erase_if(cars_,[&](const RadarCar& c){ return std::abs(c.metres)>reach; });
+}
 int NorthTurnFromOffset(double offset) {
     if(!std::isfinite(offset)) return -1;
     const int turn=static_cast<int>(std::lround(offset*180/3.141592653589793+270))%360;

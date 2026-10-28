@@ -26,6 +26,7 @@ RaceMate puts nearby traffic, standings, fuel planning, weather, pit-limiter war
 | **Weather** | Current conditions, temperature history, trends and car-relative wind |
 | **Track Map — experimental** | Official circuit geometry or download-free Circle/Line layouts |
 | **Side Warning** | Bars at the screen edges while a car is beside you, from iRacing's spotter |
+| **Radar** | The cars around yours from above, with exact distances and lanes estimated from the spotter |
 | **Race Control** | Observed incidents, pit visits and estimated passes, with camera/replay navigation |
 | **Layouts** | Independent arrangements that switch for driving, spectating or the garage |
 

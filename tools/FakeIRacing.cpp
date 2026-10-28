@@ -114,13 +114,13 @@ int main(int argc, char** argv) {
         }
         for (int i = Cars; i < 64; ++i) { set(row, "CarIdxLapDistPct", -1, i); set(row, "CarIdxTrackSurface", -1, i); set(row, "CarIdxPosition", 0, i); }
         // The spotter in a 10 s cycle: clear, a car passing on the left (from 6 m behind to 6 m ahead), clear,
-        // two cars on the right, three wide. The car beside you is moved there; the others keep racing.
+        // two cars on the right, three wide. The cars beside you are moved there, another 11 m ahead of you
+        // otherwise; the others keep racing.
         const int phase = tick % 600;
         const int spotter = phase < 150 ? 1 : phase < 330 ? 2 : phase < 420 ? 1 : phase < 540 ? 6 : 4;
-        if (spotter != 1) {
-            const double metres = spotter == 2 ? -6 + 12.0 * (phase - 150) / 180 : 1.5, pct = std::fmod(laps[Player] + metres / 5200, 1.0);
-            set(row, "CarIdxLapDistPct", pct, (Player + 1) % Cars);
-        }
+        auto place = [&](int car, double metres) { set(row, "CarIdxLapDistPct", std::fmod(laps[Player] + metres / 5200, 1.0), car % Cars); };
+        if (spotter != 1) place(Player + 1, spotter == 2 ? -6 + 12.0 * (phase - 150) / 180 : 1.5);
+        place(Player + 2, spotter == 6 || spotter == 4 ? -2 : 11);
         const int playerLaps = static_cast<int>(laps[Player]);
         set(row, "SessionTime", time); set(row, "SessionTimeRemain", 3600 - tick / 60.0); set(row, "SessionNum", 0); set(row, "SessionState", 4);
         set(row, "SessionFlags", 0x4); set(row, "PlayerCarIdx", Player); set(row, "CamCarIdx", Player); set(row, "CamGroupNumber", 1);

@@ -1,12 +1,12 @@
 // Pages that list what an overlay shows: Fuel Calculator and Weather choose a layout,
 // switch and order modules (the fuel consumption module expands to its values) and set
-// header and footer. Pit Assist shares the bands and explains when and how it shows; the Side Warning has no
-// bands, only when it shows and the car's place on its bars.
+// header and footer. Pit Assist shares the bands and explains when and how it shows; the Side Warning and the
+// Radar have no bands, only their layout, when they show and what is on them.
 class ElementsPage : public PageWindow {
 public:
     explicit ElementsPage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
-    enum class Key { None, Layout, Rounded, Module, Band, Info, SetupChanges, PitStrip, Countdown, SideCar, SideApart };
+    enum class Key { None, Layout, Rounded, Module, Band, Info, SetupChanges, PitStrip, Countdown, SideCar, SideApart, RadarBackground, RadarRange, RadarShows, RadarDistances };
     static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210, HumidityEditId=212, HistoryPartEditId=213, CautionEditId=220, SlotEditId=230, HeaderRow=1000, FooterRow=1001;
 
     void OnCreate() override {
@@ -45,6 +45,30 @@ private:
                 push(std::move(row),Key::Band,id);
             }
         };
+        if(o_.kind==RadarKind) {
+            const auto& r=o_.radar;
+            header(L"Layout");
+            RowList::Row background; background.title=L"Background and frame"; background.toggle=r.background?1:0;
+            background.detail=L"Off: transparent, only the cars, guides and distances over the game.";
+            push(std::move(background),Key::RadarBackground);
+            RowList::Row range; range.title=L"Range"; range.button=L"Choose...";
+            range.detail=std::to_wstring(r.range)+L" m ahead and behind; guides every "+Format(r.range/4.0,r.range%4?1:0)+L" m";
+            push(std::move(range),Key::RadarRange);
+            auto rounded=RoundedRow(o_); rounded.muted=!r.background; rounded.toggleEnabled=r.background; push(std::move(rounded),Key::Rounded);
+            header(L"When it shows");
+            RowList::Row shows; shows.title=r.always?L"Always while you drive":L"With cars near"; shows.button=L"Choose...";
+            shows.detail=r.always?L"While you drive your own car, also without cars in range":L"While you drive and a car is within range, until 2 s after the last one left it";
+            push(std::move(shows),Key::RadarShows);
+            header(L"On the radar");
+            RowList::Row distances; distances.title=L"Distances"; distances.toggle=r.distances?1:0;
+            distances.detail=L"Bumper to bumper, to the nearest car ahead and behind, also on the lanes beside yours.";
+            push(std::move(distances),Key::RadarDistances);
+            info(L"Lanes",L"Estimated: iRacing reports cars along the lap only. Beside you the spotter tells the side; a car keeps it 3 s.");
+            header(L"Colors");
+            info(L"Cars",L"In their class color; yours outlined",L"Class");
+            info(L"Spotter",L"Where it reports cars beside you",L"Red",RowList::Tone::Warning);
+            list_.SetRows(std::move(rows)); return;
+        }
         if(o_.kind==SideWarningKind) {
             header(L"Layout");
             RowList::Row apart; apart.title=L"Distance apart"; apart.button=L"Choose...";
@@ -190,6 +214,14 @@ private:
         case Key::SetupChanges: if(code==RowList::kToggled) { o_.setupChanges=on; Fit(o_); Changed(); } break;
         case Key::PitStrip: if(code==RowList::kToggled) { o_.pitStrip=on; Fit(o_); Changed(); } break;
         case Key::SideCar: if(code==RowList::kToggled) { o_.sideCar=on; Changed(); } break;
+        case Key::RadarBackground: if(code==RowList::kToggled) { o_.radar.background=on; Fit(o_); Changed(); } break;
+        case Key::RadarDistances: if(code==RowList::kToggled) { o_.radar.distances=on; Changed(); } break;
+        case Key::RadarRange:
+            if(pressed) { const int choice=ChooseFromMenu({L"10 m",L"20 m",L"30 m",L"40 m"},o_.radar.range/10-1); if(choice>=0) { o_.radar.range=10*(choice+1); Changed(); } }
+            break;
+        case Key::RadarShows:
+            if(pressed) { const int choice=ChooseFromMenu({L"With cars near",L"Always while you drive"},o_.radar.always?1:0); if(choice>=0) { o_.radar.always=choice==1; Changed(); } }
+            break;
         case Key::SideApart:
             if(pressed) {
                 std::vector<std::wstring> items; for(int percent=100;percent>=20;percent-=10) items.push_back(std::to_wstring(percent)+(percent==100?L" %  ·  at the screen edges":L" %"));

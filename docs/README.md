@@ -9,7 +9,7 @@ These guides describe the implementation in **RaceMate 0.2.2**. Screenshots show
 | Guide | What you will learn |
 | --- | --- |
 | [Getting started](getting-started.md) | Download, first launch, Preview, positioning, connecting and daily use |
-| [Overlay reference](overlays.md) | Relative, Standings, Fuel Calculator, Pit Assist, Weather, Side Warning, columns and shared metrics |
+| [Overlay reference](overlays.md) | Relative, Standings, Fuel Calculator, Pit Assist, Weather, Side Warning, Radar, columns and shared metrics |
 | [Layouts and settings](layouts-and-settings.md) | Automatic layouts, extra instances, appearance, shortcuts, startup and backups |
 | [Fuel and pit strategy](fuel-and-pit-strategy.md) | Consumption learning, finish forecasts, opponent estimates and pit exit predictions |
 | [Track Map](track-map.md) | Map, Circle and Line, transparency, markers, labels and cached assets |

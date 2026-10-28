@@ -294,7 +294,7 @@ int RunDiagnostics() {
         app.fuelPlan=savedPlan;
         // One registry and renderer for both bands of every kind, including the Pit Assist.
         for(int kind=0;kind<OverlayCount;++kind) {
-            if(kind==SideWarningKind) continue; // Its bars have no bands.
+            if(kind==SideWarningKind || kind==RadarKind) continue; // They have no bands.
             auto& o=First(kind); const Bands bands=o.bands;
             o.bands.header=true; o.bands.footer.enabled=true;
             o.bands.headerMetrics={LeaderDistanceMetric,WhiteFlagTimeMetric,NoMetric,NoMetric};
@@ -790,7 +790,7 @@ int RunDiagnostics() {
         };
         ShowPage(Page::Overlays); aligned("Overlays");
         ShowPage(Page::Settings); aligned("Settings");
-        constexpr const char* pages[]={"Relative","Standings","Fuel Calculator","Pit Assist","Weather","Track Map","Side Warning"};
+        constexpr const char* pages[]={"Relative","Standings","Fuel Calculator","Pit Assist","Weather","Track Map","Side Warning","Radar"};
         static_assert(std::size(pages)==OverlayCount);
         for(int kind=0;kind<OverlayCount;++kind) { OpenOverlay(First(kind)); aligned(pages[kind]); }
         ShowPage(Page::Overlays);
@@ -1417,7 +1417,7 @@ int RunDiagnostics() {
     }
     app.pitVisibility.Reset();
     app.preview=false; app.hidden=false; app.frame.pit=false; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind))&&ok;
     const auto originalSurface=app.frame.cars[app.frame.player].surface;
     app.frame.cars[app.frame.player].surface=2; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
     ok=Export(First(3).window,L"build\\qa\\pit-approach.bmp") && ok;
@@ -1480,13 +1480,13 @@ int RunDiagnostics() {
     app.frame.cars[app.frame.player].surface=originalSurface;
     app.frame.pit=true; UpdateOverlays(); ok=IsWindowVisible(First(3).window)&&ok;
     app.frame.onTrack=false; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind))&&ok;
     app.frame.camera=4; app.frame.replay=true; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind))&&ok;
     ok=ReferenceCar(app.frame)==4 && !Rows(First(0)).empty() && ok;
     ok=Export(First(0).window,L"build\\qa\\relative-replay.bmp")&&ok;
     app.frame.replay=false; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind))&&ok;
     app.frame.connected=false; UpdateOverlays();
     for(auto& o:app.overlays) ok=!IsWindowVisible(o.window)&&ok;
     app.preview=true; app.hidden=true; UpdateOverlays();
@@ -1543,6 +1543,37 @@ int RunDiagnostics() {
         sideOk=!IsWindowVisible(side.window) && sideOk;
         app.frame=savedFrame; app.session=savedSession; side.place=savedPlace; app.hidden=savedHidden; app.preview=true; Fit(side); UpdateOverlays();
         report<<"Side Warning: mirrored bars, distance apart, dragging, each for its side, car position and hold: "<<(sideOk?"PASS":"FAIL")<<"\n"; ok=sideOk && ok;
+    }
+    {
+        // Radar: the preview's cars around yours, with a panel and transparent; live it shows with a car in range,
+        // until 2 s after, or always while you drive.
+        auto& radar=First(RadarKind); const auto savedPlace=radar.place; const auto savedRadar=radar.radar; const auto savedFrame=app.frame; const auto savedSession=app.session; const bool savedHidden=app.hidden;
+        app.preview=true; app.hidden=false; radar.place.enabled=true; Fit(radar); UpdateOverlays();
+        auto count=[&](DrawCommand::Type type,COLORREF color) { return std::count_if(radar.scene.begin(),radar.scene.end(),[&](const DrawCommand& c){ return c.type==type && (color==CLR_INVALID || c.color==color); }); };
+        auto text=[&](const wchar_t* t) { return std::any_of(radar.scene.begin(),radar.scene.end(),[&](const DrawCommand& c){ return c.type==DrawCommand::Text && c.text==t; }); };
+        bool radarOk=IsWindowVisible(radar.window) && count(DrawCommand::RoundFill,CLR_INVALID)==6 && count(DrawCommand::Outline,Ink::Yellow)==1;
+        radarOk=text(L"6.4 m") && text(L"10 m") && text(L"20 m") && count(DrawCommand::Fill,Mix(Ink::Panel,Ink::SideRed,.35))==2 && radarOk;
+        radarOk=Export(radar.window,L"build\\qa\\radar.bmp") && radarOk;
+        radar.radar.background=false; Fit(radar); UpdateOverlays();
+        radarOk=radar.layeredAlpha && radar.pixels && radar.pixels[0]==0 && Export(radar.window,L"build\\qa\\radar-transparent.bmp",true) && radarOk;
+        const RECT own=std::find_if(radar.scene.begin(),radar.scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::Outline; })->r;
+        radarOk=(radar.pixels[(own.top+own.bottom)/2*radar.width+(own.left+own.right)/2]>>24)==255 && radarOk; // GDI's pixels made opaque.
+        radar.radar=savedRadar; radar.radar.range=10; Fit(radar); UpdateOverlays(); radarOk=text(L"10 m") && text(L"5 m") && !text(L"20 m") && radarOk;
+        radar.radar.distances=false; UpdateOverlays(); radarOk=!text(L"6.4 m") && radarOk;
+        radar.radar=savedRadar; Save(); Load(); radarOk=radar.radar.range==savedRadar.range && radar.radar.background && radarOk;
+        // Live: no car in range hides it; a car 8 m ahead shows it, and it stays 2 s after the car left the range.
+        app.preview=false; app.frame.connected=app.frame.onTrack=true; app.frame.replay=false; app.frame.spotter=1; app.radar.Reset();
+        for(int i=0;i<MaxCars;++i) if(i!=app.frame.player) app.frame.cars[i].pct=-1;
+        auto& car=app.frame.cars[(app.frame.player+1)%10]; const double own_pct=app.frame.cars[app.frame.player].pct;
+        car.pit=false; car.surface=3; car.pct=own_pct+60/app.session.trackMeters;
+        app.now+=5000; UpdateOverlays(); radarOk=!IsWindowVisible(radar.window) && radarOk;
+        car.pct=own_pct+8/app.session.trackMeters; app.now+=100; UpdateOverlays(); radarOk=IsWindowVisible(radar.window) && radarOk;
+        car.pct=own_pct+60/app.session.trackMeters; app.now+=1000; UpdateOverlays(); radarOk=IsWindowVisible(radar.window) && radarOk;
+        app.now+=1500; UpdateOverlays(); radarOk=!IsWindowVisible(radar.window) && radarOk;
+        radar.radar.always=true; UpdateOverlays(); radarOk=IsWindowVisible(radar.window) && radarOk;
+        app.frame.replay=true; UpdateOverlays(); radarOk=!IsWindowVisible(radar.window) && radarOk;
+        app.frame=savedFrame; app.session=savedSession; radar.place=savedPlace; radar.radar=savedRadar; app.hidden=savedHidden; app.preview=true; app.radar.Reset(); Fit(radar); UpdateOverlays();
+        report<<"Radar: cars and lanes from above, distances, range, transparent, near-cars and always visibility: "<<(radarOk?"PASS":"FAIL")<<"\n"; ok=radarOk && ok;
     }
     app.preview=true; PreviewData(0);
     bool orderOk=true;

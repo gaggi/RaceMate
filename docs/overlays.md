@@ -13,6 +13,7 @@
 | [Weather](#weather) | Current conditions, history and wind | 1 Hz |
 | [Track Map](track-map.md) | Car locations on a Map, Circle or Line | 20 Hz |
 | [Side Warning](#side-warning) | Bars at the screen edges while a car is beside you | 20 Hz |
+| [Radar](#radar) | The cars around yours from above, lanes beside you estimated | 20 Hz |
 
 Also on this page: [Position in the Relative](#position-in-the-relative) · [Table columns](#table-columns) · [Status badges](#status-badges) · [Header and footer metrics](#header-and-footer-metrics)
 
@@ -196,6 +197,28 @@ Two narrow bars, by default at the left and right edge of the screen, light up w
 The spotter tells the side, but not which car is there. RaceMate takes the nearest car within 10 m along the lap as the one beside you. With cars on both sides their lap distance cannot tell which is where, so neither bar shows a block then. **Where the car beside you is** switches the block off.
 
 The bars stay centred on their monitor. **Distance apart** sets how far apart their outer edges are, as a share of the screen width: 100 % puts them at its edges, down to 20 % for bars close beside the middle of the screen. Drag either bar up or down, or onto another monitor: they go over as soon as the mouse is on it, and the other bar follows at the same height. Size, opacity and rounded corners apply to both, and both get the same frame while overlays are moved or the page is open. Both bars show while overlays are moved, in grey when nobody is beside you. The Side Warning has no header or footer, and only one instance.
+
+## Radar
+
+The cars around yours from above: your car in the middle, outlined in yellow, the others in their class colour, how far ahead or behind they are up and down the radar. Dashed guides mark every quarter of the range, labelled at half and full range. Where the spotter reports cars beside you, the lanes there are shaded red. The Radar is off by default; switch it on under **Overlays**.
+
+| Setting | Choices |
+| --- | --- |
+| Background and frame | On: a panel like the other overlays. Off: transparent, only cars, guides and distances over the game |
+| Range | 10, 20 (default), 30 or 40 m ahead and behind |
+| When it shows | **With cars near** (default): while you drive and a car is within range, until 2 s after the last one left it. **Always while you drive** |
+| Distances | The gap bumper to bumper to the nearest car ahead and behind, in any lane, beside it on the outer side; with one decimal under 10 m |
+
+It shows only while you drive your own car, not while spotting or in replays; both settings for when it shows apply to that. While overlays are moved or previewed it always shows.
+
+**Lanes are estimated.** iRacing reports where every car is along the lap, but not across the track. Distances ahead and behind are exact; lanes come from the spotter (`CarLeftRight`):
+
+- The cars beside you, as many as it reports, take the side it reports: a car within 5.5 m that had that side keeps it, otherwise the nearest within 8 m. Two cars on one side are in two lanes, since you are then at the edge of three wide.
+- A car that clearly overlaps yours (within 3.5 m) is beside you even when the spotter doesn't report it, as when you stand beside the track or a car has only just come alongside: on the one side the spotter reports, else the side it was last on, else the free side.
+- A car keeps its lane for 3 s after it was last beside you, and as long as it is within 8 m of you or beside another car. Only then does it count as in your lane, so cars don't jump into your lane while overtaking or being overtaken.
+- Two cars in your lane, ahead or behind, that overlap each other must be side by side: they are drawn half a lane to either side, and stay so until they no longer overlap at all. Each keeps the side it was last on, beside you or beside another car; otherwise the one ahead goes left. A third car in such a row goes beside its neighbour.
+
+A car that changes lane glides across in about a quarter of a second. Cars in the pit lane appear only while you are in it too. Like the Side Warning, the Radar has no header or footer and only one instance.
 
 ## Weather
 

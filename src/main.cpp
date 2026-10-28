@@ -33,17 +33,17 @@ namespace {
 using namespace rm;
 constexpr COLORREF Background=RGB(246,247,249), Text=RGB(40,47,58);
 constexpr UINT TrayMessage=WM_APP+1;
-enum OverlayKind { RelativeKind, StandingsKind, FuelKind, PitLimiterKind, WeatherKind, TrackMapKind, SideWarningKind };
-constexpr int OverlayCount=SideWarningKind+1;
+enum OverlayKind { RelativeKind, StandingsKind, FuelKind, PitLimiterKind, WeatherKind, TrackMapKind, SideWarningKind, RadarKind };
+constexpr int OverlayCount=RadarKind+1;
 constexpr bool IsTable(int kind) { return kind==RelativeKind || kind==StandingsKind; }
-constexpr bool SingleInstance(int kind) { return kind==PitLimiterKind || kind==SideWarningKind; }
-const wchar_t* Titles[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pit Assist",L"Weather",L"Track Map",L"Side Warning"};
-const wchar_t* Sections[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pitlimiter",L"Weather",L"Track Map",L"Side Warning"};
+constexpr bool SingleInstance(int kind) { return kind==PitLimiterKind || kind==SideWarningKind || kind==RadarKind; }
+const wchar_t* Titles[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pit Assist",L"Weather",L"Track Map",L"Side Warning",L"Radar"};
+const wchar_t* Sections[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pitlimiter",L"Weather",L"Track Map",L"Side Warning",L"Radar"};
 // The Side Warning's place is its left bar's, at the screen's left edge; the right bar mirrors it.
-constexpr POINT DefaultPositions[]={{40,120},{480,120},{40,470},{40,720},{40,820},{960,120},{8,380}};
+constexpr POINT DefaultPositions[]={{40,120},{480,120},{40,470},{40,720},{40,820},{960,120},{8,380},{860,560}};
 // Refresh rates an overlay can choose, and each overlay's default; telemetry is read at least as often as the fastest.
 constexpr int OverlayRates[]={1,2,5,10,15,20};
-constexpr int DefaultRates[]={10,1,1,10,1,20,20};
+constexpr int DefaultRates[]={10,1,1,10,1,20,20,20};
 // Relative and Standings columns. The values are stored in ColumnOrder.
 enum Column {
     PositionColumn, NumberColumn, DriverColumn, GapColumn, IntervalColumn, BestColumn, LastColumn,
@@ -203,6 +203,10 @@ struct TrackMapSettings {
     bool surroundings=false, allConfigs=false;
     bool northUp=false; // Turned so north points up, where iRacing turned the drawing to fit.
 };
+// The Radar: what it shows and when. range: metres ahead and behind, 10 to 40.
+struct RadarSettings { bool background=true, always=false, distances=true; int range=20; };
+constexpr int RadarWidth=180, RadarHeight=260;
+int RadarRange(int metres) { return ((std::clamp(metres,10,40)+5)/10)*10; }
 enum TrackMapLayout { MapLayout, CircleLayout, LineLayout };
 constexpr int TrackMapWidth=440, TrackMapBodyHeight=264;
 int TrackMapWidthOf(const TrackMapSettings& m) { return m.layout==CircleLayout?280:(m.layout==LineLayout?880:TrackMapWidth); }
@@ -218,7 +222,7 @@ constexpr COLORREF TrackMapTransparentKey=RGB(1,2,3), TrackMapMoveKey=RGB(1,2,4)
 // One overlay window. A kind can have several instances; the first keeps the kind's plain name and settings section.
 struct Overlay {
     HWND window=nullptr; int kind=0, number=1; Placement place;
-    Bands bands; TableSettings table; FuelSettings fuel; WeatherSettings weather; TrackMapSettings map;
+    Bands bands; TableSettings table; FuelSettings fuel; WeatherSettings weather; TrackMapSettings map; RadarSettings radar;
     bool setupChanges=true; // Pit Assist: in the pit lane, list in-car adjustments that differ from the setup.
     bool pitStrip=true;     // Pit Assist: the pit lane with your car, your box, where to brake and where the limiter can go off.
     bool pitSeconds=false;  // Pit Assist: count down to the brake points, box and exit in seconds instead of metres.
@@ -303,6 +307,10 @@ struct App {
     // Whether Pit Assist shows, and where its strip starts while it does, so it stays put on the way in.
     bool pitVisible=false; double pitStripLeft=std::numeric_limits<double>::quiet_NaN();
     SideTraffic side; std::array<ULONGLONG,2> sideSeen{}; // The Side Warning's cars beside you, and when each side last had one.
+    // The Radar's cars and their lanes, and when a car was last in its range.
+    RadarTracker radar; std::vector<RadarCar> radarCars; ULONGLONG radarNear=0;
+    // Where each car is drawn across, in lanes, as it glides to its lane; whether it was on the radar, and when.
+    std::array<double,MaxCars> radarAcross{}; std::array<bool,MaxCars> radarPresent{}; ULONGLONG radarGlided=0;
     struct { int track=-1; std::wstring car; double fixedLane=-1, tires=-1, rate=-1; int samplesSaved=0, endsSaved=0, brakingSaved=0; } pitTimes;
     unsigned pitExitVersion=~0u; PitRejoin pitExit; bool pitExitPartial=false;
     unsigned modelVersion=0,planVersion=~0u,ratingVersion=~0u;
@@ -462,6 +470,7 @@ int OverlayWidth(const Overlay& o) {
     if(o.kind==WeatherKind) return o.weather.strip?std::max(1,WeatherStripCount(o))*WeatherStripCell:(WindRoseOnly(o)?WindRoseWidth:WeatherPanelWidth);
     if(o.kind==FuelKind) return o.fuel.strip?std::max(1,FuelStripCount(o))*FuelStripCell:FuelPanelWidth;
     if(o.kind==SideWarningKind) return SideBarWidth;
+    if(o.kind==RadarKind) return RadarWidth;
     return 365;
 }
 COLORREF TireTextColor(const Row& row) {
@@ -481,9 +490,12 @@ std::wstring CompletedLaps(const Row& row) {
 }
 // All overlay kinds draw the same configurable metric bands.
 bool MapOnly(const Overlay& o) { return o.kind==TrackMapKind && !o.map.background; }
-// The Side Warning's bars have none.
-bool ShowOverlayHeader(const Overlay& o) { return o.bands.header && !MapOnly(o) && o.kind!=SideWarningKind; }
-int FooterHeight(const Overlay& o) { return o.bands.footer.enabled && !MapOnly(o) && o.kind!=SideWarningKind?28:0; }
+// Per-pixel alpha over the game: a map or a radar without background.
+bool PerPixel(const Overlay& o) { return MapOnly(o) || (o.kind==RadarKind && !o.radar.background); }
+// The Side Warning's bars and the Radar are instruments to glance at, without header or footer.
+bool NoBands(const Overlay& o) { return MapOnly(o) || o.kind==SideWarningKind || o.kind==RadarKind; }
+bool ShowOverlayHeader(const Overlay& o) { return o.bands.header && !NoBands(o); }
+int FooterHeight(const Overlay& o) { return o.bands.footer.enabled && !NoBands(o)?28:0; }
 double SessionProgress();
 // The Standings' session progress bar, a row of its own under the header while the session has a known length.
 int ProgressHeight(const Overlay& o) { return o.kind==StandingsKind && o.table.progress && SessionProgress()>=0?24:0; }
@@ -610,7 +622,7 @@ void ReadInstance(Overlay& o) {
     p.scale=NormalizeScale(ReadInt(section.c_str(),L"Scale",100)); p.opacity=std::clamp(ReadInt(section.c_str(),L"Opacity",90),40,100);
     const int rate=ReadInt(section.c_str(),L"RefreshHz",DefaultRates[kind]);
     p.rate=*std::find_if(std::begin(OverlayRates),std::end(OverlayRates)-1,[&](int choice){return choice>=rate;});
-    p.enabled=ReadBool(section.c_str(),L"Enabled",kind!=TrackMapKind && kind!=SideWarningKind); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
+    p.enabled=ReadBool(section.c_str(),L"Enabled",kind!=TrackMapKind && kind!=SideWarningKind && kind!=RadarKind); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
     p.rounded=ReadBool(section.c_str(),L"RoundedCorners",false);
     const Bands defaults=DefaultBands(kind); auto& b=o.bands;
     b.header=ReadBool(section.c_str(),L"ShowHeader",kind==PitLimiterKind?ReadBool(L"General",L"ShowTitleBar",false):defaults.header); b.headerMetrics=ReadSlots(section.c_str(),HeaderKeys,defaults.headerMetrics);
@@ -623,6 +635,10 @@ void ReadInstance(Overlay& o) {
     if(kind==WeatherKind) o.weather.order=ReadOrder(section.c_str(),L"ModuleOrder",WeatherOrder);
     for(int i=0;i<WeatherModuleCount;++i) o.weather.display[i]=ReadBool(section.c_str(),WeatherModules[i].key,WeatherModules[i].on);
     o.weather.strip=o.fuel.strip;
+    if(kind==RadarKind) {
+        auto& r=o.radar; r.background=ReadBool(section.c_str(),L"ShowBackground",true); r.always=ReadBool(section.c_str(),L"AlwaysWhileDriving",false);
+        r.distances=ReadBool(section.c_str(),L"ShowDistances",true); r.range=RadarRange(ReadInt(section.c_str(),L"Range",20));
+    }
     if(kind==SideWarningKind) { o.sideCar=ReadBool(section.c_str(),L"ShowCarPosition",true); o.sideApart=SideApart(ReadInt(section.c_str(),L"BarsApart",100)); }
     if(kind==PitLimiterKind) { o.setupChanges=ReadBool(section.c_str(),L"ShowSetupChanges",true); o.pitStrip=ReadBool(section.c_str(),L"ShowPitLaneProgress",true); o.pitSeconds=ReadBool(section.c_str(),L"CountdownInSeconds",false); }
     if(kind==TrackMapKind) {
@@ -746,6 +762,7 @@ void Save() {
             for(int i=0;i<WeatherModuleCount;++i) number(section,WeatherModules[i].key,o.weather.display[i]);
             number(section,L"Layout",o.weather.strip); order(section,L"ModuleOrder",o.weather.order);
         }
+        if(o.kind==RadarKind) { const auto& r=o.radar; number(section,L"ShowBackground",r.background); number(section,L"AlwaysWhileDriving",r.always); number(section,L"ShowDistances",r.distances); number(section,L"Range",r.range); }
         if(o.kind==SideWarningKind) { number(section,L"ShowCarPosition",o.sideCar); number(section,L"BarsApart",o.sideApart); }
         if(o.kind==PitLimiterKind) { number(section,L"ShowSetupChanges",o.setupChanges); number(section,L"ShowPitLaneProgress",o.pitStrip); number(section,L"CountdownInSeconds",o.pitSeconds); }
         if(o.kind==TrackMapKind) {
@@ -1093,6 +1110,7 @@ PitStripModel PitStrip(const Overlay& o) {
 int HeightWithTitle(const Overlay& o) {
     if(o.kind==TrackMapKind) return 32+TrackMapBody(o.map,MapOnly(o),o.map.details)+FooterHeight(o);
     if(o.kind==SideWarningKind) return 32+SideBarHeight;
+    if(o.kind==RadarKind) return 32+RadarHeight;
     const auto& t=o.table;
     if(o.kind==RelativeKind) return TableRowsTop(o)+t.rows*27+FooterHeight(o);
     if(o.kind==StandingsKind) {
@@ -1289,7 +1307,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
     constexpr int BarHeight=12;
     auto barMark=[&](int x,int top,COLORREF ink) { fill(rect(x-1,top-4,2,BarHeight+8),ink); };
     const COLORREF white=Ink::White, muted=Ink::Muted;
-    out.push_back({DrawCommand::Fill,Regular,0,{0,0,width,height},MapOnly(o)?(app.edit?TrackMapMoveKey:TrackMapTransparentKey):Ink::Panel});
+    out.push_back({DrawCommand::Fill,Regular,0,{0,0,width,height},PerPixel(o)?(app.edit?TrackMapMoveKey:TrackMapTransparentKey):Ink::Panel});
     // Width in physical pixels, measured with the overlay's fonts exactly as DrawLabel will.
     // Most metric texts repeat between refreshes, so widths are kept until the fonts change.
     auto measure=[&](const std::wstring& text,FontId font) {
@@ -1341,7 +1359,50 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         fill({0,px(y),width,height+titleOffset},Ink::Band); fill({0,px(y),width,px(y)+std::max(1,px(1))},Ink::Line);
         slots(o.bands.footer.metrics,{0,px(y),width,height+titleOffset});
     };
-    if(o.kind==SideWarningKind) {
+    if(o.kind==RadarKind) {
+        // From above, your car in the middle: metres along the lap up the radar, lanes across; guides every quarter of
+        // the range. Lanes 3.4 m apart, cars 1.9 m by 4.6 m, all smaller when five lanes would not fit.
+        const auto& r=o.radar; const double middle=height/2.0, perMetre=(height/2.0-px(12))/r.range;
+        const double lane=std::min(3.4*perMetre,(width-px(16))/5.0), scale=std::min(1.,lane/(3.4*perMetre));
+        const int centre=width/2, carWidth=std::max(px(4),static_cast<int>(std::lround(1.9*perMetre*scale))), carLength=std::max(px(8),static_cast<int>(std::lround(4.6*perMetre*scale)));
+        auto along=[&](double metres) { return static_cast<int>(std::lround(middle-metres*perMetre)); };
+        auto across=[&](int laneIndex) { return centre+static_cast<int>(std::lround(laneIndex*lane)); };
+        for(int quarter=-4;quarter<=4;++quarter) if(quarter) {
+            const int at=along(r.range*quarter/4.0);
+            out.push_back({DrawCommand::DottedLine,Regular,0,{px(8),at,width-px(8),at+1},Ink::Divider});
+            if(quarter==2 || quarter==4) out.push_back({DrawCommand::Text,Small,DT_RIGHT,{width-px(48),at+px(1),width-px(8),at+px(15)},Ink::Label,{},Format(r.range*quarter/4.0,0)+L" m"});
+        }
+        // Where the spotter has cars beside you, in red behind them.
+        for(int side:{-1,1}) if(const int count=side<0?app.side.left:app.side.right) {
+            const int a=across(side), b=across(side*count);
+            out.push_back({DrawCommand::Fill,Regular,0,{std::min(a,b)-static_cast<int>(lane/2),along(RadarTracker::Overlap),std::max(a,b)+static_cast<int>(lane/2),along(-RadarTracker::Overlap)},Mix(Ink::Panel,Ink::SideRed,.35)});
+        }
+        auto car=[&](int laneIndex,double metres,double offset=0) {
+            const int x=across(laneIndex)+static_cast<int>(std::lround(offset*lane)), y=along(metres);
+            return RECT{x-carWidth/2,y-carLength/2,x-carWidth/2+carWidth,y-carLength/2+carLength};
+        };
+        const RadarCar* nearest[2]{};
+        for(const auto& c:app.radarCars) {
+            if(std::abs(c.metres)>r.range+2.3) continue;
+            const auto driver=std::find_if(app.session.drivers.begin(),app.session.drivers.end(),[&](const Driver& d){ return d.index==c.index; });
+            const COLORREF color=driver!=app.session.drivers.end()?ColorOf(driver->classColor):Ink::Muted;
+            out.push_back({DrawCommand::RoundFill,Regular,0,car(c.lane,c.metres,c.offset),color,{static_cast<float>(px(2))}});
+            // The nearest ahead and behind in any lane, also one that has just passed you or you it, not one beside you.
+            if(std::abs(c.metres)>RadarTracker::CarLength) { auto& n=nearest[c.metres<0]; if(!n || std::abs(c.metres)<std::abs(n->metres)) n=&c; }
+        }
+        // Your car, outlined in yellow as on the track map.
+        const RECT own=car(0,0);
+        out.push_back({DrawCommand::RoundFill,Regular,0,own,Mix(Ink::Panel,Ink::Yellow,.3),{static_cast<float>(px(2))}});
+        out.push_back({DrawCommand::Outline,Regular,0,own,Ink::Yellow,{static_cast<float>(px(2)),static_cast<float>(std::max(1,px(2)))}});
+        // The gap to the nearest car ahead and behind, bumper to bumper, beside it on the outer side: the lap distance
+        // is between the cars' middles, a car's length more.
+        if(r.distances) for(const auto* n:nearest) if(n && std::abs(n->metres)<=r.range) {
+            const RECT at=car(n->lane,n->metres,n->offset); const double gap=std::max(0.,std::abs(n->metres)-RadarTracker::CarLength);
+            const bool left=n->lane+n->offset<0; const int level=(at.top+at.bottom)/2;
+            const RECT box=left?RECT{at.left-px(60),level-px(8),at.left-px(4),level+px(8)}:RECT{at.right+px(4),level-px(8),at.right+px(60),level+px(8)};
+            out.push_back({DrawCommand::Text,SmallBold,static_cast<UINT>(left?DT_RIGHT:DT_LEFT),box,Ink::White,{},Format(gap,gap<10?1:0)+L" m"});
+        }
+    } else if(o.kind==SideWarningKind) {
         // Both bars side by side, the left one first. A car beside you turns its side red, two cars make two stripes;
         // an amber block shows where the car is along yours, higher when it is ahead. Grey while there is none,
         // which shows only while overlays are placed or previewed.
@@ -1928,7 +1989,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         footer(changes.empty()?y:y+8);
     }
     // The 1 px border, last so it stays on top; the window region rounds the same corners. The Pit Assist's color needs none.
-    if(o.kind!=PitLimiterKind && o.kind!=SideWarningKind && !MapOnly(o)) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{static_cast<float>(o.place.rounded?px(CornerRadius):0)}});
+    if(o.kind!=PitLimiterKind && o.kind!=SideWarningKind && !PerPixel(o)) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{static_cast<float>(o.place.rounded?px(CornerRadius):0)}});
 }
 // DrawTextW costs about three times as much as measuring and ExtTextOutW; it remains only for ellipsis.
 void DrawLabel(HDC dc,const DrawCommand& c) {
@@ -2155,15 +2216,15 @@ bool EnsureBuffer(Overlay& o,int width,int height,int dpi) {
     HDC screen=GetDC(o.window);
     o.dc=CreateCompatibleDC(screen);
     // A DIB for every overlay: GDI+ antialiasing on a device bitmap takes about twice as long, GDI text the same.
-    // Only the track map writes its cars straight into the pixels.
+    // Only the track map writes its cars straight into the pixels, and it and the radar their transparent background.
     bool dib=true;
 #ifdef RACEMATE_DIAGNOSTICS
     // RACEMATE_DDB=1: the other overlays draw into a device bitmap again, for comparison.
-    if(o.kind!=TrackMapKind && GetEnvironmentVariableW(L"RACEMATE_DDB",nullptr,0)) dib=false;
+    if(o.kind!=TrackMapKind && o.kind!=RadarKind && GetEnvironmentVariableW(L"RACEMATE_DDB",nullptr,0)) dib=false;
 #endif
     if(dib) {
         BITMAPINFO info{}; info.bmiHeader={sizeof(BITMAPINFOHEADER),width,-height,1,32,BI_RGB}; void* bits=nullptr;
-        o.bitmap=CreateDIBSection(screen,&info,DIB_RGB_COLORS,&bits,nullptr,0); o.pixels=o.kind==TrackMapKind?static_cast<std::uint32_t*>(bits):nullptr;
+        o.bitmap=CreateDIBSection(screen,&info,DIB_RGB_COLORS,&bits,nullptr,0); o.pixels=o.kind==TrackMapKind || o.kind==RadarKind?static_cast<std::uint32_t*>(bits):nullptr;
     }
     if(!o.bitmap) { o.bitmap=CreateCompatibleBitmap(screen,width,height); o.pixels=nullptr; }
     o.original=SelectObject(o.dc,o.bitmap);
@@ -2240,6 +2301,10 @@ void RefreshOverlay(Overlay& o) {
 #endif
     std::swap(o.scene,app.sceneBuffer);
     { ProfileScope p(true,[&]{ return ProfileName(o,"  drawing"); }); PaintScene(o,dirty); }
+    if(o.layeredAlpha && o.kind==RadarKind && o.pixels) {
+        // GDI leaves its pixels without alpha: all but the transparent background become opaque.
+        GdiFlush(); for(std::uint32_t* p=o.pixels,*end=p+static_cast<size_t>(o.width)*o.height;p<end;++p) if(*p && !(*p>>24)) *p|=0xff000000u;
+    }
     if(o.layeredAlpha) { PresentLayered(o); if(dirty) DeleteObject(dirty); return; }
 #ifdef RACEMATE_DIAGNOSTICS
     // RACEMATE_FULL_COPY=1: every refresh copies the whole window, to separate the copy's fixed cost from its area.
@@ -2262,7 +2327,7 @@ void SetOverlayOrigin(Overlay& o,int x,int y) {
 // Opacity for the whole window, or per pixel for a map without background. Switching between the two needs the
 // layered style set anew: a window given SetLayeredWindowAttributes refuses UpdateLayeredWindow until then.
 void ApplyOpacity(const Overlay& o) {
-    const bool perPixel=MapOnly(o);
+    const bool perPixel=PerPixel(o);
     if(perPixel!=o.layeredAlpha) {
         const auto style=GetWindowLongPtrW(o.window,GWL_EXSTYLE);
         SetWindowLongPtrW(o.window,GWL_EXSTYLE,style&~WS_EX_LAYERED); SetWindowLongPtrW(o.window,GWL_EXSTYLE,style|WS_EX_LAYERED);
@@ -2443,6 +2508,29 @@ void UpdateSide() {
     hold(now.left,now.leftAt,app.side.left,app.side.leftAt,app.sideSeen[0]);
     hold(now.right,now.rightAt,app.side.right,app.side.rightAt,app.sideSeen[1]);
 }
+// The Radar's cars within its range; the preview has a car beside you on the left, two on the right (you are at the
+// edge of three wide, as the Side Warning shows), one ahead and one behind.
+void UpdateRadar(const Overlay& o) {
+    if(app.preview) {
+        constexpr int left=1,beside=2,outside=4,ahead=0,behind=6;
+        app.radarCars={{beside,.5,1},{left,1.5,-1},{outside,-3,2},{ahead,11,0},{behind,-15,0}}; return;
+    }
+    app.radar.Update(app.session,app.frame,o.radar.range); app.radarCars=app.radar.Cars();
+    if(!app.radarCars.empty()) app.radarNear=app.now;
+    // Across, a car glides to its new lane in about a quarter of a second rather than jumping; one new on the radar
+    // starts in its lane.
+    const double seconds=(app.now-app.radarGlided)/1000.0; app.radarGlided=app.now;
+    std::array<bool,MaxCars> present{};
+    for(auto& c:app.radarCars) {
+        const double target=c.lane+c.offset; double& at=app.radarAcross[c.index];
+        if(!app.radarPresent[c.index] || seconds>1) at=target; else at+=(target-at)*(1-std::exp(-seconds/.07));
+        if(std::abs(target-at)<.02) at=target;
+        c.offset=at-c.lane; present[c.index]=true;
+    }
+    app.radarPresent=present;
+}
+// Your own car on track, live: the Radar's condition, near cars or not.
+bool Driving() { const auto& f=app.frame; return f.connected && f.onTrack && !f.replay && f.player>=0 && f.player<MaxCars && ReferenceCar(f)==f.player; }
 // Ticks refresh each overlay at its own rate; everything else (settings, hide, diagnostics) forces a refresh.
 void UpdateOverlays(bool force=true) {
     if(!app.overlayClass) return;
@@ -2462,6 +2550,11 @@ void UpdateOverlays(bool force=true) {
         }
         // The Side Warning shows a bar while a car is beside you on its side, both while overlays are moved.
         bool shown=visible, mirrored=false;
+        if(o.kind==RadarKind) {
+            // While you drive: with a car in range and 2 s after the last one left it, or always if so chosen.
+            if(visible) UpdateRadar(o);
+            shown=visible=visible && (app.preview || app.edit || (Driving() && (o.radar.always || app.now-app.radarNear<2000)));
+        }
         if(o.kind==SideWarningKind) {
             shown=visible && (app.edit || app.side.left); mirrored=visible && (app.edit || app.side.right); visible=shown || mirrored;
             if(mirrored!=static_cast<bool>(IsWindowVisible(o.mirror))) { ShowWindow(o.mirror,mirrored?SW_SHOWNOACTIVATE:SW_HIDE); if(mirrored) o.due=0; }

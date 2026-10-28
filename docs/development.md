@@ -109,14 +109,15 @@ In normal operation RaceMate requests low process priority and EcoQoS. It sample
 
 ## Live telemetry inspection
 
-These commands require a running iRacing session:
+These commands require a running iRacing session, or a TapeMate playback of one:
 
 ```powershell
 .\build\x64\Release\RaceMateTests.exe --live-summary
 .\build\x64\Release\RaceMateTests.exe --dump-vars
+.\build\x64\Release\RaceMateTests.exe --radar-log 120 build\qa\radar.csv
 ```
 
-**`--live-summary`** reports lap-time coverage and live/replay state. **`--dump-vars`** writes available telemetry variables and session YAML to `irsdk-dump.txt` in the working directory. It can contain identifying session/driver information; inspect it before sharing. These files are debugging inputs, not documentation assets.
+**`--live-summary`** reports lap-time coverage and live/replay state. **`--radar-log <seconds> <file>`** writes every frame's spotter and the Radar's cars within 20 m, with their estimated lanes, as CSV; play a TapeMate recording meanwhile to check the lane estimate against a real race. **`--dump-vars`** writes available telemetry variables and session YAML to `irsdk-dump.txt` in the working directory. It can contain identifying session/driver information; inspect it before sharing. These files are debugging inputs, not documentation assets.
 
 ## Track assets and generated resources
 

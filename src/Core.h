@@ -142,6 +142,34 @@ int NorthTurnFromHeadings(double yawNorth, double mapHeading);
 // so with cars on both sides neither has a place.
 struct SideTraffic { int left = 0, right = 0; double leftAt = std::numeric_limits<double>::quiet_NaN(), rightAt = std::numeric_limits<double>::quiet_NaN(); };
 SideTraffic SideTrafficOf(const Session& s, const Frame& f);
+// The cars around your car for the radar: how far each is ahead (+) or behind along the lap, in metres, and its lane:
+// -1 left, 0 yours, +1 right, and -2 or +2 for a second car on one side. iRacing reports no positions across the
+// track, so lanes are estimated:
+// - The cars beside you, as many as the spotter reports, take the lanes it reports: a car within 5.5 m that had one
+//   keeps it, else the nearest within 8 m.
+// - A car overlapping yours (within 3.5 m) that the spotter does not report is beside you all the same: on the one
+//   side it reports, else the side the car was last on, else the free one.
+// - A car keeps its lane for 3 s after it was last beside you, and as long as it is within 8 m or beside another
+//   car; then it counts as in yours.
+// - Two cars in your lane overlapping each other (3.5 m; once so, until 4.6 m) drive side by side: offset half a lane
+//   either way, each keeping the side it was last on, else the one ahead goes left; a third goes beside its neighbour.
+// Only while you drive.
+struct RadarCar { int index = -1; double metres = 0; int lane = 0; double offset = 0; };
+class RadarTracker {
+public:
+    // SideBySide: closer than this along the lap, two cars overlap clearly; a car's 4.6 m less the lap distance's noise.
+    static constexpr double Overlap = 5.5, Reach = 8, Hold = 3, CarLength = 4.6, SideBySide = 3.5;
+    // Cars within reach metres ahead or behind, nearest first.
+    void Update(const Session& s, const Frame& f, double reach);
+    const std::vector<RadarCar>& Cars() const { return cars_; }
+    void Reset() { cars_.clear(); lane_.fill(0); guess_.fill(false); side_.fill(0); seen_.fill(-1e9); sided_.fill(-1e9); paired_.fill(-1e9); }
+private:
+    std::vector<RadarCar> cars_;
+    // Each car's lane and side when it was last beside you or beside another, when, and when last beside another.
+    // guess_: the lane was not reported by the spotter but taken for a car overlapping yours.
+    std::array<int, MaxCars> lane_{}, side_{}; std::array<bool, MaxCars> guess_{}; std::array<double, MaxCars> seen_ = Unseen(), sided_ = Unseen(), paired_ = Unseen();
+    static std::array<double, MaxCars> Unseen() { std::array<double, MaxCars> a{}; a.fill(-1e9); return a; }
+};
 // Track and air temperature, precipitation and wetness every 30 s of session time, 20 minutes back.
 class WeatherHistory {
 public:
