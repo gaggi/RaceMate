@@ -32,6 +32,13 @@ $images = [ordered]@{
     'track-map-line'        = @{ Sources = @('trackmap-line') }
     'race-control'          = @{ Sources = @('race-control') }
     'race-control-fields'   = @{ Sources = @('race-control-extra-fields') }
+    'track-map-sectors'     = @{ Sources = @('sectors-0-1') }
+    'standings-sectors'     = @{ Sources = @('sector-table-1-1') }
+    'race-control-sectors'  = @{ Sources = @('race-control-sectors-1') }
+    'radar'                 = @{ Sources = @('radar') }
+    'traffic'               = @{ Sources = @('traffic-panel') }
+    'side-warning'          = @{ Sources = @('side-warning-left') }
+    'adjustments'           = @{ Sources = @('adjustments') }
 }
 # Check every source first so a missing optional cached map does not leave a partial export.
 foreach ($image in $images.Values) {

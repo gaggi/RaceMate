@@ -196,6 +196,8 @@ The entry brake point uses your car's deceleration, measured from your own braki
 
 ## Side Warning
 
+![Side Warning bar at the left screen edge while a car is beside you](images/side-warning.png)
+
 Two narrow bars, by default at the left and right edge of the screen, light up while a car is beside you: the left bar for a car on your left, the right bar for one on your right. They show **only while you drive your own car**, as iRacing's spotter reports it (`CarLeftRight`), and stay lit 300 ms after the side clears so they don't flicker. The Side Warning is off by default; switch it on under **Overlays**.
 
 | Appearance | Meaning |
@@ -209,6 +211,8 @@ The spotter tells the side, but not which car is there. RaceMate takes the neare
 The bars stay centred on their monitor. **Distance apart** sets how far apart their outer edges are, as a share of the screen width: 100 % puts them at its edges, down to 20 % for bars close beside the middle of the screen. Drag either bar up or down, or onto another monitor: they go over as soon as the mouse is on it, and the other bar follows at the same height. Size, opacity and rounded corners apply to both, and both get the same frame while overlays are moved or the page is open. Both bars show while overlays are moved, in grey when nobody is beside you. The Side Warning has no header or footer, and only one instance.
 
 ## Radar
+
+![Radar with the cars around yours from above and their distances](images/radar.png)
 
 The cars around yours from above: your car in the middle, outlined in yellow, the others in their class colour, how far ahead or behind they are up and down the radar. Dashed guides mark every quarter of the range, labelled at half and full range. Where the spotter reports cars beside you, the lanes there are shaded red. The Radar is off by default; switch it on under **Overlays**.
 
@@ -232,6 +236,8 @@ A car that changes lane glides across in about a quarter of a second. Cars in th
 
 ## Traffic
 
+![Traffic listing faster cars close behind with their gaps](images/traffic.png)
+
 After irdashies' *faster cars from behind*: the cars of faster classes close behind you, one box each, closest first. A box shows the car's number and driver in its class colour and its gap, such as **-1.4**. Under it a bar fills and turns from green to red as the car closes in; within 1.5 s the box pulses. Traffic is off by default; switch it on under **Overlays**.
 
 | Setting | Choices |
@@ -246,6 +252,8 @@ A car counts as behind by its position on track. The gap is the Relative's: the 
 It shows while you drive your own car and a car is within the gap, and half a second after, so it doesn't flicker at the edge. While overlays are moved or previewed it always shows. Like the Side Warning and the Radar, Traffic has no header or footer and only one instance.
 
 ## Adjustments
+
+![Adjustments showing a brake bias change large for a moment](images/adjustments.png)
 
 When you change an in-car adjustment while you drive, such as ABS, traction control, brake bias or an anti-roll bar, Adjustments shows it big for a moment: the dial's name in its group's color and its new value in the middle. Under the value, the dial's steps light up to where it now stands, such as 4 of 12. Another change starts the time again; a change to another dial takes its place. Adjustments is off by default; switch it on under **Overlays**.
 

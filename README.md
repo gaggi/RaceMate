@@ -6,7 +6,7 @@ RaceMate puts nearby traffic, standings, fuel planning, weather, pit-limiter war
 
 [**Download releases**](https://github.com/gaggi/RaceMate/releases) · [**Documentation**](docs/README.md) · [**First setup**](docs/getting-started.md) · [**Build from source**](docs/development.md)
 
-> These guides describe **version 0.2.2** and the development state after it. Side Warning, Radar, Traffic, dragging rows by their six dots, copying columns to another table, the qualifying maximum, the fuel to add per target, **One lap shorter** and Adjustments came after 0.2.2: they are in the development build from this repository and not yet in a release. Screenshots show the real application with diagnostic sample data and selected optional features enabled.
+> These guides describe **version 0.3.0**. Screenshots show the real application with diagnostic sample data and selected optional features enabled.
 >
 > Reading this README from a release ZIP? Open the [full documentation on GitHub](https://github.com/gaggi/RaceMate/tree/main/docs).
 
@@ -19,12 +19,13 @@ RaceMate puts nearby traffic, standings, fuel planning, weather, pit-limiter war
 
 | Feature | What it provides |
 | --- | --- |
-| **Relative** | Nearby cars centered on your car or the car you watch |
+| **Relative** | Nearby cars centered on your car or the car you watch, timed on each car's measured lap |
 | **Standings** | Class or combined order, gaps, intervals, lap times and optional pit/driver information |
 | **Fuel Calculator** | Learned consumption, range, refueling, pit windows and fuel targets |
 | **Pit Assist** | Limiter state, pit lane progress with your box and brake points, pit-exit warning and setup differences |
 | **Weather** | Current conditions, temperature history, trends and car-relative wind |
-| **Track Map — experimental** | Official circuit geometry or download-free Circle/Line layouts |
+| **Track Map — experimental** | Official circuit geometry or download-free Circle/Line layouts, optionally coloured by sector |
+| **Sector times** | Each sector and mini-sector in its own column in Relative, Standings and Race Control, coloured like on F1 timing screens |
 | **Side Warning** | Bars at the screen edges while a car is beside you, from iRacing's spotter |
 | **Radar** | The cars around yours from above, with distances along the lap and lanes estimated from the spotter |
 | **Traffic** | Faster cars close behind you in multiclass races, with their gap |

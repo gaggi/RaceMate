@@ -1,10 +1,12 @@
-# Sector timing and mini-sectors (development)
+# Sector timing and mini-sectors
 
 [Documentation](README.md) · [Track Map](track-map.md) · [Race Control](race-control.md)
 
 RaceMate estimates split times from observed telemetry. These are local interpolated measurements, not official iRacing timing or a full official lap-validity check. Every view shares one timing model.
 
 ## Track Map
+
+![Lime Rock map coloured by sector: green personal best, purple class best, yellow slower](images/track-map-sectors.png)
 
 Enable **Track Map → Settings → Sectors and mini-sectors → Show sectors**. Only then do the sector options appear. **Sector detail** (per map) selects SDK sectors or **3 mini-sectors per sector**; the latter divides each official sector into three equal lap-distance intervals, not equal-time intervals or official mini-splits. Circle and Line support the same display.
 
@@ -25,6 +27,8 @@ The official SVG projection retains its existing accuracy limits: lap-distance f
 
 ## Relative and Standings
 
+![Standings with one column per sector](images/standings-sectors.png)
+
 In each overlay's **Settings → Columns**, enable **Sector times**. Expand it for **Sector detail**: **SDK sectors** (S1, S2, S3 …) or **3 mini-sectors per sector** (S1.1, S1.2, S1.3, S2.1 …). Each sector gets its own column with its own heading; the group is dragged among the other columns as one. Times are in seconds with the green/purple/yellow status; absent data is **—**.
 
 Times follow the lap, as on Formula 1 and DTM timing screens:
@@ -36,6 +40,8 @@ Times follow the lap, as on Formula 1 and DTM timing screens:
 Pit stops do not hide times: the in-lap's last sector and the out-lap's first sector include the pit lane and appear in yellow. Only a sector RaceMate did not watch from its start, for example after joining mid-sector, stays empty. The unfinished running time never replaces a completed value. Full sectors and mini-sectors follow this rule independently: the first mini of a new lap clears the previous lap's minis, the full sectors wait for the complete S1. Each overlay chooses its columns independently, including copied column settings. More official sectors make the group wider.
 
 ## Race Control
+
+![Race Control standings with sector columns on their pace colours](images/race-control-sectors.png)
 
 Switch on **Race Control settings → Standings columns → Sector times**; expand it for **Sector detail**: SDK sectors or mini-sectors. The standings get one column per sector (S1, S2 …) with the same lap rule and pace colours as Relative and Standings: a completed time sits on its colour, a sector not yet completed this lap is a grey dash. Each column sorts by its own header; cars without a time in it go last.
 
