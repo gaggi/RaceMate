@@ -24,6 +24,10 @@ public:
     // Seconds profile's last clean lap took from from's lap position forward to to's. NaN without such a lap.
     double Reach(int profile,int from,int to) const;
     bool HasProfile(int car) const { return car>=0 && car<MaxCars && cars_[car].lapTime>0; }
+    double LapTime(int car) const { return HasProfile(car)?cars_[car].lapTime:-1; }
+    // On profile's clean lap: seconds from lap position from forward to to, and the lap position seconds into it.
+    double Along(int profile,double from,double to) const;
+    double Locate(int profile,double seconds) const;
     // The car of this class with the fastest stored clean lap, so it changes rarely; -1 before any.
     int ClassProfile(int classId) const;
     int Points() const { return points_; }

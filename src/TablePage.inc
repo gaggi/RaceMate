@@ -203,7 +203,7 @@ private:
             editors_.Check(StatusEditId,L"Status badge after the name: PIT, TOW, OUT",o_.table.showStatus,0,46,360);
             for(int i=0;i<3;++i) editors_.Check(FlagEditId+i,FlagNames[i],o_.table.driverFlags[i],20+i*170,74,150);
         } else if(expandedId_==SectorsColumn) {
-            editors_.Label(L"Columns",0,10,90);
+            editors_.Label(L"Sector detail",0,10,90);
             editors_.Combo(SectorPartsEditId,{L"SDK sectors",L"3 mini-sectors per sector"},o_.table.sectorParts==3?1:0,94,10,200);
         } else if(expandedId_==BrandColumn) {
             editors_.Check(BrandLogoEditId,L"Show logo",o_.table.brandLogo,0,10,160);

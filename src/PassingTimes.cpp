@@ -102,6 +102,20 @@ double PassingTimes::Into(const Car& c,double pct) const {
     const double next=k+1<n?profile[k+1]:c.lapTime;
     return profile[k]+(next-profile[k])*(point-k);
 }
+double PassingTimes::Along(int profile,double from,double to) const {
+    if(!HasProfile(profile) || !points_ || !(from>=0 && from<1) || !(to>=0 && to<1)) return std::numeric_limits<double>::quiet_NaN();
+    const auto& p=cars_[profile]; const double start=Into(p,from),end=Into(p,to);
+    return to>=from?std::max(0.,end-start):p.lapTime-start+end;
+}
+double PassingTimes::Locate(int profile,double seconds) const {
+    if(!HasProfile(profile) || !points_ || !std::isfinite(seconds)) return std::numeric_limits<double>::quiet_NaN();
+    const auto& p=cars_[profile]; const int n=points_; const double* profileTimes=profiles_.data()+static_cast<size_t>(p.slot)*n;
+    seconds-=std::floor(seconds/p.lapTime)*p.lapTime;
+    // The last point at or before those seconds, then linear to the next (or to the line).
+    const int k=std::max(0,static_cast<int>(std::upper_bound(profileTimes,profileTimes+n,seconds)-profileTimes)-1);
+    const double next=k+1<n?profileTimes[k+1]:p.lapTime,span=next-profileTimes[k];
+    return std::min(.999999,(k+(span>0?(seconds-profileTimes[k])/span:0))/n);
+}
 double PassingTimes::Reach(int profile,int from,int to) const {
     const double unknown=std::numeric_limits<double>::quiet_NaN();
     if(profile<0 || profile>=MaxCars || from<0 || from>=MaxCars || to<0 || to>=MaxCars || !points_) return unknown;

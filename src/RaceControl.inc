@@ -13,6 +13,7 @@ struct RaceControlWindow {
     std::vector<int> columns, feedColumns;
     std::array<bool,RaceFieldCount> fields{}; std::array<bool,RaceEventFieldCount> eventFields{};
     std::vector<int> fieldOrder, eventOrder; // Left to right, as dragged in the settings; stored as FieldOrder and EventOrder.
+    std::map<int,int> widths, feedWidths; // Column widths dragged in the window, in DIPs by column ID: kept when the columns are rebuilt.
     std::array<bool,RaceInfoCount> info{};
     int sortColumn=-1, eventSortColumn=2; bool sortDescending=false, eventSortDescending=true;
     // Event filter: 0 all, 1 incidents (offtracks, incidents, crashes), 2 pit, 3 passes; car -1 for all cars.
@@ -521,21 +522,28 @@ void UpdateRaceControl(bool force) {
     const int selectedCar=oldRow>=0 && oldRow<static_cast<int>(raceControl.rows.size())?raceControl.rows[oldRow].driver.index:-1;
     SendMessageW(raceControl.standings,WM_SETREDRAW,FALSE,0); SendMessageW(raceControl.feed,WM_SETREDRAW,FALSE,0);
     const int dpi=GetDpiForWindow(raceControl.window);
+    // Sorting, reordering or a new sector layout rebuilds the columns; widths the user dragged go with each column.
+    auto keepWidths=[&](HWND list,const std::vector<int>& shown,std::map<int,int>& widths) {
+        for(int i=0;i<static_cast<int>(shown.size());++i) { const int width=ListView_GetColumnWidth(list,i); if(width>0) widths[shown[i]]=MulDiv(width,96,dpi); }
+    };
+    auto width=[&](const std::map<int,int>& widths,int id,int fallback) { const auto known=widths.find(id); return MulDiv(known!=widths.end()?known->second:fallback,dpi,96); };
     if(columns!=raceControl.columns || force) {
+        keepWidths(raceControl.standings,raceControl.columns,raceControl.widths);
         while(ListView_DeleteColumn(raceControl.standings,0)) {}
         for(int i=0;i<static_cast<int>(columns.size());++i) {
             const int c=columns[i]; LVCOLUMNW col{}; col.mask=LVCF_TEXT|LVCF_WIDTH|LVCF_FMT;
-            std::wstring title=c>=RaceSectorColumn?SectorColumnTitle(c-RaceSectorColumn,raceControl.sectorParts)+L" ~":RaceFieldTitle(c);
-            col.pszText=title.data(); col.cx=MulDiv(RaceFieldWidth(c),dpi,96); col.fmt=c==2 || c==3 || c==8 || c==15 || c==RaceBrandField?LVCFMT_LEFT:LVCFMT_RIGHT;
+            std::wstring title=c>=RaceSectorColumn?SectorColumnTitle(c-RaceSectorColumn,raceControl.sectorParts):RaceFieldTitle(c);
+            col.pszText=title.data(); col.cx=width(raceControl.widths,c,RaceFieldWidth(c)); col.fmt=c==2 || c==3 || c==8 || c==15 || c==RaceBrandField?LVCFMT_LEFT:LVCFMT_RIGHT;
             ListView_InsertColumn(raceControl.standings,i,&col);
         }
         raceControl.columns=columns;
     }
     if(feedColumns!=raceControl.feedColumns || force) {
+        keepWidths(raceControl.feed,raceControl.feedColumns,raceControl.feedWidths);
         while(ListView_DeleteColumn(raceControl.feed,0)) {}
         for(int i=0;i<static_cast<int>(feedColumns.size());++i) {
             const int c=feedColumns[i]; LVCOLUMNW col{}; col.mask=LVCF_TEXT|LVCF_WIDTH|LVCF_FMT; col.fmt=c==4 || c==RaceEventLapField?LVCFMT_RIGHT:LVCFMT_LEFT;
-            col.pszText=const_cast<wchar_t*>(RaceEventTitles[c]); col.cx=MulDiv(RaceEventWidths[c],dpi,96); ListView_InsertColumn(raceControl.feed,i,&col);
+            col.pszText=const_cast<wchar_t*>(RaceEventTitles[c]); col.cx=width(raceControl.feedWidths,c,RaceEventWidths[c]); ListView_InsertColumn(raceControl.feed,i,&col);
         }
         raceControl.feedColumns=feedColumns;
     }

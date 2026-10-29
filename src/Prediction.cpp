@@ -149,9 +149,10 @@ RacePrediction RacePredictor::Predict(const Session& s,const Frame& f) const {
         const double pace=h.used?Mean(h.laps.data(),h.used):FallbackPace(s,f,index);
         if(!PaceTime(pace)) continue;
         Candidate model; model.index=index; model.completed=completed; model.pct=car.pct; model.phase=car.pct; model.pace=pace;
-        double best=car.best;
-        if(!PaceTime(best) && s.number==f.session) best=s.results[index].best;
-        if(PaceTime(best) && car.estTime>=0 && car.estTime<best && !car.pit) model.phase=car.estTime/best;
+        // iRacing's estimate (CarIdxEstTime) runs on its class's reference lap (CarClassEstLapTime), not on this car's
+        // best: divided by that, it is the share of the lap's time already behind the car.
+        const double reference=driver.estimatedLapTime;
+        if(PaceTime(reference) && car.estTime>=0 && car.estTime<reference && (car.estTime>0 || car.pct<.02) && !car.pit) model.phase=car.estTime/reference;
         if(car.pit) {
             const double loss=h.lossUsed?Mean(h.losses.data(),h.lossUsed):AssumedPitLoss;
             model.activeDelay=loss;

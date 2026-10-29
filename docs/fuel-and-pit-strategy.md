@@ -49,7 +49,7 @@ Refuel numbers have no built-in safety margin. They change with learned consumpt
 
 ## Finish forecasts
 
-RaceMate projects the overall leader to the flag, then predicts the reference car's first eligible crossing after that finish. This includes multiclass lapping and observed pace. Future pit stops are not automatically assumed. A leader already in the pits can contribute an estimated **remaining** loss from that active visit.
+Where each car is within its lap comes from iRacing's estimate (`CarIdxEstTime`) on its class's reference lap, not on the car's own best lap. RaceMate projects the overall leader to the flag, then predicts the reference car's first eligible crossing after that finish. This includes multiclass lapping and observed pace. Future pit stops are not automatically assumed. A leader already in the pits can contribute an estimated **remaining** loss from that active visit.
 
 | Metric | Meaning |
 | --- | --- |
@@ -96,7 +96,7 @@ You can display it as:
 - The Standings **Pit exit row**, disabled by default, with independently selected surrounding rows.
 - A blue **PIT** ring on the Track Map.
 
-The estimate reports class position, the car ahead at the predicted rejoin and total time lost. It assumes the field keeps its current pace and counts cars whose progress remains ahead after the loss.
+The estimate reports class position, the car ahead at the predicted rejoin and total time lost. It assumes the field keeps its current pace and counts cars whose progress remains ahead after the loss. The rejoin point is where your car was that long ago on its own last clean lap (see the Relative's lap profiles in [Overlays](overlays.md)), so slow corners and fast straights fall where they are; before that lap exists, iRacing's estimates of cars in your class at their positions, else lap distance at your pace. A share of the lap's time is never taken for a share of its distance.
 
 ### Pit lane loss
 

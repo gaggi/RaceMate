@@ -1,4 +1,5 @@
 #include "Core.h"
+#include "PassingTimes.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -159,18 +160,44 @@ double ServiceTime(const PitService& service,double fuelRate,double tireChange,b
     // Default rules: tires and repairs only after the fueling. IMSA rules: everything at once.
     return simultaneous?std::max({fuel,tires,service.repair}):fuel+std::max(tires,service.repair);
 }
-PitRejoin PredictRejoin(const Session& s,const Frame& f,double loss,double pace) {
+PitRejoin PredictRejoin(const Session& s,const Frame& f,double loss,double pace,const PassingTimes* passes) {
     PitRejoin r;
     if(!f.connected || View(f)==ViewMode::Replay || !Valid(loss) || !Pace(pace) || f.player<0 || f.player>=MaxCars) return r;
     const auto* own=Find(s,f.player); const auto& me=f.cars[f.player];
     const int completed=Completed(me)>=0?Completed(me):f.lapCompleted;
-    if(!own || me.surface<0 || completed<0 || me.pct<0 || me.pct>=1 || me.estTime<0) return r;
-    const double lap=Valid(own->estimatedLapTime)?own->estimatedLapTime:pace, scale=lap/pace;
-    // Where the car would be loss seconds later, in reference time and in laps.
-    double ghost=std::fmod(me.estTime-loss*scale,lap); if(ghost<0) ghost+=lap;
-    const double progress=completed+me.pct-loss/pace;
-    r.valid=true; r.loss=loss; r.pct=ghost/lap; r.position=r.classPosition=1;
-    double nearest=lap;
+    if(!own || me.surface<0 || completed<0 || me.pct<0 || me.pct>=1) return r;
+    // Where the own car would be loss seconds later: a time back along the lap, turned into a lap position. A time
+    // share is not a distance share, so it goes through a time curve: the own clean lap where there is one, else
+    // the iRacing estimates of cars in the own class at their positions, else lap distance at pace.
+    const bool profiled=passes && passes->HasProfile(f.player);
+    const double lap=Valid(own->estimatedLapTime)?own->estimatedLapTime:pace,scale=lap/pace;
+    const bool estimated=me.estTime>=0 && me.estTime<lap;
+    double ghost=estimated?std::fmod(me.estTime-loss*scale,lap):-1; if(ghost<0 && estimated) ghost+=lap;
+    double laps=0; // Lap positions back, whole laps included, for the order in the race.
+    if(profiled) {
+        const double into=passes->Along(f.player,0,me.pct)-loss;
+        r.pct=passes->Locate(f.player,into); laps=me.pct-r.pct+(into<0?std::ceil(-into/passes->LapTime(f.player)):0);
+    } else {
+        r.pct=me.pct-loss/pace; r.pct-=std::floor(r.pct); laps=loss/pace;
+        // Between the two cars of the own class whose estimates bracket the ghost: their positions, interpolated.
+        double below=-1,above=-1,belowPct=0,abovePct=0;
+        for(const auto& d:s.drivers) {
+            if(!estimated || d.index<0 || d.index>=MaxCars || d.index==f.player || d.classId!=own->classId || d.paceCar || d.spectator) continue;
+            const auto& car=f.cars[d.index];
+            if(car.surface<0 || car.pct<0 || car.pct>=1 || car.estTime<0 || car.estTime>=lap) continue;
+            const double back=Wrap(ghost-car.estTime,lap); // > 0: the car is before the ghost.
+            if(back>=0 && (below<0 || back<below)) { below=back; belowPct=car.pct; }
+            if(back<0 && (above<0 || -back<above)) { above=-back; abovePct=car.pct; }
+        }
+        if(below>=0 && above>=0 && below+above<lap/2) {
+            double span=abovePct-belowPct; span-=std::floor(span);
+            r.pct=belowPct+span*below/(below+above); r.pct-=std::floor(r.pct);
+        } else if(below>=0 && below<lap/20) { r.pct=belowPct+below/lap; r.pct-=std::floor(r.pct); }
+        else if(above>=0 && above<lap/20) { r.pct=abovePct-above/lap; r.pct-=std::floor(r.pct); }
+        if(estimated) { double back=me.pct-r.pct; back-=std::floor(back); laps=back+std::floor(loss/pace); }
+    }
+    const double progress=completed+me.pct-laps;
+    r.valid=true; r.loss=loss; r.position=r.classPosition=1;
     for(const auto& d:s.drivers) {
         if(d.index<0 || d.index>=MaxCars || d.index==f.player || d.paceCar || d.spectator) continue;
         const auto& car=f.cars[d.index];
@@ -181,12 +208,14 @@ PitRejoin PredictRejoin(const Session& s,const Frame& f,double loss,double pace)
         auto keep=[&](int& index,double& gap,double seconds) { if(index<0 || seconds<gap) { index=d.index; gap=seconds; } };
         if(lead>0) { keep(r.overallAhead,r.overallAheadGap,lead); if(sameClass) keep(r.classAhead,r.classAheadGap,lead); }
         else { keep(r.overallBehind,r.overallBehindGap,-lead); if(sameClass) keep(r.classBehind,r.classBehindGap,-lead); }
-        if(car.estTime<0) continue;
-        const double gap=Wrap(car.estTime-ghost,lap);
-        // The lap fraction follows the nearest car, so slow and fast sections place the marker correctly.
-        if(std::abs(gap)<nearest) { nearest=std::abs(gap); r.pct=std::fmod(car.pct-gap/lap+1,1.0); }
         if(car.pit) continue;
-        const double seconds=gap/scale;
+        // Seconds on track from the rejoin point: on the own clean lap; else the own class's estimates; else distance.
+        double seconds;
+        if(profiled) {
+            const double forward=passes->Along(f.player,r.pct,car.pct),lapTime=passes->LapTime(f.player);
+            seconds=forward<=lapTime/2?forward:forward-lapTime;
+        } else if(estimated && sameClass && car.estTime>=0 && car.estTime<lap) seconds=Wrap(car.estTime-ghost,lap)/scale;
+        else { double apart=car.pct-r.pct; apart-=std::floor(apart+.5); seconds=apart*pace; }
         if(seconds>=0 && (r.ahead<0 || seconds<r.aheadGap)) { r.ahead=d.index; r.aheadGap=seconds; }
         if(seconds<0 && (r.behind<0 || -seconds<r.behindGap)) { r.behind=d.index; r.behindGap=-seconds; }
     }

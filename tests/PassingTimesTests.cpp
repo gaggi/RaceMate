@@ -138,6 +138,17 @@ void PassingTimesTests() {
         const auto behind=std::find_if(rows.begin(),rows.end(),[](const Row& r){return r.driver.index==1;});
         Close(behind->gap,.5,.001,"1 % of a 50 s lap behind is 0.5 s, not 1 % of the reference car's 100 s");
     }
+    // Pit exit: 10 s lost from where the car is now puts it where it was 10 s ago on its clean lap, behind it; the
+    // SDK's time share is not a distance share. Without a lap and without cars around, lap distance at pace.
+    {
+        PassingTimes pits; auto one=Track(1);
+        for(int n=0;n<=210*60;++n) pits.Update(one,At(n/60.,{0}));
+        auto f=At(210,{0}); f.cars[0].estTime=80;
+        const auto rejoin=PredictRejoin(one,f,10,100,&pits);
+        Close(rejoin.pct,Position(200),.002,"rejoin where the car was 10 s ago on its own lap");
+        f.cars[0].pct=.5; const auto plain=PredictRejoin(one,f,10,100,nullptr);
+        Close(plain.pct,.4,.001,"without a lap: 10 % back at a 100 s pace, behind the car rather than ahead");
+    }
     // A pit visit or an off-track spoils the lap: the earlier profile stays.
     {
         PassingTimes spoiled; const auto one=Track(1);

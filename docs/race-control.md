@@ -1,6 +1,6 @@
 # Race Control
 
-Switch on **Sectors** among the standings columns for one column per sector; expand that row to choose SDK sectors or 3 mini-sectors each. Each sector column sorts by its header. Times appear as each sector is completed; a new S1 clears the previous lap's later sectors. See [sector timing and its limits](sector-timing.md).
+Switch on **Sector times** among the standings columns for one column per sector; expand that row for **Sector detail**: SDK sectors or 3 mini-sectors each. Each sector column sorts by its header. Times appear as each sector is completed; a new S1 clears the previous lap's later sectors. See [sector timing and its limits](sector-timing.md).
 
 [Documentation](README.md) · [Fuel and pit strategy](fuel-and-pit-strategy.md)
 

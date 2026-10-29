@@ -52,7 +52,7 @@ private:
             RowList::Row row; row.title=FieldNames[i]; row.dragGroup=1;
             // Sectors: a column per sector or mini-sector; expand for which. The other rows keep the expand slot free.
             if(i==RaceSectorTimesField) {
-                row.title=L"Sectors"; row.toggle=raceControl.showSectors?1:0; row.muted=!raceControl.showSectors;
+                row.title=L"Sector times"; row.toggle=raceControl.showSectors?1:0; row.muted=!raceControl.showSectors;
                 row.detail=std::wstring(raceControl.sectorParts==3?L"S1.1, S1.2 \u2026 per mini-sector":L"S1, S2, S3 \u2026 per SDK sector")
                     +L"  \u00B7  Each appears when completed; a new S1 clears the previous lap's later sectors. Green personal best, purple class best, yellow slower or with pit lane or off-track.";
                 row.iconButtons.push_back(expanded_?Glyph::Collapse:Glyph::Expand); row.expandHeight=expanded_?48:0;
@@ -80,7 +80,7 @@ private:
         if(!expanded_) return;
         const auto at=std::find(keys_.begin(),keys_.end(),Key::ShowSectors); if(at==keys_.end()) return;
         syncing_=true; editors_.Begin(static_cast<int>(at-keys_.begin()));
-        editors_.Label(L"Columns",0,10,90);
+        editors_.Label(L"Sector detail",0,10,90);
         editors_.Combo(SectorPartsEditId,{L"SDK sectors",L"3 mini-sectors per sector"},raceControl.sectorParts==3?1:0,94,10,200);
         syncing_=false; editors_.Position();
     }

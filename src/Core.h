@@ -452,7 +452,9 @@ struct PitRejoin {
     int classAhead = -1, classBehind = -1, overallAhead = -1, overallBehind = -1;
     double classAheadGap = -1, classBehindGap = -1, overallAheadGap = -1, overallBehindGap = -1;
 };
-PitRejoin PredictRejoin(const Session&, const Frame&, double loss, double pace);
+// passes: with a clean lap of the own car, the rejoin point and the cars around it on that lap's profile; without,
+// iRacing's estimate of cars in the own class, else lap distance at pace.
+PitRejoin PredictRejoin(const Session&, const Frame&, double loss, double pace, const PassingTimes* passes = nullptr);
 Session DemoSession();
 Frame DemoFrame(double time);
 }

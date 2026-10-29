@@ -25,7 +25,7 @@ The official SVG projection retains its existing accuracy limits: lap-distance f
 
 ## Relative and Standings
 
-In each overlay's **Settings → Columns**, enable **Sector times**. Expand it to choose **SDK sectors** (S1, S2, S3 …) or **3 mini-sectors per sector** (S1.1, S1.2, S1.3, S2.1 …). Each sector gets its own column with its own heading; the group is dragged among the other columns as one. Times are in seconds with the green/purple/yellow status; absent data is **—**.
+In each overlay's **Settings → Columns**, enable **Sector times**. Expand it for **Sector detail**: **SDK sectors** (S1, S2, S3 …) or **3 mini-sectors per sector** (S1.1, S1.2, S1.3, S2.1 …). Each sector gets its own column with its own heading; the group is dragged among the other columns as one. Times are in seconds with the green/purple/yellow status; absent data is **—**.
 
 Times follow the lap, as on Formula 1 and DTM timing screens:
 
@@ -37,9 +37,9 @@ Pit stops do not hide times: the in-lap's last sector and the out-lap's first se
 
 ## Race Control
 
-Switch on **Race Control settings → Standings columns → Sectors**; expand it for **Columns**: SDK sectors or mini-sectors. The standings get one column per sector (S1 ~, S2 ~ …) with the same lap rule and pace colours as Relative and Standings: a completed time sits on its colour, a sector not yet completed this lap is a grey dash. Each column sorts by its own header; cars without a time in it go last.
+Switch on **Race Control settings → Standings columns → Sector times**; expand it for **Sector detail**: SDK sectors or mini-sectors. The standings get one column per sector (S1, S2 …) with the same lap rule and pace colours as Relative and Standings: a completed time sits on its colour, a sector not yet completed this lap is a grey dash. Each column sorts by its own header; cars without a time in it go last.
 
-Turning **Sectors** off hides the columns. There is no reference-delta column or comparison lap basis.
+Turning **Sector times** off hides the columns. There is no reference-delta column or comparison lap basis.
 
 ## Definitions and observation limits
 

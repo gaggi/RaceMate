@@ -1300,8 +1300,13 @@ int RunDiagnostics() {
             extrasOk=raceControl.columns[2]==first && raceControl.columns[1]==third && extrasOk;
             const auto at=[&](int id){ return std::find(raceControl.fieldOrder.begin(),raceControl.fieldOrder.end(),id)-raceControl.fieldOrder.begin(); };
             extrasOk=at(first)>at(third) && extrasOk;
+            // A width dragged in the window survives the rebuild that sorting or reordering forces.
+            const int wide=MulDiv(123,GetDpiForWindow(raceControl.window),96),lead=raceControl.columns[0];
+            ListView_SetColumnWidth(raceControl.standings,0,wide); UpdateRaceControl(true);
+            extrasOk=raceControl.columns[0]==lead && std::abs(ListView_GetColumnWidth(raceControl.standings,0)-wide)<=1 && extrasOk;
+            raceControl.widths.clear();
             raceControl.fieldOrder=fieldOrder; raceControl.eventOrder=eventOrder; SaveRaceFields(); UpdateRaceControl(true);
-            report<<"Race Control column order: dragged rows and headings move the columns, stored: "<<(extrasOk?"PASS":"FAIL")<<"\n"; allOk=(extrasOk) && allOk;
+            report<<"Race Control column order and widths: dragged rows and headings move the columns, stored; dragged widths kept: "<<(extrasOk?"PASS":"FAIL")<<"\n"; allOk=(extrasOk) && allOk;
         }
         app.session=savedSession; app.frame=savedFrame; InvalidateModel();
         raceControl.fields=savedFields; raceControl.eventFields=savedEvents; raceControl.info=savedInfo;

@@ -417,4 +417,11 @@ void OpponentFuelTests() {
     Require(f.cars[0].stintStartTime<0,"a replayed green flag cannot establish a live stint clock");
 }
 }
-void PredictionTests() { PitWindowTests(); TimedTests(); LeaderChangeTests(); CrossingInvariantTests(); LimitAndStateTests(); HistoryTests(); MulticlassEnduranceTests(); FuelForecastTests(); OpponentFuelTests(); }
+// iRacing's estimate runs on the class reference lap: 60 s of a 120 s reference is half the lap, at a 100 s pace
+// 50 s to the line, not 40 s from dividing by the car's own 100 s lap.
+void SdkScaleTests() {
+    auto s=Race(); s.drivers[1].estimatedLapTime=120; auto f=RacingFrame(); f.state=5; f.cars[1].estTime=60;
+    RacePredictor predictor; const auto p=predictor.Predict(s,f);
+    Near(p.finish.ownFinishIn,50,"SDK estimate divided by its class reference lap");
+}
+void PredictionTests() { SdkScaleTests(); PitWindowTests(); TimedTests(); LeaderChangeTests(); CrossingInvariantTests(); LimitAndStateTests(); HistoryTests(); MulticlassEnduranceTests(); FuelForecastTests(); OpponentFuelTests(); }

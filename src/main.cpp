@@ -1075,7 +1075,7 @@ const PitRejoin& PitExit() {
     if(service.tires>0 && tires<=0) { service.tires=0; app.pitExitPartial=true; }
     const double stop=app.preview?20:std::max(0.0,ServiceTime(service,RefuelRateLitres(),tires,SimultaneousService(app.session)));
     double pace=Plan().prediction.ownPace; if(!(pace>0)) pace=f.lastLap>0?f.lastLap:f.bestLap;
-    app.pitExit=PredictRejoin(app.session,f,lane+stop,pace);
+    app.pitExit=PredictRejoin(app.session,f,lane+stop,pace,&app.passing);
     return app.pitExit;
 }
 std::wstring PitExitAhead() {
