@@ -107,22 +107,29 @@ double LapGap(const PassingTimes* passes,const Driver& ahead,const Car& a,const 
 }
 // Relative and Traffic: the time the car behind needs to get where the car ahead is now, on its own last clean
 // lap, so each class is timed at its own pace and a stopped car comes closer as the distance shrinks. Without
-// one, the last clean lap of a car in its class. Before any (the first laps), the measured gap. Only iRacing's own
-// estimate for one class (CarIdxEstTime, which knows slow corners and fast straights) may overrule it, where the
+// one, the last clean lap of a car in its class. Before any (the first laps), the measured gap, capped a little
+// above iRacing's own estimate for one class (CarIdxEstTime, which knows slow corners and fast straights) where the
 // car ahead crawled over the stretch (pit lane, a stop). Lap distance at the average pace is too coarse for that:
 // far too long on a fast straight, far too short in a slow corner.
+// lap: the car behind's own lap time where known, else the reference car's; its class estimate comes first.
 double ReachGap(const PassingTimes* passes,const Driver& ahead,const Car& a,const Driver& behind,const Car& b,double lap) {
-    if(passes) for(int profile:{behind.index,passes->ClassProfile(behind.classId)}) {
-        const double reach=passes->Reach(profile,behind.index,ahead.index);
+    if(passes) {
+        // Its own lap first; the class search only when it has none.
+        double reach=passes->Reach(behind.index,behind.index,ahead.index);
+        if(!std::isfinite(reach)) reach=passes->Reach(passes->ClassProfile(behind.classId),behind.index,ahead.index);
         if(std::isfinite(reach)) return reach;
     }
     const double pace=ValidTime(behind.estimatedLapTime)?behind.estimatedLapTime:lap;
     const double measured=passes?passes->Gap(ahead.index,behind.index):std::numeric_limits<double>::quiet_NaN();
     double first=0,second=0;
     if(std::isfinite(measured)) {
-        if(ahead.classId!=behind.classId || !TimeShare(ahead,a,pace,first) || !TimeShare(behind,b,pace,second)) return measured;
+        // Capped near the estimate: where the car ahead crawled or stopped, the measurement says how slow it was.
+        // A cap rather than a switch, so the value never jumps when it starts to apply. iRacing's estimate for one
+        // class allows little over it; lap distance at the average pace, coarse in slow corners, far more.
         const double estimate=LapGap(nullptr,ahead,a,behind,b,pace);
-        if(!(measured>estimate*2+.3)) return measured;
+        if(!std::isfinite(estimate)) return measured;
+        const bool timed=ahead.classId==behind.classId && TimeShare(ahead,a,pace,first) && TimeShare(behind,b,pace,second);
+        return std::min(measured,timed?estimate*1.1+.2:estimate*2.5+.2);
     }
     return LapGap(nullptr,ahead,a,behind,b,pace);
 }
@@ -533,7 +540,8 @@ std::vector<Row> Relative(const Session& s, const Frame& f, int count, bool ownC
     const double lapTime = LapTime(s,f);
     std::array<int,MaxCars> livePositions{},liveClassPositions{};
     if(s.type=="Race") {
-        auto field=Standings(s,f,MaxCars,false); LiveRaceOrder(s,f,field);
+        // Only the order for the positions; gaps are worked out below for the rows shown.
+        auto field=Standings(s,f,MaxCars,false,false,false); LiveRaceOrder(s,f,field);
         for(const auto& row:field) { livePositions[row.driver.index]=row.car.position; liveClassPositions[row.driver.index]=row.car.classPosition; }
     }
     for (const auto& d : s.drivers) {
@@ -545,11 +553,7 @@ std::vector<Row> Relative(const Session& s, const Frame& f, int count, bool ownC
         if(livePositions[d.index]>0) { row.car.position=livePositions[d.index]; row.car.classPosition=liveClassPositions[d.index]; }
         if(s.type=="Race" && c.lap >= 0 && mine.lap >= 0)
             row.lapDifference = static_cast<int>(std::round(c.lap + c.pct - mine.lap - mine.pct));
-        // Ahead or behind by lap position; the seconds only say how far.
         if (row.player) row.gap = 0;
-        else if (diff > 0 || (diff == 0 && d.index < reference)) row.gap = -ReachGap(passes,d,c,*me,mine,lapTime);
-        else row.gap = ReachGap(passes,*me,mine,d,c,lapTime);
-        if(!row.player && !std::isfinite(row.gap) && d.classId==me->classId && c.estTime>0 && mine.estTime>0 && std::abs(c.pct-mine.pct)<.5) row.gap=mine.estTime-c.estTime;
         rows.push_back(row);
     }
     // Select each side independently so a crowded side cannot displace the reference.
@@ -565,13 +569,23 @@ std::vector<Row> Relative(const Session& s, const Frame& f, int count, bool ownC
     std::sort(ahead.begin(),ahead.end(),closest); std::sort(behind.begin(),behind.end(),closest);
     if(ahead.size()>static_cast<size_t>(half)) ahead.resize(half);
     if(behind.size()>static_cast<size_t>(half)) behind.resize(half);
+    // Ahead or behind by lap position; the seconds only say how far, and only for the rows shown. A car behind
+    // is timed at its own pace where known.
+    auto gap=[&](Row& row,bool isAhead) {
+        const auto& d=row.driver; const auto& c=row.car;
+        if(isAhead) row.gap=-ReachGap(passes,d,c,*me,mine,lapTime);
+        else { const double pace=DriverLapTime(s,f,d.index); row.gap=ReachGap(passes,*me,mine,d,c,ValidTime(pace)?pace:lapTime); }
+        if(!std::isfinite(row.gap) && d.classId==me->classId && c.estTime>0 && mine.estTime>0 && std::abs(c.pct-mine.pct)<.5) row.gap=mine.estTime-c.estTime;
+    };
+    for(auto& row:ahead) gap(row,true);
+    for(auto& row:behind) gap(row,false);
     rows.clear(); rows.reserve(ahead.size()+behind.size()+1);
     for(auto it=ahead.rbegin();it!=ahead.rend();++it) rows.push_back(std::move(*it));
     if(found) rows.push_back(std::move(referenceRow));
     for(auto& row:behind) rows.push_back(std::move(row));
     return rows;
 }
-std::vector<Row> Standings(const Session& s, const Frame& f, int count, bool ownClass, bool fallbackByRating) {
+std::vector<Row> Standings(const Session& s, const Frame& f, int count, bool ownClass, bool fallbackByRating, bool gaps) {
     std::vector<Row> rows;
     rows.reserve(s.drivers.size());
     count = std::max(1,count);
@@ -619,7 +633,7 @@ std::vector<Row> Standings(const Session& s, const Frame& f, int count, bool own
         }
         const auto leader=rows.front();
         for(auto& row:rows) {
-            if(!std::isfinite(row.gap)) row.gap=LiveGap(s,f,leader,row,nullptr);
+            if(gaps && !std::isfinite(row.gap)) row.gap=LiveGap(s,f,leader,row,nullptr);
             if(ownClass && std::isfinite(row.gap) && std::isfinite(leader.gap)) row.gap=std::max(0.0,row.gap-leader.gap);
             if(row.car.lap >= 0 && leader.car.lap >= 0 && row.car.pct >= 0 && leader.car.pct >= 0)
                 row.lapDifference=std::max(0,static_cast<int>(std::floor(leader.car.lap+leader.car.pct-row.car.lap-row.car.pct)));
@@ -937,7 +951,7 @@ std::vector<CarBehind> CarsBehind(const Session& s,const Frame& f,double thresho
     if(own.pct<0 || own.pit || !ValidTime(ownLap)) return cars;
     for(const auto& d:s.drivers) {
         if(d.index<0 || d.index>=MaxCars || d.index==f.player || d.paceCar || d.spectator) continue;
-        const double lap=ValidTime(d.estimatedLapTime)?d.estimatedLapTime:ownLap;
+        const double ownPace=DriverLapTime(s,f,d.index),lap=ValidTime(d.estimatedLapTime)?d.estimatedLapTime:(ValidTime(ownPace)?ownPace:ownLap);
         if(fasterOnly && (d.classId==me->classId || !ValidTime(d.estimatedLapTime) || !ValidTime(me->estimatedLapTime) || lap>me->estimatedLapTime*.98)) continue;
         const auto& c=f.cars[d.index];
         if(c.pct<0 || c.surface<0 || c.surface==1 || c.pit) continue;

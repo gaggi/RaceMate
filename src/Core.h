@@ -278,7 +278,8 @@ int RelativeRowCount(int requested);
 // passes (PassingTimes.h): each pair timed by the car behind on its last clean lap, else a car of its class's;
 // in the first lap the measured gap or same-class SDK estimates / lap distance. Rows and sides come from lap position.
 std::vector<Row> Relative(const Session&, const Frame&, int count, bool ownClass, bool hidePit = false, const PassingTimes* passes = nullptr);
-std::vector<Row> Standings(const Session&, const Frame&, int count, bool ownClass, bool fallbackByRating = false);
+// gaps false leaves race gaps to the leader uncomputed, for callers that need only the order.
+std::vector<Row> Standings(const Session&, const Frame&, int count, bool ownClass, bool fallbackByRating = false, bool gaps = true);
 struct StandingsOptions {
     bool ownClass = false, separateClasses = true, liveGaps = false, fallbackByRating = false;
     int leaders = 3, ahead = 2, behind = 2;

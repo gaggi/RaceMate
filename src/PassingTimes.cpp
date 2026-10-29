@@ -21,7 +21,14 @@ void PassingTimes::Update(const Session& s,const Frame& f) {
     const bool racing=!(f.flags&FullCourse) && !(s.type=="Race" && f.state>0 && f.state<4);
     for(const auto& d:s.drivers) {
         if(d.index<0 || d.index>=MaxCars || d.spectator) continue;
-        auto& c=cars_[d.index]; const auto& car=f.cars[d.index]; c.classId=d.classId;
+        auto& c=cars_[d.index]; const auto& car=f.cars[d.index];
+        // Another car on this index (a new entrant, or another class) starts without the old one's passes and lap.
+        // Another driver in the same car keeps them only after a swap in the pits.
+        if(c.car!=d.carPath || c.classId!=d.classId || (c.driver!=d.name && !car.pit && !c.driver.empty())) {
+            if(!c.car.empty() || c.lapTime>0) { c.lapTime=0; Forget(c,f.time); c.seen=false; }
+            c.car=d.carPath; c.classId=d.classId;
+        }
+        c.driver=d.name;
         // Frames without a position are bridged: iRacing briefly reports some driving cars as not in the world.
         if(!std::isfinite(car.pct) || car.pct<0 || car.pct>=1) continue;
         if(c.slot<0) { c.slot=slots_++; times_.resize(static_cast<size_t>(slots_)*n,-1); profiles_.resize(times_.size(),-1); } // Once per car and session.
@@ -30,12 +37,16 @@ void PassingTimes::Update(const Session& s,const Frame& f) {
         const double metres=s.trackMeters>0?travel*s.trackMeters:travel*5000;
         if(!c.seen || dt<=0 || dt>1 || metres<-5 || metres>120*dt+5) {
             // Telemetry gap, going backwards or a jump (tow, reset): its earlier passes no longer join up.
-            Forget(c,f.time); c.seen=true; c.pct=car.pct; c.time=f.time; continue;
+            Forget(c,f.time); c.seen=true; c.pct=car.pct; c.time=c.moved=f.time; continue;
         }
         // iRacing may switch from the formation lap to racing just after the line: the first seconds of a lap do
         // not spoil it, so the first racing lap becomes a profile.
         if(car.pit || car.towing || (car.surface>=0 && car.surface!=3) || (!racing && f.time-c.lapStart>5)) c.clean=false;
-        if(travel<=0) { c.time=f.time; continue; } // Standing; small jitter backwards stays put.
+        if(travel<=0) {
+            // Standing; small jitter backwards stays put. Standing 2 s (a spin, a stop) keeps the lap from the profile:
+            // replayed later, the wait would be timed as driving.
+            c.time=f.time; if(f.time-c.moved>2) c.clean=false; continue;
+        }
         double* times=times_.data()+static_cast<size_t>(c.slot)*n;
         const double from=c.pct*n,to=(c.pct+travel)*n;
         for(int k=static_cast<int>(std::floor(from))+1;k<=to;++k) {
@@ -45,6 +56,11 @@ void PassingTimes::Update(const Session& s,const Frame& f) {
                 if(c.clean && c.lapStart>=c.since) {
                     double* profile=profiles_.data()+static_cast<size_t>(c.slot)*n; bool whole=true;
                     for(int i=1;i<n && whole;++i) whole=times[i]>times[i-1] && times[i]<at;
+                    // Far slower than its stored lap or its class's fastest (damage, crawling back): not representative.
+                    // A lap a little slower (tyres, rain) still replaces it.
+                    const int classBest=ClassProfile(c.classId);
+                    const double usual=c.lapTime>0?c.lapTime:(classBest>=0?cars_[classBest].lapTime:0);
+                    if(usual>0 && at-c.lapStart>usual*1.25) whole=false;
                     if(whole) {
                         for(int i=0;i<n;++i) profile[i]=times[i]-c.lapStart;
                         c.lapTime=at-c.lapStart;
@@ -54,7 +70,7 @@ void PassingTimes::Update(const Session& s,const Frame& f) {
             }
             times[k%n]=at;
         }
-        c.pct=car.pct; c.time=f.time;
+        c.pct=car.pct; c.time=c.moved=f.time;
     }
 }
 double PassingTimes::Gap(int ahead,int behind) const {

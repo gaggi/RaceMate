@@ -103,6 +103,41 @@ void PassingTimesTests() {
         if(!(!early.HasProfile(0) && worst<.02)) std::cerr<<"worst "<<worst<<"\n";
         Check(!early.HasProfile(0) && worst<.02,"without profiles the measured gap holds all lap");
     }
+    // A lap with a 20 s stop on track, or one crawled at half pace, never becomes the profile: replayed later, the
+    // wait would be timed as driving. 50 s of normal driving ahead stays 50 s.
+    for(int trouble=0;trouble<2;++trouble) {
+        PassingTimes kept; const auto two=Track(2);
+        auto driven=[&](double t) {
+            if(t<250) return t;
+            if(trouble==0) return t<270?250.:t-20; // Stands 20 s, then drives on.
+            return t<350?250+(t-250)/2:t-50; // Half pace for 100 s.
+        };
+        for(int n=0;n<=380*60;++n) { const double t=n/60.; auto f=At(t,{0,-30}); f.cars[0].pct=Position(driven(t)); kept.Update(two,f); }
+        // At 380 s the other car is at 410 on its clock; ours at 360 after the stop, at 330 after the crawl.
+        Close(kept.Reach(0,0,1),trouble==0?50:80,.5,trouble==0?"a stop on track keeps the lap from the profile":"a crawled lap keeps the lap from the profile");
+    }
+    // Another car on the same index starts without the old car's lap; another driver after a swap in the pits keeps it.
+    {
+        PassingTimes swap; auto two=Track(2);
+        for(int n=0;n<=210*60;++n) swap.Update(two,At(n/60.,{0,2}));
+        Check(swap.HasProfile(1) && swap.ClassProfile(1)>=0,"profiles after clean laps");
+        auto inPits=two; inPits.drivers[1].name="Teammate";
+        auto f=At(210.1,{0,2}); f.cars[1].pit=true; swap.Update(inPits,f);
+        Check(swap.HasProfile(1),"a driver swap in the pits keeps the car's lap");
+        auto other=inPits; other.drivers[1].carPath="othercar"; other.drivers[1].name="Somebody else";
+        swap.Update(other,At(210.2,{0,2}));
+        Check(!swap.HasProfile(1),"another car on the index starts afresh");
+        other.drivers[0].classId=2; swap.Update(other,At(210.3,{0,2}));
+        Check(!swap.HasProfile(0) && swap.ClassProfile(1)<0,"another class too, and no class profile is left from it");
+    }
+    // Without profiles and class estimates, a car behind is timed at its own known pace, not the reference car's.
+    {
+        auto two=Track(2); for(auto& d:two.drivers) d.estimatedLapTime=-1;
+        auto f=At(50,{0,0}); f.cars[0].pct=.50; f.cars[1].pct=.49; f.cars[1].best=50; f.cars[0].estTime=f.cars[1].estTime=-1;
+        const auto rows=Relative(two,f,9,false,false,nullptr);
+        const auto behind=std::find_if(rows.begin(),rows.end(),[](const Row& r){return r.driver.index==1;});
+        Close(behind->gap,.5,.001,"1 % of a 50 s lap behind is 0.5 s, not 1 % of the reference car's 100 s");
+    }
     // A pit visit or an off-track spoils the lap: the earlier profile stays.
     {
         PassingTimes spoiled; const auto one=Track(1);
