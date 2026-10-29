@@ -102,6 +102,7 @@ For controlled comparisons:
 .\build\x64\Release\RaceMateTests.exe --benchmark-sectors
 .\build\x64\Release\RaceMateTests.exe --benchmark-passing
 .\build\x64\Release\RaceMateTests.exe --gap-log 180 gaps.csv   # Live or TapeMate: measured gaps of cars within 100 m
+.\build\x64\Release\RaceMateTests.exe --gap-trace 1800 trace.csv # Live or TapeMate: every Relative row with its source (own/class/stored lap, measured, capped, estimate), pace ratio and inputs
 ```
 
 Three environment variables refine the live benchmark. `RACEMATE_COMMAND_TIMING=1` adds the drawing time per overlay and draw command type, with how often each type changed and how much of each overlay was repainted; GDI is flushed after every command, so the totals run slightly higher than without it. With it the report also splits the screen copy into BeginPaint, BitBlt and EndPaint with the area copied, and the track map's car markers into lookup, blending and drawing new ones. `RACEMATE_DDB=1` makes every overlay except the track map draw into a device bitmap instead of a DIB, the earlier behavior, for comparison. `RACEMATE_FULL_COPY=1` copies the whole window on every refresh, which separates the copy's fixed cost from its cost per pixel.

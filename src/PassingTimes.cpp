@@ -4,7 +4,7 @@
 
 namespace rm {
 void PassingTimes::Reset() {
-    cars_={}; times_.clear(); profiles_.clear(); points_=slots_=0; key_.clear(); session_=-1; time_=-1; metres_=0;
+    cars_.assign(MaxCars,Car{}); references_.clear(); times_.clear(); profiles_.clear(); points_=slots_=0; key_.clear(); session_=-1; time_=-1; metres_=0;
 }
 void PassingTimes::Update(const Session& s,const Frame& f) {
     if(!f.connected) { if(points_) Reset(); return; }
@@ -42,10 +42,11 @@ void PassingTimes::Update(const Session& s,const Frame& f) {
         // iRacing may switch from the formation lap to racing just after the line: the first seconds of a lap do
         // not spoil it, so the first racing lap becomes a profile.
         if(car.pit || car.towing || (car.surface>=0 && car.surface!=3) || (!racing && f.time-c.lapStart>5)) c.clean=false;
+        if(car.pit) c.trailCount=0; // Pit lane driving says nothing about the pace on track.
         if(travel<=0) {
             // Standing; small jitter backwards stays put. Standing 2 s (a spin, a stop) keeps the lap from the profile:
             // replayed later, the wait would be timed as driving.
-            c.time=f.time; if(f.time-c.moved>2) c.clean=false; continue;
+            c.time=f.time; if(f.time-c.moved>2) { c.clean=false; c.trailCount=0; c.stood=f.time; } continue;
         }
         double* times=times_.data()+static_cast<size_t>(c.slot)*n;
         const double from=c.pct*n,to=(c.pct+travel)*n;
@@ -70,9 +71,13 @@ void PassingTimes::Update(const Session& s,const Frame& f) {
                         c.lapTime=at-c.lapStart;
                     }
                 }
-                c.lapStart=at; c.clean=true;
+                // A lap begun within 30 s of standing still (a standing start from the grid, a stop just before the
+                // line) starts with getting up to speed: its first stretch would be timed far too slow.
+                c.lapStart=at; c.clean=at-c.stood>30; ++c.laps;
             }
             times[k%n]=at;
+            const long long point=c.laps*n+k%n;
+            if(point%10==0) { c.trail[c.trailEnd]={point,at}; c.trailEnd=(c.trailEnd+1)%static_cast<int>(c.trail.size()); c.trailCount=std::min(c.trailCount+1,static_cast<int>(c.trail.size())); }
         }
         c.pct=car.pct; c.time=c.moved=f.time;
     }
@@ -95,25 +100,62 @@ double PassingTimes::Gap(int ahead,int behind) const {
     const double at=span>0?first+(last-first)*past/span:first;
     return std::max(0.,b.time-at);
 }
+PassingTimes::Pace PassingTimes::PaceAgainst(int profile,int car) const {
+    Pace pace;
+    if(!HasProfile(profile) || car<0 || car>=MaxCars || !points_) return pace;
+    const auto& c=cars_[car]; const int size=static_cast<int>(c.trail.size());
+    if(c.trailCount<2) return pace;
+    const Mark& last=c.trail[(c.trailEnd+size-1)%size];
+    // The oldest mark still within the window: 30 s of driving, all in one piece.
+    const Mark* first=nullptr;
+    for(int i=c.trailCount;i>=2 && !first;--i) { const Mark& m=c.trail[(c.trailEnd+size-i)%size]; if(last.time-m.time<=PaceWindow) first=&m; }
+    if(!first || last.time-first->time<5) return pace; // Too little to tell.
+    const int n=points_; const long long span=last.point-first->point;
+    const double from=static_cast<double>(first->point%n)/n,to=static_cast<double>(last.point%n)/n;
+    double expected=(span/n)*Curve(profile).lapTime;
+    if(span%n) expected+=Along(profile,from,to);
+    if(!(expected>0)) return pace;
+    pace.raw=(last.time-first->time)/expected;
+    pace.ratio=std::clamp(pace.raw,.7,2.);
+    pace.limited=pace.ratio!=pace.raw;
+    return pace;
+}
 int PassingTimes::ClassProfile(int classId) const {
     int best=-1;
     for(int i=0;i<MaxCars;++i) if(cars_[i].lapTime>0 && cars_[i].classId==classId && (best<0 || cars_[i].lapTime<cars_[best].lapTime)) best=i;
     return best;
 }
-double PassingTimes::Into(const Car& c,double pct) const {
-    const int n=points_; const double* profile=profiles_.data()+static_cast<size_t>(c.slot)*n;
+bool PassingTimes::AddReference(int classId,double lapTime,std::vector<double> times) {
+    if(!points_ || !(lapTime>0) || static_cast<int>(times.size())!=points_ || times[0]!=0 || StoredProfile(classId)>=0) return false;
+    for(int i=1;i<points_;++i) if(!(times[i]>times[i-1]) || !(times[i]<lapTime)) return false;
+    references_.push_back({classId,lapTime,std::move(times)}); return true;
+}
+int PassingTimes::StoredProfile(int classId) const {
+    for(size_t i=0;i<references_.size();++i) if(references_[i].classId==classId) return MaxCars+static_cast<int>(i);
+    return -1;
+}
+bool PassingTimes::ClassLap(int classId,double& lapTime,std::vector<double>& times) const {
+    const int car=ClassProfile(classId); if(car<0) return false;
+    const auto lap=Curve(car); lapTime=lap.lapTime; times.assign(lap.times,lap.times+points_); return true;
+}
+PassingTimes::Lap PassingTimes::Curve(int profile) const {
+    if(profile>=MaxCars) { const auto& r=references_[profile-MaxCars]; return {r.times.data(),r.lapTime}; }
+    const auto& c=cars_[profile]; return {profiles_.data()+static_cast<size_t>(c.slot)*points_,c.lapTime};
+}
+double PassingTimes::Into(const Lap& lap,double pct) const {
+    const int n=points_; const double* profile=lap.times;
     const double point=pct*n; const int k=std::min(n-1,static_cast<int>(std::floor(point)));
-    const double next=k+1<n?profile[k+1]:c.lapTime;
+    const double next=k+1<n?profile[k+1]:lap.lapTime;
     return profile[k]+(next-profile[k])*(point-k);
 }
 double PassingTimes::Along(int profile,double from,double to) const {
     if(!HasProfile(profile) || !points_ || !(from>=0 && from<1) || !(to>=0 && to<1)) return std::numeric_limits<double>::quiet_NaN();
-    const auto& p=cars_[profile]; const double start=Into(p,from),end=Into(p,to);
+    const auto p=Curve(profile); const double start=Into(p,from),end=Into(p,to);
     return to>=from?std::max(0.,end-start):p.lapTime-start+end;
 }
 double PassingTimes::Locate(int profile,double seconds) const {
     if(!HasProfile(profile) || !points_ || !std::isfinite(seconds)) return std::numeric_limits<double>::quiet_NaN();
-    const auto& p=cars_[profile]; const int n=points_; const double* profileTimes=profiles_.data()+static_cast<size_t>(p.slot)*n;
+    const auto p=Curve(profile); const int n=points_; const double* profileTimes=p.times;
     seconds-=std::floor(seconds/p.lapTime)*p.lapTime;
     // The last point at or before those seconds, then linear to the next (or to the line).
     const int k=std::max(0,static_cast<int>(std::upper_bound(profileTimes,profileTimes+n,seconds)-profileTimes)-1);
@@ -122,9 +164,9 @@ double PassingTimes::Locate(int profile,double seconds) const {
 }
 double PassingTimes::Reach(int profile,int from,int to) const {
     const double unknown=std::numeric_limits<double>::quiet_NaN();
-    if(profile<0 || profile>=MaxCars || from<0 || from>=MaxCars || to<0 || to>=MaxCars || !points_) return unknown;
-    const auto& p=cars_[profile]; const auto& a=cars_[from]; const auto& b=cars_[to];
-    if(p.lapTime<=0 || !a.seen || !b.seen) return unknown;
+    if(!HasProfile(profile) || from<0 || from>=MaxCars || to<0 || to>=MaxCars || !points_) return unknown;
+    const auto p=Curve(profile); const auto& a=cars_[from]; const auto& b=cars_[to];
+    if(!a.seen || !b.seen) return unknown;
     if(from==to) return 0;
     // Forward from a to b; across the line the rest of the lap and the start of the next.
     const double start=Into(p,a.pct),end=Into(p,b.pct);

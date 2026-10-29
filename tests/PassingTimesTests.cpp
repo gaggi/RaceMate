@@ -172,6 +172,77 @@ void PassingTimesTests() {
         auto two=Track(2); auto g=At(50,{0,0}); g.cars[0].pct=.5; g.cars[0].estTime=0; g.cars[1].pct=.9; g.cars[1].estTime=90;
         Close(PredictRejoin(two,g,10,100,nullptr).pct,.4,.001,"an estimate of 0 mid-lap is not used");
     }
+    // Pace window: the last 30 s of driving against the profile asked about.
+    {
+        // Rain from 250 s at 1.3 times the time, then dry again from 400 s: the ratio follows within 30 s each way.
+        PassingTimes wet; const auto one=Track(1);
+        auto driven=[](double t) { return t<250?t:(t<400?250+(t-250)/1.3:250+150/1.3+(t-400)); };
+        auto run=[&](double until) { for(int n=0;n<=static_cast<int>(until*60);++n) { const double t=n/60.; auto f=At(t,{0}); f.cars[0].pct=Position(driven(t)); wet.Update(one,f); } };
+        run(249); Close(wet.PaceAgainst(0,0).ratio,1,.01,"dry pace against the dry lap");
+        run(285); Close(wet.PaceAgainst(0,0).ratio,1.3,.02,"30 s into the rain: 1.3");
+        run(435); Close(wet.PaceAgainst(0,0).ratio,1,.02,"30 s after it dried: 1.0 again");
+    }
+    {
+        // A new wet reference while the ratio is active: against it about 1, against the dry one still 1.3, so the
+        // gap stays near 130 % and never 169 %.
+        PassingTimes swap; const auto two=Track(2);
+        auto driven=[](double t) { return t<200?t:200+(t-200)/1.3; };
+        for(int n=0;n<=500*60;++n) { const double t=n/60.; auto f=At(t,{0,0}); f.cars[0].pct=Position(driven(t)); swap.Update(two,f); }
+        Close(swap.LapTime(0),130,.5,"the wet laps became the car's profile");
+        Close(swap.PaceAgainst(0,0).ratio,1,.02,"no ratio against its own wet lap");
+        Close(swap.PaceAgainst(1,0).ratio,1.3,.02,"1.3 against a dry lap of its class");
+    }
+    {
+        // Standing ends the window; the pits too. Slow but moving driving does not.
+        PassingTimes stop; const auto one=Track(1);
+        auto driven=[](double t) { return t<250?t:(t<255?250.:t-5); };
+        for(int n=0;n<=262*60;++n) { const double t=n/60.; auto f=At(t,{0}); f.cars[0].pct=Position(driven(t)); stop.Update(one,f); }
+        Check(std::isnan(stop.PaceAgainst(0,0).raw),"5 s standing: no ratio until 5 s of driving again");
+        for(int n=262*60+1;n<=290*60;++n) { const double t=n/60.; auto f=At(t,{0}); f.cars[0].pct=Position(driven(t)); stop.Update(one,f); }
+        Close(stop.PaceAgainst(0,0).ratio,1,.01,"then the window fills again, without the standing time");
+    }
+    {
+        // A 500 m track, 10 s a lap: 30 s span three lines. 1.2 times the time reads 1.2.
+        // Against the lap of a car still at the old pace: its own laps soon become the slower ones themselves.
+        PassingTimes oval; auto two=Track(2); two.trackMeters=500;
+        auto at=[&](double t,double scale) { auto f=At(t,{0,0}); const double u=t<200?t*10:2000+(t-200)*10/scale; f.cars[0].pct=Position(u); f.cars[1].pct=Position(t*10); return f; };
+        for(int n=0;n<=200*60;++n) oval.Update(two,at(n/60.,1.2));
+        Close(oval.PaceAgainst(1,0).ratio,1,.01,"short laps: steady pace reads 1");
+        for(int n=200*60+1;n<=240*60;++n) oval.Update(two,at(n/60.,1.2));
+        Close(oval.PaceAgainst(1,0).ratio,1.2,.02,"short laps: 1.2 over several lines");
+        Close(oval.PaceAgainst(0,0).ratio,1,.02,"and against its own new slower laps 1");
+    }
+    // A class lap stored from an earlier session is the start reference of the next one, after every lap of it.
+    {
+        PassingTimes earlier; auto two=Track(2);
+        for(int n=0;n<=210*60;++n) earlier.Update(two,At(n/60.,{0,2}));
+        double lap=0; std::vector<double> times; Check(earlier.ClassLap(1,lap,times) && times.size()==500,"a class lap to store");
+        PassingTimes next; auto later=two; later.key="next session";
+        next.Update(later,At(1000,{0,2}));
+        Check(next.AddReference(1,lap,times) && !next.AddReference(1,lap,times),"one stored reference per class");
+        times[5]=-1; Check(!next.AddReference(2,lap,times),"a broken file is not used");
+        for(int n=1;n<=5*60;++n) next.Update(later,At(1000+n/60.,{0,2}));
+        auto f=At(1005,{0,2}); const auto rows=Relative(later,f,9,false,false,&next);
+        const auto behind=std::find_if(rows.begin(),rows.end(),[](const Row& r){return r.driver.index==1;});
+        Check(behind->gapSource==Row::GapSource::Stored,"before a lap of this session: the stored one");
+        Close(behind->gap,2,.02,"which times the 2 s gap right away");
+        for(int n=5*60+1;n<=220*60;++n) next.Update(later,At(1000+n/60.,{0,2}));
+        f=At(1220,{0,2}); const auto own=Relative(later,f,9,false,false,&next);
+        Check(std::find_if(own.begin(),own.end(),[](const Row& r){return r.driver.index==1;})->gapSource==Row::GapSource::Own,"then the car's own lap of this session");
+    }
+    // Standing start: 20 s on the grid just before the line, then getting up to speed. The first lap starts slow, so it
+    // is no profile, neither the car's own nor its class's; the second is. A Formula Vee race showed the gaps across
+    // the line jumping at the end of laps one and two when the first lap was taken.
+    {
+        PassingTimes grid; auto two=Track(2); two.type="Race";
+        auto driven=[](double t,double slot) { return t<20?-slot:-slot+(t-20)-3+3*std::exp(-(t-20)/3); };
+        auto frame=[&](double t) { auto f=At(t,{0,0}); f.state=4; f.cars[0].pct=Position(driven(t,2)); f.cars[1].pct=Position(driven(t,1)); return f; };
+        for(int n=0;n<=128*60;++n) grid.Update(two,frame(n/60.));
+        Check(!grid.HasProfile(0) && !grid.HasProfile(1) && grid.ClassProfile(1)<0,"the lap from the grid is no profile");
+        for(int n=128*60+1;n<=230*60;++n) grid.Update(two,frame(n/60.));
+        Check(grid.HasProfile(0) && grid.HasProfile(1),"the second lap is");
+        Close(grid.LapTime(0),100,.05,"at the car's normal pace");
+    }
     // A pit visit or an off-track spoils the lap: the earlier profile stays.
     {
         PassingTimes spoiled; const auto one=Track(1);
@@ -225,7 +296,7 @@ int PassingTimesSweep() {
 // the car behind's profile time, both lap positions, lap counters and SDK estimates.
 int PassingTimesTrace(int seconds,const char* path) {
     Telemetry reader; Frame frame; Session session; PassingTimes passes; std::ofstream out(path);
-    out<<"time,reference,car,ahead,gap,estimate,measured,reach,classReach,pct,refPct,completed,refCompleted,est,refEst,surface,pit\n";
+    out<<"time,reference,car,ahead,gap,source,pace,limited,estimate,measured,reach,classReach,pct,refPct,completed,refCompleted,est,refEst,surface,pit\n";
     const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(seconds); double last=-1; int frames=0;
     while(std::chrono::steady_clock::now()<end) {
         if(!reader.Read(frame,session) || frame.time==last) { Sleep(1); continue; }
@@ -240,7 +311,8 @@ int PassingTimesTrace(int seconds,const char* path) {
             const auto other=std::find_if(without.begin(),without.end(),[&](const Row& r){return r.driver.index==car;});
             int backClass=-1; for(const auto& d:session.drivers) if(d.index==back) backClass=d.classId;
             const auto& c=frame.cars[car]; const auto& m=frame.cars[reference];
-            out<<frame.time<<','<<reference<<','<<car<<','<<ahead<<','<<row.gap<<','<<(other==without.end()?NAN:other->gap)<<','<<passes.Gap(front,back)<<','
+            static const char* sources[]={"none","own","class","stored","measured","capped","estimate"};
+            out<<frame.time<<','<<reference<<','<<car<<','<<ahead<<','<<row.gap<<','<<sources[static_cast<int>(row.gapSource)]<<','<<row.gapPace<<','<<row.gapPaceLimited<<','<<(other==without.end()?NAN:other->gap)<<','<<passes.Gap(front,back)<<','
                <<passes.Reach(back,back,front)<<','<<passes.Reach(passes.ClassProfile(backClass),back,front)<<','<<c.pct<<','<<m.pct<<','<<c.completed<<','<<m.completed<<','
                <<c.estTime<<','<<m.estTime<<','<<c.surface<<','<<c.pit<<'\n';
         }

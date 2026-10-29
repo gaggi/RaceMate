@@ -267,6 +267,9 @@ struct Row {
     bool pitExit = false; // The own car where it would rejoin after a stop now; not a real entry.
     double interval = std::numeric_limits<double>::quiet_NaN();
     int intervalLaps = 0;
+    // Relative and Traffic: where the seconds came from, and the car behind's pace against its profile.
+    enum class GapSource { None, Own, Class, Stored, Measured, Capped, Estimate } gapSource = GapSource::None;
+    double gapPace = 1; bool gapPaceLimited = false;
 };
 // -MaxCars denotes unavailable (missing grid or non-race session).
 int PositionsGained(const Session&, const Row&, bool ownClass);

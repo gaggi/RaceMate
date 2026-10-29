@@ -114,12 +114,22 @@ double LapGap(const PassingTimes* passes,const Driver& ahead,const Car& a,const 
 // car ahead crawled over the stretch (pit lane, a stop). Lap distance at the average pace is too coarse for that:
 // far too long on a fast straight, far too short in a slow corner.
 // lap: the car behind's own lap time where known, else the reference car's; its class estimate comes first.
-double ReachGap(const PassingTimes* passes,const Driver& ahead,const Car& a,const Driver& behind,const Car& b,double lap) {
+// On a profile, scaled by how the car behind drives now against that profile (rain, tyres, a slower driver).
+// source: which of these gave the value, for traces.
+double ReachGap(const PassingTimes* passes,const Driver& ahead,const Car& a,const Driver& behind,const Car& b,double lap,Row* source=nullptr) {
+    auto from=[&](Row::GapSource kind,double value) { if(source) source->gapSource=kind; return value; };
     if(passes) {
         // Its own lap first; the class search only when it has none.
-        double reach=passes->Reach(behind.index,behind.index,ahead.index);
-        if(!std::isfinite(reach)) reach=passes->Reach(passes->ClassProfile(behind.classId),behind.index,ahead.index);
-        if(std::isfinite(reach)) return reach;
+        // Then the class's lap of this session, then one stored from an earlier session as a start reference.
+        int profile=behind.index; double reach=passes->Reach(profile,behind.index,ahead.index);
+        if(!std::isfinite(reach)) { profile=passes->ClassProfile(behind.classId); reach=passes->Reach(profile,behind.index,ahead.index); }
+        if(!std::isfinite(reach)) { profile=passes->StoredProfile(behind.classId); reach=passes->Reach(profile,behind.index,ahead.index); }
+        if(std::isfinite(reach)) {
+            const auto pace=passes->PaceAgainst(profile,behind.index);
+            if(source) { source->gapPace=pace.ratio; source->gapPaceLimited=pace.limited; }
+            const auto kind=profile==behind.index?Row::GapSource::Own:(profile>=MaxCars?Row::GapSource::Stored:Row::GapSource::Class);
+            return from(kind,reach*pace.ratio);
+        }
     }
     const double pace=ValidTime(behind.estimatedLapTime)?behind.estimatedLapTime:lap;
     const double measured=passes?passes->Gap(ahead.index,behind.index):std::numeric_limits<double>::quiet_NaN();
@@ -129,11 +139,12 @@ double ReachGap(const PassingTimes* passes,const Driver& ahead,const Car& a,cons
         // A cap rather than a switch, so the value never jumps when it starts to apply. iRacing's estimate for one
         // class allows little over it; lap distance at the average pace, coarse in slow corners, far more.
         const double estimate=LapGap(nullptr,ahead,a,behind,b,pace);
-        if(!std::isfinite(estimate)) return measured;
+        if(!std::isfinite(estimate)) return from(Row::GapSource::Measured,measured);
         const bool timed=ahead.classId==behind.classId && TimeShare(ahead,a,pace,first) && TimeShare(behind,b,pace,second);
-        return std::min(measured,timed?estimate*1.1+.2:estimate*2.5+.2);
+        const double cap=timed?estimate*1.1+.2:estimate*2.5+.2;
+        return measured<=cap?from(Row::GapSource::Measured,measured):from(Row::GapSource::Capped,cap);
     }
-    return LapGap(nullptr,ahead,a,behind,b,pace);
+    return from(Row::GapSource::Estimate,LapGap(nullptr,ahead,a,behind,b,pace));
 }
 double LiveGap(const Session& s,const Frame& f,const Row& ahead,const Row& behind,const PassingTimes* passes) {
     if(ahead.driver.index==behind.driver.index) return 0;
@@ -575,8 +586,8 @@ std::vector<Row> Relative(const Session& s, const Frame& f, int count, bool ownC
     // is timed at its own pace where known.
     auto gap=[&](Row& row,bool isAhead) {
         const auto& d=row.driver; const auto& c=row.car;
-        if(isAhead) row.gap=-ReachGap(passes,d,c,*me,mine,lapTime);
-        else { const double pace=DriverLapTime(s,f,d.index); row.gap=ReachGap(passes,*me,mine,d,c,ValidTime(pace)?pace:lapTime); }
+        if(isAhead) row.gap=-ReachGap(passes,d,c,*me,mine,lapTime,&row);
+        else { const double pace=DriverLapTime(s,f,d.index); row.gap=ReachGap(passes,*me,mine,d,c,ValidTime(pace)?pace:lapTime,&row); }
         if(!std::isfinite(row.gap) && d.classId==me->classId && c.estTime>0 && mine.estTime>0 && std::abs(c.pct-mine.pct)<.5) row.gap=mine.estTime-c.estTime;
     };
     for(auto& row:ahead) gap(row,true);

@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <deque>
 #include <fstream>
+#include <ctime>
 #include <list>
 #include <map>
 #include <emmintrin.h>
@@ -1374,6 +1375,7 @@ LONGLONG DiagnosticTicks() { LARGE_INTEGER now{}; QueryPerformanceCounter(&now);
 // Describes an overlay in physical pixels. Comparing it with the previous scene yields the exact changed areas.
 #include "SectorUi.inc"
 #include "TrackMap.inc"
+#include "PaceProfiles.inc"
 // A dial's value as the car steps it: whole steps without decimals, brake bias in percent with the decimals it has.
 std::wstring DialText(int dial,double value) {
     const bool whole=std::abs(value-std::round(value))<1e-4, tenths=std::abs(value*10-std::round(value*10))<1e-3;
@@ -2928,7 +2930,7 @@ void ProcessFrame(bool connected) {
         { ProfileScope p("analysis: pit history"); app.pitHistory.Update(app.session,app.frame); }
         // Always, about 2 us a frame: records stay complete when a sector view is opened mid-session.
         { ProfileScope p("analysis: sector timing"); app.sectors.Update(app.session,app.frame); }
-        { ProfileScope p("analysis: passing times"); app.passing.Update(app.session,app.frame); }
+        { ProfileScope p("analysis: passing times"); app.passing.Update(app.session,app.frame); LoadPaceProfiles(app.session); SavePaceProfiles(app.session); }
         { ProfileScope p("analysis: pit stop estimate"); UpdatePitStop(); }
         { ProfileScope p("analysis: race control events"); app.events.Update(app.session,app.frame); }
         { ProfileScope p("analysis: fuel"); app.fuel.Update(app.session,app.frame,true); }
