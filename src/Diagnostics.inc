@@ -45,6 +45,8 @@ bool MainDpiDiagnostics(std::ostream& report) {
 
 #include "SectorDiagnostics.inc"
 int RunDiagnostics() {
+    // ok: the checks since the last one that reported it; allOk: every check. Each report line is its own verdict.
+    bool allOk=true;
     MONITORINFO monitor{sizeof(monitor)};
     GetMonitorInfoW(MonitorFromPoint({0,0},MONITOR_DEFAULTTOPRIMARY),&monitor);
     std::ofstream report("build/qa/controls.txt");
@@ -54,7 +56,7 @@ int RunDiagnostics() {
         std::vector<std::wstring> titles; for(const auto& row:reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA))->Rows()) if(row.button==L"Settings") titles.push_back(row.title);
         startupOk=titles.size()>=OverlayCount; for(int kind=0;kind<OverlayCount && startupOk;++kind) startupOk=titles[kind]==Titles[kind];
     }
-    report<<"Overlays page at startup lists every overlay by its own name: "<<(startupOk?"PASS":"FAIL")<<"\n";
+    report<<"Overlays page at startup lists every overlay by its own name: "<<(startupOk?"PASS":"FAIL")<<"\n"; allOk=(startupOk) && allOk;
     app.preview=true; app.edit=false; PreviewData(0); UpdateStatus(); RefreshPage();
     SetWindowPos(app.main,nullptr,-30000,-30000,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
     ShowWindow(app.main,SW_SHOWNOACTIVATE); UpdateWindow(app.main);
@@ -79,7 +81,7 @@ int RunDiagnostics() {
             trackMap.task.Cancel(); trackMap.identity=std::to_string(id)+":"+trackmap::NormalizeName(app.session.trackName); trackMap.id=id;
             trackMap.geometry=std::move(loaded.map.geometry); trackMap.ready=trackMap.cached=true; ++trackMap.revision;
             o.map={}; UpdateOverlays();
-            if(id==353) { ok=SectorDiagnostics(report) && ok; sectorChecked=true; }
+            if(id==353) { allOk=SectorDiagnostics(report) && allOk; sectorChecked=true; }
             const auto bitmap=o.mapBitmap;
             mapOk=bitmap && Export(o.window,L"build\\qa\\trackmap-"+std::to_wstring(id)+L".bmp") && mapOk;
             auto markers=[&] { return std::count_if(o.scene.begin(),o.scene.end(),[](const DrawCommand& c){return c.type==DrawCommand::MapCar;}); };
@@ -154,7 +156,7 @@ int RunDiagnostics() {
         ok=mapOk && ok;
         ShowPage(Page::Overlays);
     }
-    if(!sectorChecked) ok=SectorDiagnostics(report) && ok;
+    if(!sectorChecked) allOk=SectorDiagnostics(report) && allOk;
     {
         // --profile: ticks are measured per part and written to profile.txt beside settings.ini.
         bool profileOk=true; auto& map=First(TrackMapKind); const auto placement=map.place; map.place.enabled=true; SettingChanged();
@@ -165,7 +167,7 @@ int RunDiagnostics() {
         profileOk=text.find("Process CPU")!=std::string::npos && text.find("tick (everything below)")!=std::string::npos
             && text.find("overlay Track Map: update")!=std::string::npos && text.find("session YAML parsing")!=std::string::npos && profileOk;
         profiler.on=false; profiler.entries.clear(); map.place=placement; SettingChanged();
-        report<<"Profile: parts measured and written every 10 s: "<<(profileOk?"PASS":"FAIL")<<"\n"; ok=profileOk && ok;
+        report<<"Profile: parts measured and written every 10 s: "<<(profileOk?"PASS":"FAIL")<<"\n"; allOk=profileOk && allOk;
         if(!profileOk) report<<text;
     }
     {
@@ -276,7 +278,7 @@ int RunDiagnostics() {
             }
         } else pitOk=false;
         ShowPage(Page::Overlays);
-        report<<"Pit exit estimate: metric, Fuel module, track map ring and settings: "<<(pitOk?"PASS":"FAIL")<<"\n"; ok=pitOk && ok;
+        report<<"Pit exit estimate: metric, Fuel module, track map ring and settings: "<<(pitOk?"PASS":"FAIL")<<"\n"; allOk=pitOk && allOk;
     }
     {
         bool forecastOk=true;
@@ -331,7 +333,7 @@ int RunDiagnostics() {
         fuel.fuel.strip=true; Save(); Load(); UpdateOverlays();
         forecastOk=FuelStripCount(fuel)==2 && InStrip(FuelKind,LeaderDistanceModule) && InStrip(FuelKind,WhiteFlagTimeModule) && Export(fuel.window,L"build\\qa\\fuel-leader-forecast-strip.bmp") && forecastOk;
         fuel.fuel=settings; Save(); UpdateOverlays();
-        report<<"Leader forecast precision, final-lap clock, independent Fuel modules and universal header/footer choices: "<<(forecastOk?"PASS":"FAIL")<<"\n"; ok=forecastOk && ok;
+        report<<"Leader forecast precision, final-lap clock, independent Fuel modules and universal header/footer choices: "<<(forecastOk?"PASS":"FAIL")<<"\n"; allOk=forecastOk && allOk;
     }
     {
         const auto savedTables=Tables(); const int savedExtra=app.opponentFuelExtraLaps;
@@ -375,7 +377,7 @@ int RunDiagnostics() {
         }
         RestoreTables(savedTables); app.opponentFuelExtraLaps=savedExtra; Save(); UpdateOverlays();
         report<<"Opponent fuel column: END/SAVE colors, blank unknowns, independent visibility, old order migration and shared saving setting: "<<(fuelOk?"PASS":"FAIL")<<"\n";
-        ok=fuelOk && ok;
+        allOk=fuelOk && allOk;
     }
     {
         ShowPage(Page::Settings); UpdateWindow(app.main); ok=Export(app.main,L"build\\qa\\main-settings.bmp") && ok;
@@ -386,11 +388,11 @@ int RunDiagnostics() {
             ok=Export(app.main,L"build\\qa\\main-"+std::to_wstring(kind)+L".bmp") && ok;
         }
         ShowPage(Page::Overlays); UpdateWindow(app.main); pagesOk=!IsWindowVisible(ui.back) && pagesOk;
-        report<<"Main window pages, banner and navigation: "<<(pagesOk && ui.page==Page::Overlays?"PASS":"FAIL")<<"\n"; ok=pagesOk && ok;
+        report<<"Main window pages, banner and navigation: "<<(pagesOk && ui.page==Page::Overlays?"PASS":"FAIL")<<"\n"; allOk=(pagesOk && ui.page==Page::Overlays) && allOk;
     }
     const bool viewportOk=MainDpiDiagnostics(report);
     report<<"Main window DPI changes keep the current page: "<<(viewportOk?"PASS":"FAIL")<<"\n";
-    ok=viewportOk && ok;
+    allOk=viewportOk && allOk;
     {
         // Save() writes only changed keys; after Load() or without a file it writes all again.
         Save(); const unsigned before=app.settingsWrites; Save();
@@ -399,7 +401,7 @@ int RunDiagnostics() {
         const bool title=app.showTitleBar; Load(); saveOk=app.showTitleBar==title && saveOk;
         app.showTitleBar=!app.showTitleBar; Save(); Load(); saveOk=app.showTitleBar!=title && saveOk;
         const unsigned full=app.settingsWrites; Save(); saveOk=app.settingsWrites-full>100 && saveOk;
-        report<<"Settings save only changed keys and survive a reload: "<<(saveOk?"PASS":"FAIL")<<"\n"; ok=saveOk && ok;
+        report<<"Settings save only changed keys and survive a reload: "<<(saveOk?"PASS":"FAIL")<<"\n"; allOk=saveOk && allOk;
     }
     {
         // Caution laps never count now, so the fuel page has a layout and modules instead of a filter.
@@ -407,7 +409,7 @@ int RunDiagnostics() {
         First(FuelKind).fuel.strip=true; First(FuelKind).fuel.display[TwoLongerRow]=true; SettingChanged(); Load();
         fuelOk=First(FuelKind).fuel.strip && First(FuelKind).fuel.display[TwoLongerRow] && OverlayWidth(First(FuelKind))==FuelStripCount(First(FuelKind))*FuelStripCell && HeightWithTitle(First(FuelKind))==32+50 && fuelOk;
         First(FuelKind).fuel=savedFuel; SettingChanged();
-        report<<"Fuel layout and modules persist; the strip's width follows its values: "<<(fuelOk?"PASS":"FAIL")<<"\n"; ok=fuelOk && ok;
+        report<<"Fuel layout and modules persist; the strip's width follows its values: "<<(fuelOk?"PASS":"FAIL")<<"\n"; allOk=fuelOk && allOk;
     }
     UpdateOverlays();
     for(auto& o:app.overlays) ok=Export(o.window,L"build\\qa\\overlay-"+std::to_wstring(o.kind)+L".bmp")&&ok;
@@ -448,7 +450,7 @@ int RunDiagnostics() {
             Load(); displayOk=!First(kind).table.showDriver && !First(kind).table.showStatus && !First(kind).table.columnHeaders && First(kind).bands.header && !First(kind).bands.footer.enabled && First(kind).table.nameFormat==1 && displayOk;
         }
         RestoreTables(savedTables); app.frame=savedFrame; Save(); UpdateOverlays();
-        report<<"Table page settings, name formats, single status priority, configurable headers and independent footer persistence: "<<(displayOk?"PASS":"FAIL")<<"\n"; ok=displayOk && ok;
+        report<<"Table page settings, name formats, single status priority, configurable headers and independent footer persistence: "<<(displayOk?"PASS":"FAIL")<<"\n"; allOk=displayOk && allOk;
     }
     {
         // Best and last lap: optional in the Relative (off by default), always in the Standings.
@@ -457,14 +459,15 @@ int RunDiagnostics() {
         SetColumnVisible(First(RelativeKind),BestColumn,true); SetColumnVisible(First(RelativeKind),LastColumn,true);
         lapsOk=OverlayWidth(First(RelativeKind))==width+ColumnWidth(First(RelativeKind),BestColumn)+ColumnWidth(First(RelativeKind),LastColumn) && lapsOk;
         const auto columns=VisibleColumns(First(RelativeKind));
-        const auto gap=std::find(columns.begin(),columns.end(),GapColumn);
-        lapsOk=gap!=columns.end() && gap+2<columns.end() && gap[1]==BestColumn && gap[2]==LastColumn && lapsOk;
+        // Best then Last, side by side where the column order puts them (by default just before Gap).
+        const auto best=std::find(columns.begin(),columns.end(),BestColumn);
+        lapsOk=best!=columns.end() && best+1<columns.end() && best[1]==LastColumn && lapsOk;
         UpdateOverlays(); lapsOk=Export(First(RelativeKind).window,L"build\\qa\\relative-lap-times.bmp") && lapsOk;
         SetColumnVisible(First(StandingsKind),BestColumn,false); lapsOk=ColumnVisible(First(StandingsKind),BestColumn) && lapsOk;
         Load(); lapsOk=First(RelativeKind).table.best && First(RelativeKind).table.last && lapsOk;
         SetColumnVisible(First(RelativeKind),BestColumn,false); SetColumnVisible(First(RelativeKind),LastColumn,false);
         Load(); lapsOk=!First(RelativeKind).table.best && !First(RelativeKind).table.last && OverlayWidth(First(RelativeKind))==width && lapsOk;
-        report<<"Relative best and last lap columns: "<<(lapsOk?"PASS":"FAIL")<<"\n"; ok=lapsOk && ok;
+        report<<"Relative best and last lap columns: "<<(lapsOk?"PASS":"FAIL")<<"\n"; allOk=lapsOk && allOk;
     }
     {
         // Gap signs: off by default; the row order tells ahead from behind.
@@ -482,7 +485,7 @@ int RunDiagnostics() {
         signsOk=Gap(standing,First(StandingsKind))==L"+2.6" && Interval(standing,First(StandingsKind).table)==L"+1.2" && Gap(lapped,First(StandingsKind))==L"+1 L" && Interval(lapped,First(StandingsKind).table)==L"+1 L" && signsOk;
         Load(); signsOk=First(RelativeKind).table.gapSigns && First(StandingsKind).table.gapSigns && signsOk;
         RestoreTables(savedTables); Save();
-        report<<"Gap signs switch per table, off by default: "<<(signsOk?"PASS":"FAIL")<<"\n"; ok=signsOk && ok;
+        report<<"Gap signs switch per table, off by default: "<<(signsOk?"PASS":"FAIL")<<"\n"; allOk=signsOk && allOk;
     }
     {
         // The Relative counts places within each car's class by default, overall when chosen, and keeps the choice.
@@ -493,7 +496,7 @@ int RunDiagnostics() {
         positionOk=inClass.text==L"2" && overall.text==L"5" && positionOk;
         Load(); positionOk=!First(RelativeKind).table.classPositions && positionOk;
         RestoreTables(savedTables); Save();
-        report<<"Relative positions in class by default, overall on request: "<<(positionOk?"PASS":"FAIL")<<"\n"; ok=positionOk && ok;
+        report<<"Relative positions in class by default, overall on request: "<<(positionOk?"PASS":"FAIL")<<"\n"; allOk=positionOk && allOk;
     }
     {
         const auto savedTables=Tables(); const auto savedFrame=app.frame; bool flagsOk=true;
@@ -505,7 +508,7 @@ int RunDiagnostics() {
             Load(); flagsOk=First(kind).table.showStatus && std::none_of(First(kind).table.driverFlags.begin(),First(kind).table.driverFlags.end(),[](bool v){return v;}) && flagsOk;
         }
         RestoreTables(savedTables); app.frame=savedFrame; Save(); UpdateOverlays();
-        report<<"Driver flag display settings, independent overlays and persisted disabled flags with PIT/OUT status retained: "<<(flagsOk?"PASS":"FAIL")<<"\n"; ok=flagsOk && ok;
+        report<<"Driver flag display settings, independent overlays and persisted disabled flags with PIT/OUT status retained: "<<(flagsOk?"PASS":"FAIL")<<"\n"; allOk=flagsOk && allOk;
     }
     {
         // Every new column, the status badge and class colors on and off; the previews are for review.
@@ -531,7 +534,7 @@ int RunDiagnostics() {
         // Logos for every brand the demo uses, decoded once per size and the atlas released after painting.
         columnsOk=BrandLogo("BMW")>=0 && BrandLogo("Aston Martin")>=0 && BrandLogo("Unknown")<0 && !First(0).logos.empty() && !logoAtlas.bitmap && columnsOk;
         RestoreTables(savedTables); app.frame=savedFrame; Save(); UpdateOverlays();
-        report<<"Car, iRating change and stint columns, license pills, status badge and neutral class colors: "<<(columnsOk?"PASS":"FAIL")<<"\n"; ok=columnsOk && ok;
+        report<<"Car, iRating change and stint columns, license pills, status badge and neutral class colors: "<<(columnsOk?"PASS":"FAIL")<<"\n"; allOk=columnsOk && allOk;
     }
     {
         const auto savedTables=Tables();
@@ -552,7 +555,7 @@ int RunDiagnostics() {
             for(int i=0;i<2;++i) { SetColumnVisible(First(kind),LicenseColumn+i,false); shortOk=!ColumnVisible(First(kind),LicenseColumn+i) && First(kind).table.driverShortView[i] && shortOk; }
         }
         RestoreTables(savedTables); Save(); UpdateOverlays();
-        report<<"Independent short license/iRating views, formatting, missing values, kept choice when hidden and persistence: "<<(shortOk?"PASS":"FAIL")<<"\n"; ok=shortOk && ok;
+        report<<"Independent short license/iRating views, formatting, missing values, kept choice when hidden and persistence: "<<(shortOk?"PASS":"FAIL")<<"\n"; allOk=shortOk && allOk;
     }
     {
         const Frame originalFrame=app.frame; const Session originalSession=app.session;
@@ -581,7 +584,7 @@ int RunDiagnostics() {
         app.frame.connected=false; footerOk=FooterValue(3)==L"—" && FooterValue(9)==L"—" && footerOk;
         app.frame=originalFrame; app.session=originalSession; UpdateOverlays();
         report<<"Independent footers, choices, persistence, resize, watched car, missing values and signed temperatures: "<<(footerOk?"PASS":"FAIL")<<"\n";
-        ok=footerOk && ok;
+        allOk=footerOk && allOk;
     }
     {
         const auto saved=app.frame; constexpr double pi=3.141592653589793;
@@ -594,7 +597,7 @@ int RunDiagnostics() {
         }
         app.frame.onTrack=false; UpdateOverlays(); windOk=Export(First(4).window,L"build\\qa\\wind-unavailable.bmp") && windOk;
         app.frame=saved; UpdateOverlays();
-        report<<"Wind overlay cardinal and arbitrary source angles, speed, missing heading and rendering: "<<(windOk?"PASS":"FAIL")<<"\n"; ok=windOk && ok;
+        report<<"Wind overlay cardinal and arbitrary source angles, speed, missing heading and rendering: "<<(windOk?"PASS":"FAIL")<<"\n"; allOk=windOk && allOk;
     }
     {
         bool weatherOk=true; OpenOverlay(First(WeatherKind));
@@ -626,7 +629,7 @@ int RunDiagnostics() {
             if(row.title==WeatherModules[ConditionModule].title || row.title==WeatherModules[UsageModule].title) weatherOk=row.dragGroup && row.iconButtons.size()==1 && weatherOk;
         } else weatherOk=false;
         First(WeatherKind).weather.strip=false; First(WeatherKind).bands=DefaultBands(WeatherKind); SettingChanged();
-        report<<"Weather modules, strip layout, persistence and all-hidden visibility: "<<(weatherOk?"PASS":"FAIL")<<"\n"; ok=weatherOk && ok;
+        report<<"Weather modules, strip layout, persistence and all-hidden visibility: "<<(weatherOk?"PASS":"FAIL")<<"\n"; allOk=weatherOk && allOk;
     }
     {
         // A second Weather reduced to the wind rose, a second Relative with defaults; both survive a reload and go again.
@@ -646,7 +649,7 @@ int RunDiagnostics() {
         wchar_t left[8]{}; GetPrivateProfileStringW(L"Weather 2",L"X",L"",left,8,app.config.c_str());
         instancesOk=InstanceCount(WeatherKind)==1 && InstanceCount(RelativeKind)==1 && !left[0] && instancesOk;
         Load(); instancesOk=InstanceCount(WeatherKind)==1 && InstanceCount(RelativeKind)==1 && instancesOk;
-        report<<"Further instances: defaults, own size, persistence, removal of settings: "<<(instancesOk?"PASS":"FAIL")<<"\n"; ok=instancesOk && ok;
+        report<<"Further instances: defaults, own size, persistence, removal of settings: "<<(instancesOk?"PASS":"FAIL")<<"\n"; allOk=instancesOk && allOk;
     }
     {
         // Layouts: a copy starts with the same overlays and keeps its own places and settings; switching brings
@@ -692,7 +695,7 @@ int RunDiagnostics() {
         app.frame.onTrack=false; app.now+=100; AutoLayout(); app.now+=1100; AutoLayout(); layoutOk=app.layoutIdle && layoutOk;
         app.layouts[0].condition=AlwaysCondition; app.layoutIdle=false; app.hidden=savedHidden; app.edit=savedEdit; Save();
         app.frame=savedFrame; app.session=savedSession; app.preview=savedPreview; app.now=savedNow; app.layoutSituation=app.pendingSituation=-1; UpdateOverlays();
-        report<<"Layouts: own overlays, places and settings, switching, reload, conditions, none applying, manual choice and removal: "<<(layoutOk?"PASS":"FAIL")<<"\n"; ok=layoutOk && ok;
+        report<<"Layouts: own overlays, places and settings, switching, reload, conditions, none applying, manual choice and removal: "<<(layoutOk?"PASS":"FAIL")<<"\n"; allOk=layoutOk && allOk;
     }
     {
         // The Safety and iRating badge beside License and iRating, over drivers of every license class.
@@ -704,7 +707,7 @@ int RunDiagnostics() {
         InvalidateModel(); Fit(relative); UpdateOverlays();
         const bool shot=Export(relative.window,L"build\\qa\\relative-ratings.bmp");
         relative.table=savedTable; app.session.drivers=savedDrivers; InvalidateModel(); Fit(relative); UpdateOverlays();
-        report<<"Relative with License, iRating and Safety and iRating exported: "<<(shot?"PASS":"FAIL")<<"\n"; ok=shot && ok;
+        report<<"Relative with License, iRating and Safety and iRating exported: "<<(shot?"PASS":"FAIL")<<"\n"; allOk=shot && allOk;
     }
     {
         // At the narrowest window every editor of an expanded row lies inside the visible list: the overlay's
@@ -733,7 +736,7 @@ int RunDiagnostics() {
         check(ActiveLayout()->name,4);
         for(int kind:{RelativeKind,FuelKind,WeatherKind}) { OpenOverlay(First(kind)); check(L"Header"); check(L"Footer"); }
         SetWindowPlacement(app.main,&saved); ShowPage(Page::Overlays);
-        report<<"Expanded editors fit the narrowest window: "<<(fitOk?"PASS":"FAIL")<<"\n"; ok=fitOk && ok;
+        report<<"Expanded editors fit the narrowest window: "<<(fitOk?"PASS":"FAIL")<<"\n"; allOk=fitOk && allOk;
     }
     {
         // Shortcuts change in their row: click, press a combination; Esc cancels, Backspace turns it off, the reset arrow
@@ -758,7 +761,7 @@ int RunDiagnostics() {
             rows->PressIconButton(move,0); keysOk=app.hotkeys[0]==DefaultHotkeys[0] && rows->Rows()[move].iconButtons[0]==0 && keysOk;
         }
         app.hotkeys=savedKeys; RegisterHotkeys(); Save(); ShowPage(Page::Overlays);
-        report<<"Shortcuts change, cancel, turn off and reset in their row: "<<(keysOk?"PASS":"FAIL")<<"\n"; ok=keysOk && ok;
+        report<<"Shortcuts change, cancel, turn off and reset in their row: "<<(keysOk?"PASS":"FAIL")<<"\n"; allOk=keysOk && allOk;
     }
     {
         // Design rule: from the right expand, sort arrows, toggle, then a text button, each in one column per group;
@@ -797,7 +800,7 @@ int RunDiagnostics() {
         static_assert(std::size(pages)==OverlayCount);
         for(int kind=0;kind<OverlayCount;++kind) { OpenOverlay(First(kind)); aligned(pages[kind]); }
         ShowPage(Page::Overlays);
-        report<<"Expand, toggle and button in order and in columns in every settings list: "<<(alignOk && toggles>40?"PASS":"FAIL")<<"\n"; ok=alignOk && toggles>40 && ok;
+        report<<"Expand, toggle and button in order and in columns in every settings list: "<<(alignOk && toggles>40?"PASS":"FAIL")<<"\n"; allOk=alignOk && toggles>40 && allOk;
     }
     {
         // Every telemetry and overlay rate combination keeps its rate over a minute of jittered ticks, and a pause restarts without a burst.
@@ -823,7 +826,7 @@ int RunDiagnostics() {
             if(!even) { ratesOk=false; report<<"  rate "<<rate<<" Hz on iRacing frames: "<<at.size()<<" refreshes in 2 s\n"; }
         }
         app.frame=savedFrame; app.preview=savedPreview; paced.due=0;
-        report<<"Overlay rates on every telemetry rate, with jitter and pauses, and on iRacing frames: "<<(ratesOk?"PASS":"FAIL")<<"\n"; ok=ratesOk && ok;
+        report<<"Overlay rates on every telemetry rate, with jitter and pauses, and on iRacing frames: "<<(ratesOk?"PASS":"FAIL")<<"\n"; allOk=ratesOk && allOk;
     }
     {
         // Rings outside the overlay: red on the one whose page is open, dashed yellow while moving; none on the Pit Assist; square corners on request.
@@ -842,7 +845,7 @@ int RunDiagnostics() {
         relative.place.rounded=false; Fit(relative); SettingChanged(); Load(); bordersOk=!relative.place.rounded && bordersOk;
         bordersOk=Export(relative.window,L"build\\qa\\border-square.bmp") && bordersOk;
         relative.place.rounded=true; Fit(relative); SettingChanged();
-        report<<"Overlay borders while editing and moving, Pit Assist without border, square corners: "<<(bordersOk?"PASS":"FAIL")<<"\n"; ok=bordersOk && ok;
+        report<<"Overlay borders while editing and moving, Pit Assist without border, square corners: "<<(bordersOk?"PASS":"FAIL")<<"\n"; allOk=bordersOk && allOk;
     }
     {
         const auto rosterSession=app.session; const auto rosterFrame=app.frame; const auto rosterOptions=First(StandingsKind).table.standings;
@@ -853,7 +856,7 @@ int RunDiagnostics() {
         First(StandingsKind).table.standings.fallbackByRating=true; SettingChanged();
         Load(); rosterOk=First(StandingsKind).table.standings.fallbackByRating && rosterOk;
         app.session=rosterSession; app.frame=rosterFrame; First(StandingsKind).table.standings=rosterOptions; Save(); UpdateOverlays();
-        report<<"Untimed qualifying roster, relative missing progress and sort preference persistence: "<<(rosterOk?"PASS":"FAIL")<<"\n"; ok=rosterOk && ok;
+        report<<"Untimed qualifying roster, relative missing progress and sort preference persistence: "<<(rosterOk?"PASS":"FAIL")<<"\n"; allOk=rosterOk && allOk;
         const bool savedGained=First(StandingsKind).table.gained; const auto gainedGrid=app.session.gridPositions;
         First(StandingsKind).table.gained=false; Save(); const int gainedWidth=OverlayWidth(First(1));
         SetColumnVisible(First(StandingsKind),GainedColumn,true);
@@ -864,7 +867,7 @@ int RunDiagnostics() {
         Export(First(1).window,L"build\\qa\\standings-gained-tow.bmp");
         app.frame.cars[2].towing=false;
         First(StandingsKind).table.gained=savedGained; app.session.gridPositions=gainedGrid; Save();
-        report<<"Standings gained column settings: "<<(gainedOk?"PASS":"FAIL")<<"\n"; ok=gainedOk && ok;
+        report<<"Standings gained column settings: "<<(gainedOk?"PASS":"FAIL")<<"\n"; allOk=gainedOk && allOk;
         const auto savedSession=app.session; const auto savedFrame=app.frame; const auto savedOrder=First(1).table.columnOrder; const bool savedLaps=First(StandingsKind).table.laps;
         First(StandingsKind).table.laps=false; Save(); UpdateOverlays(); const int before=OverlayWidth(First(1));
         SetColumnVisible(First(StandingsKind),LapsColumn,true);
@@ -884,7 +887,7 @@ int RunDiagnostics() {
         SetColumnVisible(First(StandingsKind),LapsColumn,false);
         lapsOk=!First(StandingsKind).table.laps && OverlayWidth(First(1))==before && lapsOk;
         app.session=savedSession; app.frame=savedFrame; First(1).table.columnOrder=savedOrder; First(StandingsKind).table.laps=savedLaps; Save(); UpdateOverlays();
-        report<<"Standings completed laps: toggle, width, persistence, column order, live count, zero laps, session fallback and missing data: "<<(lapsOk?"PASS":"FAIL")<<"\n"; ok=lapsOk && ok;
+        report<<"Standings completed laps: toggle, width, persistence, column order, live count, zero laps, session fallback and missing data: "<<(lapsOk?"PASS":"FAIL")<<"\n"; allOk=lapsOk && allOk;
     }
     {
         LARGE_INTEGER frequency{}; QueryPerformanceFrequency(&frequency);
@@ -912,7 +915,7 @@ int RunDiagnostics() {
         UpdateOverlays(); centerOk=FooterValue(2)==L"18x" && centerOk;
         centerOk=Export(First(0).window,L"build\\qa\\relative-practice-colors.bmp") && centerOk;
         First(RelativeKind).table.rows=savedRows; First(RelativeKind).table.hidePit=savedHide; app.frame=savedFrame; app.session=savedSession; Save(); UpdateOverlays();
-        report<<"Relative center with empty slots and reference in pit; practice footer has incidents without race limit: "<<(centerOk?"PASS":"FAIL")<<"\n"; ok=centerOk && ok;
+        report<<"Relative center with empty slots and reference in pit; practice footer has incidents without race limit: "<<(centerOk?"PASS":"FAIL")<<"\n"; allOk=centerOk && allOk;
     }
     const double savedCapacity=app.session.fuelCapacity,savedFuel=app.frame.fuel;
     app.session.fuelCapacity=100; UpdateOverlays();
@@ -970,7 +973,7 @@ int RunDiagnostics() {
         app.frame.fuel=38; UpdateOverlays();
         finishOk=shows(L"REFUEL TO FINISH") && shows(L"or save 0.09 L/lap") && Export(fuel.window,L"build\\qa\\fuel-save.bmp") && finishOk;
         app.frame.fuel=50; UpdateOverlays();
-        report<<"Fuel at the finish: card, tank bar, header pill and metric: "<<(finishOk?"PASS":"FAIL")<<"\n"; ok=finishOk && ok;
+        report<<"Fuel at the finish: card, tank bar, header pill and metric: "<<(finishOk?"PASS":"FAIL")<<"\n"; allOk=finishOk && allOk;
     }
     app.session.fuelCapacity=14; app.frame.fuel=12; UpdateOverlays();
     fuelSummary=CalculatePitWindow(app.session,app.frame,Plan().lapsToFinish,Plan().estimates[5].consumption);
@@ -981,7 +984,7 @@ int RunDiagnostics() {
     ok=fuelSummary.status==PitWindowStatus::Unavailable && !fuelSummary.openNow && ok;
     ok=Export(First(2).window,L"build\\qa\\fuel-window-unknown.bmp") && ok;
     app.session.fuelCapacity=savedCapacity; app.frame.fuel=savedFuel; UpdateOverlays();
-    report<<"Fuel time empty, signed finish fuel, open/closed text and three-stop UI: "<<(ok?"PASS":"FAIL")<<"\n";
+    report<<"Fuel time empty, signed finish fuel, open/closed text and three-stop UI: "<<(ok?"PASS":"FAIL")<<"\n"; allOk=ok && allOk; ok=true;
     for(int kind=0;kind<OverlayCount;++kind) {
         OpenOverlay(First(kind));
         ok=ui.page==Page::Overlay && ui.overlay==&First(kind) && ok;
@@ -1093,7 +1096,7 @@ int RunDiagnostics() {
         SetRaceCarFilter(-1); SetRaceSplit(savedSplit,true);
         SetWindowPos(raceControl.window,nullptr,savedBounds.left,savedBounds.top,savedBounds.right-savedBounds.left,savedBounds.bottom-savedBounds.top,SWP_NOZORDER|SWP_NOACTIVATE);
         report<<"Race Control splitter: mouse, persisted ratio and reopen, minimum widths, stable columns, toolbar wrapping, keyboard, reset and cancel: "<<(splitOk?"PASS":"FAIL")<<"\n";
-        ok=splitOk && ok;
+        allOk=splitOk && allOk;
     }
     if(raceControl.events.size()>0) {
         ReplayRaceEvent(0,5); ok=!raceControl.pendingNumber.empty() && raceControl.pendingGroup==11 && ok;
@@ -1130,7 +1133,7 @@ int RunDiagnostics() {
         SendMessageW(app.main,WM_HOTKEY,5,0); stepOk=selectedTime()==times[1] && stepOk;
         SendMessageW(app.main,WM_HOTKEY,4,0); stepOk=selectedTime()==times.front() && stepOk;
         SendMessageW(raceControl.window,WM_TIMER,1,0);
-        report<<"Race Control Previous / Next and their shortcuts step through events in time order: "<<(stepOk?"PASS":"FAIL")<<"\n"; ok=stepOk && ok;
+        report<<"Race Control Previous / Next and their shortcuts step through events in time order: "<<(stepOk?"PASS":"FAIL")<<"\n"; allOk=stepOk && allOk;
     }
     SetRaceOnTop(true); ok=(GetWindowLongPtrW(raceControl.window,GWL_EXSTYLE)&WS_EX_TOPMOST) && ok;
     SetRaceOnTop(false); ok=!(GetWindowLongPtrW(raceControl.window,GWL_EXSTYLE)&WS_EX_TOPMOST) && ok;
@@ -1157,7 +1160,7 @@ int RunDiagnostics() {
     SetRaceReplayMode(0); SendMessageW(raceControl.window,WM_NOTIFY,RaceStandingsId,reinterpret_cast<LPARAM>(&click));
     ok=raceControl.pendingNumber.empty() && raceControl.message.find(L"camera action simulated")!=std::wstring::npos && ok;
     SetRaceReplayMode(1);
-    report<<"Race Control banner, standings status, event filters, replay bar, keep on top and close/reopen: "<<(ok?"PASS":"FAIL")<<"\n";
+    report<<"Race Control banner, standings status, event filters, replay bar, keep on top and close/reopen: "<<(ok?"PASS":"FAIL")<<"\n"; allOk=ok && allOk; ok=true;
     {
         bool rcOk=true; const auto savedFields=raceControl.fields; const auto savedEvents=raceControl.eventFields; const auto savedOptions=First(StandingsKind).table.standings; const auto savedDrivers=app.session.drivers;
         First(StandingsKind).table.standings.ownClass=false; UpdateRaceControl(true);
@@ -1193,7 +1196,7 @@ int RunDiagnostics() {
         raceControl.fields=savedFields; raceControl.eventFields=savedEvents; First(StandingsKind).table.standings=savedOptions; app.session.drivers=savedDrivers;
         raceControl.sortColumn=-1; raceControl.eventSortColumn=2; raceControl.eventSortDescending=true; SaveRaceFields();
         SetRaceEventFilter(0);
-        report<<"Race Control field visibility, numeric sorting, missing values, event sorting, car/type filters and replay for the filtered event: "<<(rcOk?"PASS":"FAIL")<<"\n"; ok=rcOk && ok;
+        report<<"Race Control field visibility, numeric sorting, missing values, event sorting, car/type filters and replay for the filtered event: "<<(rcOk?"PASS":"FAIL")<<"\n"; allOk=rcOk && allOk;
     }
     {
         bool extrasOk=true; const auto savedFields=raceControl.fields; const auto savedEvents=raceControl.eventFields;
@@ -1298,7 +1301,7 @@ int RunDiagnostics() {
             const auto at=[&](int id){ return std::find(raceControl.fieldOrder.begin(),raceControl.fieldOrder.end(),id)-raceControl.fieldOrder.begin(); };
             extrasOk=at(first)>at(third) && extrasOk;
             raceControl.fieldOrder=fieldOrder; raceControl.eventOrder=eventOrder; SaveRaceFields(); UpdateRaceControl(true);
-            report<<"Race Control column order: dragged rows and headings move the columns, stored: "<<(extrasOk?"PASS":"FAIL")<<"\n";
+            report<<"Race Control column order: dragged rows and headings move the columns, stored: "<<(extrasOk?"PASS":"FAIL")<<"\n"; allOk=(extrasOk) && allOk;
         }
         app.session=savedSession; app.frame=savedFrame; InvalidateModel();
         raceControl.fields=savedFields; raceControl.eventFields=savedEvents; raceControl.info=savedInfo;
@@ -1306,7 +1309,7 @@ int RunDiagnostics() {
         raceControl.sortColumn=savedSort; raceControl.sortDescending=savedDescending; raceControl.eventSortColumn=savedEventSort; raceControl.eventSortDescending=savedEventDescending;
         SetRaceSplit(savedSplit,false); SaveRaceFields(); LayoutRaceControl(); UpdateRaceControl(true);
         report<<"Race Control extras: defaults off, independent settings, shared fuel badges and cache, stint time, signed rating, numeric/missing sorting, event lap, optional forecasts and persistence: "<<(extrasOk?"PASS":"FAIL")<<"\n";
-        ok=extrasOk && ok;
+        allOk=extrasOk && allOk;
     }
     // Kept apart from ok, which later checks reuse for their own line; folded in at the end.
     bool listOk=true;
@@ -1320,7 +1323,7 @@ int RunDiagnostics() {
         SendMessageW(list.Handle(),WM_LBUTTONDOWN,MK_LBUTTON,at); SendMessageW(list.Handle(),WM_LBUTTONUP,0,at);
         listOk=GetFocus()==list.Handle() && list.NotifiedRow()==29 && listOk;
         DestroyWindow(list.Handle());
-        report<<"First click into a scrolled list hits the row under the mouse: "<<(listOk?"PASS":"FAIL")<<"\n";
+        report<<"First click into a scrolled list hits the row under the mouse: "<<(listOk?"PASS":"FAIL")<<"\n"; allOk=(listOk) && allOk;
     }
     // Version tags compare numerically, a leading v is ignored, a suffix such as -beta sorts first; diagnostics never go online.
     bool updateOk=UpdateChecker::CurrentVersion()==Wide(RACEMATE_VERSION) && UpdateChecker::IsNewerVersion(L"v0.1.1",L"0.1.0") && UpdateChecker::IsNewerVersion(L"0.10.0",L"0.9.0")
@@ -1336,7 +1339,7 @@ int RunDiagnostics() {
         updates.phase=Updates::Phase::Failed; updates.message=L"Offline"; updateOk=UpdateVersionRow().pill==L"Not updated" && UpdateVersionRow().detail==L"Offline" && updateOk;
         updates.phase=Updates::Phase::Idle; updates.release={}; updates.message.clear();
     }
-    report<<"Update version comparison, version row states, no network in diagnostics: "<<(updateOk?"PASS":"FAIL")<<"\n";
+    report<<"Update version comparison, version row states, no network in diagnostics: "<<(updateOk?"PASS":"FAIL")<<"\n"; allOk=(updateOk) && allOk;
     SetStartWithWindows(true); SetStartMinimized(true);
     Load();
     ok=First(0).table.driverColumns[5] && First(1).table.driverColumns[5] && First(StandingsKind).table.interval && First(RelativeKind).table.rows==7 && First(StandingsKind).table.standings.leaders==2 && First(StandingsKind).table.standings.ahead==1 && First(StandingsKind).table.standings.behind==1 && First(StandingsKind).table.standings.ownClass && !First(StandingsKind).table.standings.separateClasses && !First(FuelKind).fuel.figures[1] && app.startWithWindows && app.startMinimized && ok;
@@ -1345,7 +1348,7 @@ int RunDiagnostics() {
     ShowWindow(app.main,StartupShowCommand(false,SW_SHOW)); ok=IsWindowVisible(app.main) && ok;
     const auto startup=StartupCommand(); ok=(!startup.empty() && startup.front()==L'"' && startup.back()==L'"') && ok;
     SendMessageW(app.main,WM_CLOSE,0,0); ok=!IsWindowVisible(app.main) && IsWindow(app.main) && ok;
-    report<<"Overlay pages, independent options, class view switch, fuel rows, close-to-tray and persistence: "<<(ok?"PASS":"FAIL")<<"\n";
+    report<<"Overlay pages, independent options, class view switch, fuel rows, close-to-tray and persistence: "<<(ok?"PASS":"FAIL")<<"\n"; allOk=ok && allOk; ok=true;
     First(RelativeKind).table.rows=9; First(StandingsKind).table.standings={}; First(FuelKind).fuel.figures.fill(true); First(FuelKind).fuel.display.fill(true); app.startWithWindows=app.startMinimized=false;
     {
         const auto savedSession=app.session; const auto savedFrame=app.frame; const bool savedPreview=app.preview;
@@ -1360,7 +1363,7 @@ int RunDiagnostics() {
         app.fuel.Update(app.session,app.frame); UpdateOverlays();
         ok=Plan().estimates[0].samples==1 && std::abs(Plan().estimates[0].consumption-3.2)<.001 && Plan().estimates[5].samples==1 && ok;
         ok=Export(First(2).window,L"build\\qa\\fuel-first-race-lap.bmp") && ok;
-        report<<"Fuel Last Lap and Average populated immediately after observed first race lap: "<<(ok?"PASS":"FAIL")<<"\n";
+        report<<"Fuel Last Lap and Average populated immediately after observed first race lap: "<<(ok?"PASS":"FAIL")<<"\n"; allOk=ok && allOk; ok=true;
         app.session=savedSession; app.frame=savedFrame; app.preview=savedPreview; app.fuel.Reset(); app.predictor.Reset(); UpdateOverlays();
     }
     {
@@ -1379,7 +1382,7 @@ int RunDiagnostics() {
         auto shows=[](const std::wstring& text){ const auto& scene=First(FuelKind).scene; return std::any_of(scene.begin(),scene.end(),[&](const DrawCommand& c){ return c.type==DrawCommand::Text && c.text==text; }); };
         const bool practiceOk=shows(L"12 laps on fuel") && shows(L"L15") && shows(L"13 laps") && shows(L"max 3.11 L/lap") && shows(L"14 laps") && shows(L"max 2.89 L/lap") && shows(L"11 laps");
         const bool exported=Export(First(FuelKind).window,L"build\\qa\\fuel-practice-targets.bmp");
-        report<<"Fuel targets in practice: laps on fuel at the average, most per lap for one and two laps more: "<<(practiceOk && exported?"PASS":"FAIL")<<"\n"; ok=practiceOk && exported && ok;
+        report<<"Fuel targets in practice: laps on fuel at the average, most per lap for one and two laps more: "<<(practiceOk && exported?"PASS":"FAIL")<<"\n"; allOk=practiceOk && exported && allOk;
         app.session=savedSession; app.frame=savedFrame; app.preview=savedPreview; app.fuel.Reset(); app.predictor.Reset(); InvalidateModel(); UpdateOverlays();
     }
     const auto demoSession=app.session; const auto demoFrame=app.frame;
@@ -1395,7 +1398,7 @@ int RunDiagnostics() {
     ok=historicalRows.size()==9 && ok;
     for(const auto& row:historicalRows) ok=row.car.best>0 && row.car.last>0 && ok;
     UpdateOverlays(); ok=Export(First(1).window,L"build\\qa\\standings-history.bmp")&&ok;
-    report<<"Late-join standings populated from session results only: "<<(ok?"PASS":"FAIL")<<"\n";
+    report<<"Late-join standings populated from session results only: "<<(ok?"PASS":"FAIL")<<"\n"; allOk=ok && allOk; ok=true;
     {
         app.session.results={}; for(auto& car:app.frame.cars) { car.best=car.last=car.f2Time=-1; car.position=car.classPosition=0; car.surface=-1; }
         UpdateOverlays(); const auto practiceRows=Rows(First(1));
@@ -1405,7 +1408,7 @@ int RunDiagnostics() {
         const auto rankedPractice=Standings(app.session,app.frame,MaxCars,false);
         ok=!rankedPractice.empty() && rankedPractice.front().driver.index==9 && ok;
         ok=Export(First(1).window,L"build\\qa\\practice-first-time.bmp") && ok;
-        report<<"Untimed practice roster, car-number order and first timed lap: "<<(ok?"PASS":"FAIL")<<"\n";
+        report<<"Untimed practice roster, car-number order and first timed lap: "<<(ok?"PASS":"FAIL")<<"\n"; allOk=ok && allOk; ok=true;
     }
     app.session=demoSession; app.frame=demoFrame; app.preview=true;
     {
@@ -1423,7 +1426,7 @@ int RunDiagnostics() {
         app.frame.state=4; for(auto& car:app.frame.cars) if(car.surface>=0) { car.completed=0; car.lap=1; }
         UpdateOverlays(); ok=!Rows(First(1)).empty() && ok;
         ok=Export(First(1).window,L"build\\qa\\standings-first-lap.bmp") && ok;
-        report<<"Formation / first-lap standings, early relative gaps and live-gap settings: "<<(ok?"PASS":"FAIL")<<"\n";
+        report<<"Formation / first-lap standings, early relative gaps and live-gap settings: "<<(ok?"PASS":"FAIL")<<"\n"; allOk=ok && allOk; ok=true;
         app.session=demoSession; app.frame=demoFrame; app.preview=true; First(StandingsKind).table.standings.liveGaps=false;
     }
     app.frame.limiter=false; ok=Export(First(3).window,L"build\\qa\\pit-red.bmp")&&ok;
@@ -1438,7 +1441,7 @@ int RunDiagnostics() {
         ok=Export(First(0).window,L"build\\qa\\relative-live-overtake.bmp") && ok;
         ok=Export(First(1).window,L"build\\qa\\standings-live-overtake.bmp") && ok;
         app.frame=savedFrame; app.session=savedSession; First(StandingsKind).table.standings=savedStandings; app.preview=true;
-        report<<"Live overtake updates Relative P and Standings row order / class P: "<<(ok?"PASS":"FAIL")<<"\n";
+        report<<"Live overtake updates Relative P and Standings row order / class P: "<<(ok?"PASS":"FAIL")<<"\n"; allOk=ok && allOk; ok=true;
     }
     app.pitVisibility.Reset();
     app.preview=false; app.hidden=false; app.frame.pit=false; UpdateOverlays();
@@ -1461,7 +1464,7 @@ int RunDiagnostics() {
         setupOk=Export(First(3).window,L"build\\qa\\pit-setup-changes.bmp") && setupOk;
         First(3).setupChanges=false; UpdateOverlays(); setupOk=!text(L"ABS") && client()==plain && setupOk;
         First(3).setupChanges=true; app.session.setup=savedSetup; app.session.setupUpdate=savedUpdate; app.frame.dialsKnown=0; UpdateOverlays();
-        report<<"Pit Assist lists in-car adjustments that differ from the setup, in the pit lane: "<<(setupOk?"PASS":"FAIL")<<"\n"; ok=setupOk && ok;
+        report<<"Pit Assist lists in-car adjustments that differ from the setup, in the pit lane: "<<(setupOk?"PASS":"FAIL")<<"\n"; allOk=setupOk && allOk;
     }
     app.frame.pit=false; app.frame.limiter=true; app.frame.time+=1; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
     {
@@ -1492,13 +1495,13 @@ int RunDiagnostics() {
         const int withStrip=HeightWithTitle(limiter); limiter.pitStrip=false; stripOk=!PitStrip(limiter).shown && HeightWithTitle(limiter)==withStrip-PitStripHeight && stripOk;
         limiter.pitStrip=true; app.braking.Reset(); app.pitEnds.Reset();
         app.frame=savedFrame; app.session=savedSession; InvalidateModel(); UpdateOverlays();
-        report<<"Pit Assist pit lane strip: approach, brake point, lane, box, exit and estimates: "<<(stripOk?"PASS":"FAIL")<<"\n"; ok=stripOk && ok;
+        report<<"Pit Assist pit lane strip: approach, brake point, lane, box, exit and estimates: "<<(stripOk?"PASS":"FAIL")<<"\n"; allOk=stripOk && allOk;
     }
     {
         // Past pit exit with the limiter on: the flashing warning instead of the green bar.
         const bool warning=app.pitVisibility.Warning() && std::any_of(First(3).scene.begin(),First(3).scene.end(),[](const DrawCommand& c){ return c.type==DrawCommand::Text && c.text==L"TURN OFF PIT LIMITER"; });
         const bool exported=Export(First(3).window,L"build\\qa\\pit-turn-off-limiter.bmp");
-        report<<"Pit Assist warns to turn off the limiter after pit exit: "<<(warning && exported?"PASS":"FAIL")<<"\n"; ok=warning && exported && ok;
+        report<<"Pit Assist warns to turn off the limiter after pit exit: "<<(warning && exported?"PASS":"FAIL")<<"\n"; allOk=warning && exported && allOk;
     }
     app.frame.limiter=false; app.frame.time+=1; UpdateOverlays(); ok=!IsWindowVisible(First(3).window) && ok;
     app.frame.cars[app.frame.player].surface=2; app.frame.time+=1; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
@@ -1519,7 +1522,7 @@ int RunDiagnostics() {
     First(0).place.x=123; First(0).place.scale=130; Save();
     First(0).place.x=0; First(0).place.scale=50; Load();
     ok=(First(0).place.x==123 && First(0).place.scale==130 && !app.settingsError)&&ok;
-    report<<"Visibility in car, spotting, replay, pause, disconnect, pit lane, hide and saved placement: "<<(ok?"PASS":"FAIL")<<"\n";
+    report<<"Visibility in car, spotting, replay, pause, disconnect, pit lane, hide and saved placement: "<<(ok?"PASS":"FAIL")<<"\n"; allOk=ok && allOk; ok=true;
     {
         // Side Warning: a bar at each edge of the monitor, the right one mirrored; each shows while the spotter has a
         // car on its side, with a block where that car is.
@@ -1567,7 +1570,7 @@ int RunDiagnostics() {
         app.frame.spotter=2; app.frame.replay=true; app.now+=1000; UpdateOverlays();
         sideOk=!IsWindowVisible(side.window) && sideOk;
         app.frame=savedFrame; app.session=savedSession; side.place=savedPlace; app.hidden=savedHidden; app.preview=true; Fit(side); UpdateOverlays();
-        report<<"Side Warning: mirrored bars, distance apart, dragging, each for its side, car position and hold: "<<(sideOk?"PASS":"FAIL")<<"\n"; ok=sideOk && ok;
+        report<<"Side Warning: mirrored bars, distance apart, dragging, each for its side, car position and hold: "<<(sideOk?"PASS":"FAIL")<<"\n"; allOk=sideOk && allOk;
     }
     {
         // Radar: the preview's cars around yours, with a panel and transparent; live it shows with a car in range,
@@ -1598,7 +1601,7 @@ int RunDiagnostics() {
         radar.radar.always=true; UpdateOverlays(); radarOk=IsWindowVisible(radar.window) && radarOk;
         app.frame.replay=true; UpdateOverlays(); radarOk=!IsWindowVisible(radar.window) && radarOk;
         app.frame=savedFrame; app.session=savedSession; radar.place=savedPlace; radar.radar=savedRadar; app.hidden=savedHidden; app.preview=true; app.radar.Reset(); Fit(radar); UpdateOverlays();
-        report<<"Radar: cars and lanes from above, distances, range, transparent, near-cars and always visibility: "<<(radarOk?"PASS":"FAIL")<<"\n"; ok=radarOk && ok;
+        report<<"Radar: cars and lanes from above, distances, range, transparent, near-cars and always visibility: "<<(radarOk?"PASS":"FAIL")<<"\n"; allOk=radarOk && allOk;
     }
     {
         // Traffic: the preview's sample, with a panel and transparent; live the faster cars within the gap behind you.
@@ -1628,7 +1631,7 @@ int RunDiagnostics() {
         car.pct=std::fmod(own.pct-200/app.session.trackMeters+1,1.); app.now+=100; UpdateOverlays(); trafficOk=IsWindowVisible(traffic.window) && text(L"-3.6") && trafficOk;
         app.frame.replay=true; app.now+=1000; UpdateOverlays(); trafficOk=!IsWindowVisible(traffic.window) && trafficOk;
         app.frame=savedFrame; app.session=savedSession; traffic.place=savedPlace; traffic.traffic=savedTraffic; app.hidden=savedHidden; app.preview=true; Fit(traffic); UpdateOverlays();
-        report<<"Traffic: faster cars behind with their gap, boxes and bar, transparent, gap and count settings, visibility: "<<(trafficOk?"PASS":"FAIL")<<"\n"; ok=trafficOk && ok;
+        report<<"Traffic: faster cars behind with their gap, boxes and bar, transparent, gap and count settings, visibility: "<<(trafficOk?"PASS":"FAIL")<<"\n"; allOk=trafficOk && allOk;
     }
     {
         // Adjustments: a sample in its own window; live, the dial you change for its time, with the value before the
@@ -1657,7 +1660,7 @@ int RunDiagnostics() {
         app.now+=3100; UpdateOverlays(); adjustOk=!text(standings,L"ARB front") && adjustOk;
         Save(); Load(); adjustOk=adjust.adjust.replace==StandingsKind && adjust.adjust.timer && adjust.adjust.was && adjustOk;
         app.frame=savedFrame; adjust.place=savedPlace; adjust.adjust=savedAdjust; app.hidden=savedHidden; app.preview=true; app.dialWatcher.Reset(); Fit(adjust); UpdateOverlays();
-        report<<"Adjustments: sample, a changed dial with the value before, gone after its time, in place of the Relative and Standings, settings: "<<(adjustOk?"PASS":"FAIL")<<"\n"; ok=adjustOk && ok;
+        report<<"Adjustments: sample, a changed dial with the value before, gone after its time, in place of the Relative and Standings, settings: "<<(adjustOk?"PASS":"FAIL")<<"\n"; allOk=adjustOk && allOk;
     }
     app.preview=true; PreviewData(0);
     bool orderOk=true;
@@ -1674,7 +1677,7 @@ int RunDiagnostics() {
         First(kind).table.columnOrder=original; SettingChanged();
     }
     ShowPage(Page::Overlays);
-    ok=orderOk && ok; report<<"Independent column ordering, move boundaries, hidden-column positions and persistence: "<<(orderOk?"PASS":"FAIL")<<"\n";
+    allOk=orderOk && allOk; report<<"Independent column ordering, move boundaries, hidden-column positions and persistence: "<<(orderOk?"PASS":"FAIL")<<"\n";
     {
         // Dragging a row of a sortable list with the mouse: press on its grip, move past other rows' middles, release.
         bool dragOk=true;
@@ -1725,7 +1728,7 @@ int RunDiagnostics() {
         dragOk=lastLayout>=0 && firstLayout>=0 && drag(lastLayout,firstLayout) && app.layouts.front().id==lastId && dragOk;
         while(app.layouts.size()>layouts.size()) { for(const auto& l:app.layouts) if(std::none_of(layouts.begin(),layouts.end(),[&](const Layout& k){return k.id==l.id;})) { RemoveLayout(l.id); break; } }
         app.layouts=layouts; SwitchLayout(layouts.front().id); Save(); ShowPage(Page::Overlays);
-        report<<"Dragging rows: modules, columns and layouts reorder by mouse, the status badge goes with Driver: "<<(dragOk?"PASS":"FAIL")<<"\n"; ok=dragOk && ok;
+        report<<"Dragging rows: modules, columns and layouts reorder by mouse, the status badge goes with Driver: "<<(dragOk?"PASS":"FAIL")<<"\n"; allOk=dragOk && allOk;
     }
     {
         // Copying the Standings' columns to the Relative: the shared columns in the Standings' order with their
@@ -1748,7 +1751,7 @@ int RunDiagnostics() {
         copyOk=standings2.table.laps && standings2.table.gained && copyOk;
         RemoveInstance(relative2); RemoveInstance(standings2);
         First(StandingsKind).table=savedStandings; First(RelativeKind).table=savedRelative; SettingChanged();
-        report<<"Copying columns between and within the Relative and Standings: order, visibility and options: "<<(copyOk?"PASS":"FAIL")<<"\n"; ok=copyOk && ok;
+        report<<"Copying columns between and within the Relative and Standings: order, visibility and options: "<<(copyOk?"PASS":"FAIL")<<"\n"; allOk=copyOk && allOk;
     }
     bool cornersOk=true;
     for(int kind=0;kind<OverlayCount;++kind) {
@@ -1774,7 +1777,7 @@ int RunDiagnostics() {
         overlay.place=original; Fit(overlay); Save();
     }
     ok=cornersOk && ok;
-    report<<"Fixed corner: all four corners on every overlay, resize/shrink, no jump on selection and persisted anchors: "<<(cornersOk?"PASS":"FAIL")<<"\n";
+    report<<"Fixed corner: all four corners on every overlay, resize/shrink, no jump on selection and persisted anchors: "<<(cornersOk?"PASS":"FAIL")<<"\n"; allOk=(cornersOk) && allOk;
     Frame liveFrame; Session liveSession; Telemetry liveTelemetry;
     if(liveTelemetry.Read(liveFrame,liveSession)) {
         app.preview=false; app.frame=liveFrame; app.session=liveSession; First(StandingsKind).table.standings={}; raceControl.message.clear();
@@ -1789,10 +1792,10 @@ int RunDiagnostics() {
     bool trayFallbackOk=IsWindowVisible(app.main)!=FALSE;
     SendMessageW(app.main,WM_CLOSE,0,0);
     trayFallbackOk=!IsWindow(app.main) && trayFallbackOk;
-    report<<"Missing tray icon keeps minimize accessible and closes the app on exit: "<<(trayFallbackOk?"PASS":"FAIL")<<"\n";
+    report<<"Missing tray icon keeps minimize accessible and closes the app on exit: "<<(trayFallbackOk?"PASS":"FAIL")<<"\n"; allOk=(trayFallbackOk) && allOk;
     ok=trayFallbackOk && listOk && updateOk && startupOk && ok;
     if(IsWindow(app.main)) DestroyWindow(app.main);
-    DeleteObject(app.brush); return ok?0:2;
+    DeleteObject(app.brush); return allOk && ok?0:2;
 }
 // Main-thread cost of one connected refresh with a 60-car multiclass race and every overlay visible.
 int RunTickBenchmark() {
