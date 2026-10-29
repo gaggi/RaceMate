@@ -35,7 +35,7 @@ bool ReadPaceFile(const std::filesystem::path& file,const Session& s,int points,
     std::ifstream in(file); if(!in) return false;
     std::string format,layout; std::getline(in,format); std::getline(in,layout);
     int track=-1,count=0,wetness=-1; double metres=0; long long saved=0; std::string car;
-    in>>track>>metres>>count>>lap>>wetness>>saved>>car;
+    in>>track>>metres>>count>>lap>>wetness>>saved; std::getline(in,car); // The car to the end of the line: car paths may hold spaces.
     if(!in || format!=PaceFormat || layout!=s.trackName+" / "+s.trackConfig || track!=s.trackId || std::abs(metres-s.trackMeters)>s.trackMeters*.005 || count!=points) return false;
     times.assign(count,0); for(auto& t:times) in>>t;
     return static_cast<bool>(in);

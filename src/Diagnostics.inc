@@ -1740,7 +1740,7 @@ int RunDiagnostics() {
         Session s; s.trackId=353; s.trackName="limerock 2019 gp"; s.trackConfig="Grand Prix"; s.trackMeters=2400;
         std::vector<double> times(240); for(int i=0;i<240;++i) times[i]=i*.25+std::sin(i*.1);
         const auto file=std::filesystem::path(app.config).parent_path()/L"pace"/L"v1"/L"diagnostics.txt";
-        bool paceOk=WritePaceFile(file,s,61.5,times,"bmwm2csr",0);
+        bool paceOk=WritePaceFile(file,s,61.5,times,"formulavee formulavee2",0); // A car path with a space, as iRacing has them.
         double lap=0; std::vector<double> back;
         paceOk=ReadPaceFile(file,s,240,lap,back) && lap==61.5 && back.size()==times.size() && std::abs(back[100]-times[100])<1e-6 && paceOk;
         auto longer=s; longer.trackMeters=2500; auto renamed=s; renamed.trackConfig="Chicane";
