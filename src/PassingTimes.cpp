@@ -57,10 +57,14 @@ void PassingTimes::Update(const Session& s,const Frame& f) {
                     double* profile=profiles_.data()+static_cast<size_t>(c.slot)*n; bool whole=true;
                     for(int i=1;i<n && whole;++i) whole=times[i]>times[i-1] && times[i]<at;
                     // Far slower than its stored lap or its class's fastest (damage, crawling back): not representative.
-                    // A lap a little slower (tyres, rain) still replaces it.
+                    // A lap a little slower (tyres) still replaces it, and so does the second of two far slower laps
+                    // within 5 % of each other: a new pace that stays, such as rain.
                     const int classBest=ClassProfile(c.classId);
-                    const double usual=c.lapTime>0?c.lapTime:(classBest>=0?cars_[classBest].lapTime:0);
-                    if(usual>0 && at-c.lapStart>usual*1.25) whole=false;
+                    const double usual=c.lapTime>0?c.lapTime:(classBest>=0?cars_[classBest].lapTime:0),lap=at-c.lapStart;
+                    if(whole && usual>0 && lap>usual*1.25) {
+                        const bool steady=c.slow>0 && std::abs(lap-c.slow)<=c.slow*.05;
+                        c.slow=steady?0:lap; whole=steady;
+                    } else if(whole) c.slow=0;
                     if(whole) {
                         for(int i=0;i<n;++i) profile[i]=times[i]-c.lapStart;
                         c.lapTime=at-c.lapStart;

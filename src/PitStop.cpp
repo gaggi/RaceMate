@@ -171,7 +171,9 @@ PitRejoin PredictRejoin(const Session& s,const Frame& f,double loss,double pace,
     // the iRacing estimates of cars in the own class at their positions, else lap distance at pace.
     const bool profiled=passes && passes->HasProfile(f.player);
     const double lap=Valid(own->estimatedLapTime)?own->estimatedLapTime:pace,scale=lap/pace;
-    const bool estimated=me.estTime>=0 && me.estTime<lap;
+    // An estimate of 0 counts only just past the line, as in the Relative and the forecast.
+    auto usable=[&](const Car& car) { return car.estTime>=0 && car.estTime<lap && (car.estTime>0 || car.pct<.02); };
+    const bool estimated=usable(me);
     double ghost=estimated?std::fmod(me.estTime-loss*scale,lap):-1; if(ghost<0 && estimated) ghost+=lap;
     double laps=0; // Lap positions back, whole laps included, for the order in the race.
     if(profiled) {
@@ -184,7 +186,7 @@ PitRejoin PredictRejoin(const Session& s,const Frame& f,double loss,double pace,
         for(const auto& d:s.drivers) {
             if(!estimated || d.index<0 || d.index>=MaxCars || d.index==f.player || d.classId!=own->classId || d.paceCar || d.spectator) continue;
             const auto& car=f.cars[d.index];
-            if(car.surface<0 || car.pct<0 || car.pct>=1 || car.estTime<0 || car.estTime>=lap) continue;
+            if(car.surface<0 || car.pct<0 || car.pct>=1 || !usable(car)) continue;
             const double back=Wrap(ghost-car.estTime,lap); // > 0: the car is before the ghost.
             if(back>=0 && (below<0 || back<below)) { below=back; belowPct=car.pct; }
             if(back<0 && (above<0 || -back<above)) { above=-back; abovePct=car.pct; }
@@ -214,7 +216,7 @@ PitRejoin PredictRejoin(const Session& s,const Frame& f,double loss,double pace,
         if(profiled) {
             const double forward=passes->Along(f.player,r.pct,car.pct),lapTime=passes->LapTime(f.player);
             seconds=forward<=lapTime/2?forward:forward-lapTime;
-        } else if(estimated && sameClass && car.estTime>=0 && car.estTime<lap) seconds=Wrap(car.estTime-ghost,lap)/scale;
+        } else if(estimated && sameClass && usable(car)) seconds=Wrap(car.estTime-ghost,lap)/scale;
         else { double apart=car.pct-r.pct; apart-=std::floor(apart+.5); seconds=apart*pace; }
         if(seconds>=0 && (r.ahead<0 || seconds<r.aheadGap)) { r.ahead=d.index; r.aheadGap=seconds; }
         if(seconds<0 && (r.behind<0 || -seconds<r.behindGap)) { r.behind=d.index; r.behindGap=-seconds; }

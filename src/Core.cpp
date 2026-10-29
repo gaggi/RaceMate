@@ -102,6 +102,8 @@ double LapGap(const PassingTimes* passes,const Driver& ahead,const Car& a,const 
     double share=distance,first=0,second=0;
     if(ahead.classId==behind.classId && TimeShare(ahead,a,lap,first) && TimeShare(behind,b,lap,second)) {
         share=first-second; share-=std::round(share-distance); // The same side as the cars are on track.
+        // Estimates against the order on track (sampled a moment apart): the distance rather than a zero gap.
+        if(share<0) share=distance;
     }
     return std::max(0.0,share)*lap;
 }
@@ -535,7 +537,7 @@ std::vector<Row> Relative(const Session& s, const Frame& f, int count, bool ownC
     if (!OnCircuit(mine)) {
         Row row{*me,WithResults(s,f,reference)}; row.player=true; row.gap=0;
         if(s.type=="Race" && row.car.position<=0 && s.gridPositions[reference]>0) row.car.position=s.gridPositions[reference];
-        rows.push_back(row); return rows;
+        rows.push_back(std::move(row)); return rows;
     }
     const double lapTime = LapTime(s,f);
     std::array<int,MaxCars> livePositions{},liveClassPositions{};
@@ -554,7 +556,7 @@ std::vector<Row> Relative(const Session& s, const Frame& f, int count, bool ownC
         if(s.type=="Race" && c.lap >= 0 && mine.lap >= 0)
             row.lapDifference = static_cast<int>(std::round(c.lap + c.pct - mine.lap - mine.pct));
         if (row.player) row.gap = 0;
-        rows.push_back(row);
+        rows.push_back(std::move(row));
     }
     // Select each side independently so a crowded side cannot displace the reference.
     const int half=RelativeRowCount(count)/2;

@@ -49,7 +49,8 @@
                     if(!text.empty()) out.push_back({DrawCommand::MapLabel,SmallBold,DT_CENTER,bounds,car.pit?color:Ink::Panel,{},std::move(text)});
                 };
                 // Where the own car would rejoin after a stop now: a hollow accent ring marked PIT.
-                const auto& rejoin=PitExit();
+                static const PitRejoin none; // Worked out only while the ring is shown.
+                const auto& rejoin=o.map.pitExit?PitExit():none;
                 auto drawGhost=[&](bool number) {
                     if(!o.map.pitExit || !rejoin.valid) return;
                     const auto p=place(rejoin.pct);

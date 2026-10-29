@@ -36,7 +36,8 @@ private:
     // lapStart and clean: the lap under way, a clean-lap candidate while watched throughout, on track, out of
     // the pits, moving and without a full-course caution. lapTime: the stored clean lap's, 0 before there is one.
     // moved: when it last moved forward. car and classId: which car this index is; another car starts afresh.
-    struct Car { int slot=-1,classId=0; std::string car,driver; double pct=-1,time=-1,since=-1,moved=-1,lapStart=-1,lapTime=0; bool seen=false,clean=false; };
+    // slow: the last clean lap turned down as far slower than usual, 0 after a usual one.
+    struct Car { int slot=-1,classId=0; std::string car,driver; double pct=-1,time=-1,since=-1,moved=-1,lapStart=-1,lapTime=0,slow=0; bool seen=false,clean=false; };
     std::array<Car,MaxCars> cars_{};
     std::vector<double> times_; // points_ per observed car, in slot order; only cars that appear get a slot.
     std::vector<double> profiles_; // The same layout: each point's time into the last clean lap.

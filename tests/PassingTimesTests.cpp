@@ -149,6 +149,29 @@ void PassingTimesTests() {
         f.cars[0].pct=.5; const auto plain=PredictRejoin(one,f,10,100,nullptr);
         Close(plain.pct,.4,.001,"without a lap: 10 % back at a 100 s pace, behind the car rather than ahead");
     }
+    // Rain: clean laps 40 % slower from now on. The first is turned down like a damaged lap, the second as steady
+    // as the first becomes the new pace.
+    {
+        PassingTimes rain; const auto one=Track(1);
+        auto driven=[](double t) { return t<200?t:200+(t-200)/1.4; };
+        for(int n=0;n<=200*60;++n) { const double t=n/60.; auto f=At(t,{0}); f.cars[0].pct=Position(driven(t)); rain.Update(one,f); }
+        Close(rain.LapTime(0),100,.05,"dry pace");
+        for(int n=200*60+1;n<=341*60;++n) { const double t=n/60.; auto f=At(t,{0}); f.cars[0].pct=Position(driven(t)); rain.Update(one,f); }
+        Close(rain.LapTime(0),100,.05,"one wet lap is not yet a new pace");
+        for(int n=341*60+1;n<=482*60;++n) { const double t=n/60.; auto f=At(t,{0}); f.cars[0].pct=Position(driven(t)); rain.Update(one,f); }
+        Close(rain.LapTime(0),140,.1,"the second steady wet lap is the new pace");
+    }
+    // iRacing's estimates sampled against the order on track: 100 m ahead stays 100 m ahead, never a zero gap.
+    {
+        auto two=Track(2); auto g=At(50,{0,0}); g.cars[0].pct=.50; g.cars[1].pct=.52; g.cars[0].estTime=40; g.cars[1].estTime=39.9;
+        const auto rows=Relative(two,g,9,false,false,nullptr);
+        Close(std::find_if(rows.begin(),rows.end(),[](const Row& r){return r.driver.index==1;})->gap,-2,.001,"contradicting estimates fall back to the distance");
+    }
+    // Pit exit: an estimate of 0 mid-lap is no time; the car rejoins 10 % back, not next to a car at 90 %.
+    {
+        auto two=Track(2); auto g=At(50,{0,0}); g.cars[0].pct=.5; g.cars[0].estTime=0; g.cars[1].pct=.9; g.cars[1].estTime=90;
+        Close(PredictRejoin(two,g,10,100,nullptr).pct,.4,.001,"an estimate of 0 mid-lap is not used");
+    }
     // A pit visit or an off-track spoils the lap: the earlier profile stays.
     {
         PassingTimes spoiled; const auto one=Track(1);

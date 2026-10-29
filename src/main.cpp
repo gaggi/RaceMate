@@ -2492,6 +2492,9 @@ void RefreshOverlay(Overlay& o) {
     const int width=client.right*(o.kind==SideWarningKind?2:1);
     const bool resized=EnsureBuffer(o,width,client.bottom,dpi);
     { ProfileScope p(true,[&]{ return ProfileName(o,"  scene"); }); BuildScene(o,width,client.bottom,dpi,app.sceneBuffer); }
+    // A transparent window keeps what it was last given: an unchanged scene needs neither drawing nor presenting.
+    // Opacity changes present on their own (ApplyOpacity); size and DPI changes come as a new buffer.
+    if(o.layeredAlpha && !resized && app.sceneBuffer==o.scene) return;
     const bool full=resized || app.sceneBuffer.size()!=o.scene.size() || o.layeredAlpha;
     HRGN dirty=nullptr;
     if(!full) {
