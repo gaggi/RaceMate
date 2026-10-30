@@ -287,6 +287,7 @@ struct Overlay {
     std::uint32_t* dibPixels=nullptr;
     std::uint64_t renderRevision=0, spoutRevision=~std::uint64_t{0};
     MatteSurface blackMatte, whiteMatte;
+    std::vector<std::uint8_t> textCover; // Background only: the text's coverage while composing, zero otherwise.
     bool foregroundMatte=false, backgroundComposed=false;
     Bands bands; TableSettings table; FuelSettings fuel; WeatherSettings weather; TrackMapSettings map; RadarSettings radar; TrafficSettings traffic; AdjustmentSettings adjust;
     RadarTracker radarTracker; std::vector<RadarCar> radarCars; ULONGLONG radarNear=0;
@@ -335,7 +336,7 @@ struct Overlay {
     // Rows for the current model version.
     mutable unsigned rowsVersion=~0u; mutable std::vector<Row> relativeRows; mutable std::vector<StandingsGroup> standingsGroups;
     void Free() {
-        blackMatte.Free(); whiteMatte.Free(); backgroundComposed=false; spoutFull=true; spoutDirty.clear();
+        blackMatte.Free(); whiteMatte.Free(); textCover.clear(); backgroundComposed=false; spoutFull=true; spoutDirty.clear();
         ++renderRevision;
         if(dc) { SelectObject(dc,originalFont); SelectObject(dc,original); DeleteObject(bitmap); DeleteDC(dc); }
         for(const auto& logo:logos) DeleteObject(logo.bitmap);
@@ -2428,6 +2429,12 @@ HBITMAP LogoBitmap(Overlay& o,int index,int size,COLORREF tint) {
     for(int i=0;i<size*size;++i) { const uint32_t a=pixel[i]>>24; pixel[i]=a<<24|(GetRValue(tint)*a/255)<<16|(GetGValue(tint)*a/255)<<8|GetBValue(tint)*a/255; }
     o.logos.push_back({index,size,bitmap}); return bitmap;
 }
+// Background only: the dim inks are made for the dark panel. Behind a faded panel the page shows through and can be as
+// light as they are; lifted toward white as the panel fades, they keep their distance from it.
+COLORREF ForegroundInk(const Overlay& o,COLORREF color) {
+    if(!o.place.backgroundOnly || o.place.opacity>=100 || (color!=Ink::Muted && color!=Ink::Label && color!=Ink::Brand)) return color;
+    return Mix(color,Ink::White,(100-o.place.opacity)/100.0);
+}
 void PaintScene(Overlay& o,HRGN dirty) {
     ++o.renderRevision;
     HDC dc=o.dc;
@@ -2471,7 +2478,12 @@ void PaintScene(Overlay& o,HRGN dirty) {
                 break;
             }
             SetDCBrushColor(dc,c.color); FillRect(dc,&c.r,static_cast<HBRUSH>(GetStockObject(DC_BRUSH))); break;
-        case DrawCommand::Text: if(font!=c.font) { SelectObject(dc,o.fonts[c.font]); font=c.font; } DrawLabel(dc,c); break;
+        case DrawCommand::Text: {
+            if(font!=c.font) { SelectObject(dc,o.fonts[c.font]); font=c.font; }
+            const COLORREF ink=ForegroundInk(o,c.color);
+            if(ink==c.color) DrawLabel(dc,c); else { DrawCommand lifted=c; lifted.color=ink; DrawLabel(dc,lifted); }
+            break;
+        }
         case DrawCommand::DottedLine: {
             HPEN pen=CreatePen(PS_DASH,1,c.color); const auto old=SelectObject(dc,pen);
             MoveToEx(dc,c.r.left,c.r.top,nullptr); LineTo(dc,c.r.right,c.r.top); SelectObject(dc,old); DeleteObject(pen); break;
@@ -2571,7 +2583,7 @@ bool EnsureBuffer(Overlay& o,int width,int height,int dpi) {
     o.original=SelectObject(o.dc,o.bitmap);
     ReleaseDC(o.window,screen);
     const int size=std::max(8,MulDiv(14,dpi*o.place.scale,9600));
-    auto font=[&](int pixels,int weight){ return CreateFontW(-pixels,0,0,0,weight,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,o.place.backgroundOnly?ANTIALIASED_QUALITY:CLEARTYPE_QUALITY,0,L"Segoe UI"); };
+    auto font=[&](int pixels,int weight){ return CreateFontW(-pixels,0,0,0,weight,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI"); };
     auto scaled=[&](int pixels){ return MulDiv(pixels,dpi*o.place.scale,9600); };
     // The Adjustments' name in about an eighth of the height; the value in two fifths of it, or in a size that fits
     // six characters across a narrow overlay.
@@ -2603,8 +2615,29 @@ void PresentLayered(const Overlay& o,HRGN dirty=nullptr) {
     };
     present(o.window,0); if(o.mirror) present(o.mirror,o.width/2);
 }
-bool PaintBackgroundOpacity(Overlay& o,HRGN dirty=nullptr) {
+// The outline reaches a pixel past the text's strokes, and a pixel's outline depends on the strokes beside it: a
+// changed area grows by that pixel, and takes in the whole of every text it comes near, until no more join.
+// The caller's region is replaced, so presenting and the Spout export cover the same pixels.
+void GrowForOutline(const Overlay& o,HRGN& dirty) {
+    if(!dirty || o.place.opacity>=100) return;
+    std::vector<BYTE> data(GetRegionData(dirty,0,nullptr));
+    if(data.empty() || !GetRegionData(dirty,static_cast<DWORD>(data.size()),reinterpret_cast<RGNDATA*>(data.data()))) return;
+    const auto* region=reinterpret_cast<const RGNDATA*>(data.data()); const auto* rects=reinterpret_cast<const RECT*>(region->Buffer);
+    HRGN grown=CreateRectRgn(0,0,0,0), part=CreateRectRgn(0,0,0,0), rest=CreateRectRgn(0,0,0,0);
+    auto add=[&](RECT r) { InflateRect(&r,1,1); SetRectRgn(part,r.left,r.top,r.right,r.bottom); const bool fresh=CombineRgn(rest,part,grown,RGN_DIFF)!=NULLREGION; if(fresh) CombineRgn(grown,grown,part,RGN_OR); return fresh; };
+    for(DWORD i=0;i<region->rdh.nCount;++i) add(rects[i]);
+    for(bool joined=true;joined;) {
+        joined=false;
+        for(const auto& c:o.scene) if(c.type==DrawCommand::Text && !c.background) {
+            RECT around=c.r; InflateRect(&around,1,1);
+            if(RectInRegion(grown,&around) && add(c.r)) joined=true;
+        }
+    }
+    DeleteObject(part); DeleteObject(rest); DeleteObject(dirty); dirty=grown;
+}
+bool PaintBackgroundOpacity(Overlay& o,HRGN& dirty) {
     if(!o.dibPixels || !o.blackMatte.Ensure(o.width,o.height) || !o.whiteMatte.Ensure(o.width,o.height)) return false;
+    GrowForOutline(o,dirty);
     ProfileScope passes(true,[&]{ return ProfileName(o,"alpha passes"); });
     auto full=std::move(o.scene);
     o.scene.clear();
@@ -2624,7 +2657,8 @@ bool PaintBackgroundOpacity(Overlay& o,HRGN dirty=nullptr) {
     };
     if(dirty) eachPixel([&](size_t i){o.dibPixels[i]=0;}); else std::fill(o.dibPixels,o.dibPixels+count,0);
     PaintScene(o,dirty); GdiFlush();
-    o.scene.clear(); for(const auto& c:full) if(!c.background) o.scene.push_back(c);
+    // Text is left to its own ClearType pass below; the mattes take the other foreground.
+    o.scene.clear(); for(const auto& c:full) if(!c.background && c.type!=DrawCommand::Text) o.scene.push_back(c);
     const auto dc=o.dc; auto* pixels=o.pixels; auto* dib=o.dibPixels;
     o.foregroundMatte=true; o.pixels=nullptr;
     for(auto* matte:{&o.blackMatte,&o.whiteMatte}) {
@@ -2633,28 +2667,96 @@ bool PaintBackgroundOpacity(Overlay& o,HRGN dirty=nullptr) {
         o.dc=matte->dc; o.dibPixels=matte->pixels;
         PaintScene(o,dirty); GdiFlush();
     }
-    o.dc=dc; o.pixels=pixels; o.dibPixels=dib; o.foregroundMatte=false; o.scene=std::move(full);
+    o.dc=dc; o.pixels=pixels; o.dibPixels=dib; o.foregroundMatte=false;
     passes.Stop();
     ProfileScope compose(true,[&]{ return ProfileName(o,"alpha composition"); });
     const bool transparent=TransparentContent(o);
     const unsigned baseAlpha=transparent?(app.edit?64u:0u):255u;
     const unsigned backgroundAlpha=baseAlpha*o.place.opacity/100;
+    // The composed image goes into the black matte; the same scene opaque, as the text will be drawn on, into the
+    // white one and the buffer.
     eachPixel([&](size_t i) {
         const auto black=o.blackMatte.pixels[i],white=o.whiteMatte.pixels[i],back=dib[i];
         unsigned foregroundAlpha=0;
         for(unsigned shift:{0u,8u,16u}) foregroundAlpha=std::max(foregroundAlpha,255u-static_cast<unsigned>(std::clamp(static_cast<int>((white>>shift)&255)-static_cast<int>((black>>shift)&255),0,255)));
         const unsigned alpha=foregroundAlpha+(backgroundAlpha*(255-foregroundAlpha)+127)/255;
-        std::uint32_t result=alpha<<24;
+        std::uint32_t result=alpha<<24, opaque=0;
         for(unsigned shift:{0u,8u,16u}) {
             unsigned b=(back>>shift)&255;
             if(transparent && baseAlpha) b=std::min(255u,(b*255+baseAlpha/2)/baseAlpha);
-            const unsigned value=((black>>shift)&255)+(b*backgroundAlpha*(255-foregroundAlpha)+32512)/65025;
-            result|=std::min(255u,value)<<shift;
+            const unsigned ink=(black>>shift)&255;
+            result|=std::min(255u,ink+(b*backgroundAlpha*(255-foregroundAlpha)+32512)/65025)<<shift;
+            opaque|=std::min(255u,ink+(b*(255-foregroundAlpha)+127)/255)<<shift;
         }
-        dib[i]=result;
+        o.blackMatte.pixels[i]=result; o.whiteMatte.pixels[i]=dib[i]=opaque;
     });
+    // ClearType text over the opaque scene, as without background opacity. Each channel's share of the text color
+    // there is its coverage; laid with it over the composed image, the text keeps its ClearType weight and stays
+    // opaque, while the faded background shows between its strokes. The coverage and text color wait in textCover
+    // and the white matte, for the outline around the strokes.
+    compose.Stop();
+    if(o.textCover.size()!=count) o.textCover.assign(count,0);
+    o.scene.clear(); for(const auto& c:full) if(c.type==DrawCommand::Text && !c.background) o.scene.push_back(c);
+    if(!o.scene.empty()) {
+        ProfileScope text(true,[&]{ return ProfileName(o,"alpha text"); });
+        PaintScene(o,dirty); GdiFlush();
+        for(const auto& c:o.scene) {
+            const COLORREF color=ForegroundInk(o,c.color);
+            const int ink[3]={GetBValue(color),GetGValue(color),GetRValue(color)};
+            for(const auto& area:rectangles) {
+                RECT r{}; if(!IntersectRect(&r,&area,&c.r)) continue;
+                for(LONG y=std::max(0L,r.top);y<std::min(static_cast<LONG>(o.height),r.bottom);++y) for(LONG x=std::max(0L,r.left);x<std::min(static_cast<LONG>(o.width),r.right);++x) {
+                    const size_t i=static_cast<size_t>(y)*o.width+x;
+                    const auto drawn=dib[i],under=o.whiteMatte.pixels[i];
+                    if(o.textCover[i] || ((drawn^under)&0xffffffu)==0) continue;
+                    // One coverage for the pixel, the mean of the channels': per channel, ClearType's color fringes
+                    // would need an alpha of their own, and the channels short of the pixel's alpha turn dark at
+                    // the stroke edges. A channel where text and ground hardly differ only counts when none differ more.
+                    int sum=0,channels=0,steepest=0,widest=0;
+                    for(int k=0;k<3;++k) {
+                        const int span=ink[k]-static_cast<int>((under>>(8*k))&255);
+                        const int cover=span?std::clamp((static_cast<int>((drawn>>(8*k))&255)-static_cast<int>((under>>(8*k))&255))*255/span,0,255):0;
+                        if(std::abs(span)>widest) { widest=std::abs(span); steepest=cover; }
+                        if(std::abs(span)>=24) { sum+=cover; ++channels; }
+                    }
+                    if(!widest) continue;
+                    o.textCover[i]=static_cast<std::uint8_t>(channels?(sum+channels/2)/channels:steepest);
+                    o.whiteMatte.pixels[i]=color;
+                }
+            }
+        }
+    }
+    o.scene=std::move(full);
+    // Around the strokes, a dark outline in the panel's color, only where the faded background shows: the strokes
+    // keep their weight, and light text stays readable over a light game. It fades in as the opacity goes down.
+    const unsigned outline=static_cast<unsigned>(std::clamp((100-o.place.opacity)*153/60,0,153));
+    const auto coverAt=[&](LONG x,LONG y)->unsigned { return x<0 || y<0 || x>=o.width || y>=o.height?0u:o.textCover[static_cast<size_t>(y)*o.width+x]; };
+    for(const auto& r:rectangles) for(LONG y=std::max(0L,r.top);y<std::min(static_cast<LONG>(o.height),r.bottom);++y) for(LONG x=std::max(0L,r.left);x<std::min(static_cast<LONG>(o.width),r.right);++x) {
+        const size_t i=static_cast<size_t>(y)*o.width+x;
+        std::uint32_t composed=o.blackMatte.pixels[i];
+        if(outline && (composed>>24)<255) {
+            const unsigned edge=std::max({coverAt(x-1,y),coverAt(x+1,y),coverAt(x,y-1),coverAt(x,y+1)});
+            const unsigned corner=std::max({coverAt(x-1,y-1),coverAt(x+1,y-1),coverAt(x-1,y+1),coverAt(x+1,y+1)})*181/255;
+            if(const unsigned shade=std::max(edge,corner)*outline/255) {
+                std::uint32_t shaded=(shade+(((composed>>24)*(255-shade))+127)/255)<<24;
+                constexpr unsigned panel=Ink::Panel, ground[3]={(panel>>16)&255,(panel>>8)&255,panel&255};
+                for(int k=0;k<3;++k) shaded|=((shade*ground[k]+(255-shade)*((composed>>(8*k))&255)+127)/255)<<(8*k);
+                composed=shaded;
+            }
+        }
+        if(const unsigned cover=o.textCover[i]) {
+            const COLORREF color=o.whiteMatte.pixels[i]; const unsigned ink[3]={GetBValue(color),GetGValue(color),GetRValue(color)};
+            const unsigned alpha=cover+(((composed>>24)*(255-cover))+127)/255;
+            std::uint32_t result=alpha<<24;
+            for(int k=0;k<3;++k) result|=std::min(alpha,(cover*ink[k]+(255-cover)*((composed>>(8*k))&255)+127)/255)<<(8*k);
+            composed=result;
+        }
+        dib[i]=composed;
+    }
+    eachPixel([&](size_t i){ o.textCover[i]=0; });
     o.backgroundComposed=true; return true;
 }
+bool PaintBackgroundOpacity(Overlay& o) { HRGN whole=nullptr; return PaintBackgroundOpacity(o,whole); }
 #ifdef RACEMATE_DIAGNOSTICS
 std::array<LONGLONG,OverlayCount> refreshTicks{}; // Scene, changed areas and drawing into the buffer, per kind.
 #endif

@@ -9,6 +9,7 @@ int RunRendererBenchmark() {
         read(L"RACEMATE_BENCH_SINGLE"); const int single=*option?_wtoi(option):-1;
         read(L"RACEMATE_BENCH_SECONDS"); const int seconds=*option?std::clamp(_wtoi(option),1,60):20;
         const bool verify=*read(L"RACEMATE_BENCH_VERIFY")!=0;
+        read(L"RACEMATE_BENCH_OPACITY"); const int opacity=*option?std::clamp(_wtoi(option),40,100):90;
         std::array<size_t,OverlayCount> checkedImages{},mismatchedPixels{};
         app.preview=true; app.edit=false; app.hidden=false; app.diagnostics=true;
         for(auto& layout:app.layouts) layout.name=L"Benchmark "+std::to_wstring(GetCurrentProcessId());
@@ -38,7 +39,7 @@ int RunRendererBenchmark() {
         for(auto& o:app.overlays) {
             const bool tested=o.number==1 && (o.kind==RelativeKind || o.kind==StandingsKind || o.kind==TrackMapKind) && (single<0 || o.kind==single);
             o.place={}; o.place.spoutPremultiplied=spoutPremultiplied; o.place.enabled=tested; o.place.spout=tested && output; o.place.backgroundOnly=background;
-            o.place.opacity=90; o.place.rate=DefaultRates[o.kind]; o.place.rounded=true;
+            o.place.opacity=opacity; o.place.rate=DefaultRates[o.kind]; o.place.rounded=true;
             o.place.x=o.kind==RelativeKind?40:(o.kind==StandingsKind?400:900); o.place.y=120; o.map={};
             if(tested) { Fit(o); ShowWindow(o.window,SW_SHOWNOACTIVATE); } else ShowWindow(o.window,SW_HIDE);
         }
@@ -84,7 +85,7 @@ int RunRendererBenchmark() {
                 }
                 if(verify && background) {
                     std::vector<std::uint32_t> incremental(o.dibPixels,o.dibPixels+static_cast<size_t>(o.width)*o.height);
-                    PaintBackgroundOpacity(o,nullptr);
+                    PaintBackgroundOpacity(o);
                     for(size_t i=0;i<incremental.size();++i) mismatchedPixels[o.kind]+=o.dibPixels[i]!=incremental[i];
                     ++checkedImages[o.kind];
                 }
@@ -131,7 +132,7 @@ int RunRendererBenchmark() {
             if(verify) validation<<o.kind<<": checked images="<<checkedImages[o.kind]<<", cumulative mismatched pixels="<<mismatchedPixels[o.kind]<<'\n';
             if(background) {
                 std::vector<std::uint32_t> incremental(o.dibPixels,o.dibPixels+static_cast<size_t>(o.width)*o.height);
-                PaintBackgroundOpacity(o,nullptr); size_t mismatches=0;
+                PaintBackgroundOpacity(o); size_t mismatches=0;
                 for(size_t i=0;i<incremental.size();++i) mismatches+=incremental[i]!=o.dibPixels[i];
                 validation<<o.kind<<": partial/full mismatches="<<mismatches<<'\n';
             }

@@ -28,7 +28,7 @@ int RunAlphaRegression() {
                 }
                 o.scene=std::move(scene); PaintBackgroundOpacity(o,changed); if(changed) DeleteObject(changed);
                 std::vector<std::uint32_t> partial(o.dibPixels,o.dibPixels+static_cast<size_t>(width)*height);
-                PaintBackgroundOpacity(o,nullptr);
+                PaintBackgroundOpacity(o);
                 size_t wrong=0; for(size_t i=0;i<partial.size();++i) wrong+=partial[i]!=o.dibPixels[i];
                 mismatches+=wrong; ++images;
                 if(wrong) report<<"kind="<<kind<<" rounded="<<rounded<<" scale="<<scale<<" dpi="<<dpi<<" opacity="<<opacity<<" frame="<<frame<<" pixels="<<wrong<<'\n';
