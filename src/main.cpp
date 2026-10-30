@@ -1,4 +1,5 @@
 #include "Telemetry.h"
+#include "SpoutOutput.h"
 #include "RaceControl.h"
 #include "SectorTiming.h"
 #include "PassingTimes.h"
@@ -27,6 +28,10 @@
 #include <ctime>
 #include <list>
 #include <map>
+#ifdef WIN32_LEAN_AND_MEAN
+#undef WIN32_LEAN_AND_MEAN
+#endif
+#include "third_party/spout/SpoutDX.h"
 #include <emmintrin.h>
 #ifdef RACEMATE_DIAGNOSTICS
 #include <psapi.h>
@@ -34,6 +39,7 @@
 
 namespace {
 using namespace rm;
+bool spoutPremultiplied=true;
 constexpr COLORREF Background=RGB(246,247,249), Text=RGB(40,47,58);
 constexpr UINT TrayMessage=WM_APP+1;
 enum OverlayKind { RelativeKind, StandingsKind, FuelKind, PitLimiterKind, WeatherKind, TrackMapKind, SideWarningKind, RadarKind, TrafficKind, AdjustmentsKind };
@@ -153,13 +159,14 @@ static_assert(std::size(WeatherModules)==WeatherModuleCount);
 const std::vector<int> FuelOrder{TankModule,FiguresModule,LeaderDistanceModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,ShorterCard,WindowCard,TimelineModule,PitExitModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow};
 const std::vector<int> WeatherOrder{ConditionModule,RainModule,TemperatureModule,TemperatureHistoryModule,WindModule,DetailsModule,UsageModule};
 const wchar_t* WetnessNames[]={L"—",L"Dry",L"Mostly Dry",L"Very Lightly Wet",L"Lightly Wet",L"Moderately Wet",L"Very Wet",L"Extremely Wet"};
-struct Placement { int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=true, growLeft=false, growUp=false, rounded=false; };
+struct Placement { int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=true, growLeft=false, growUp=false, rounded=false, spout=false, backgroundOnly=false, spoutPremultiplied=true; };
 // Layouts: complete sets of overlays, each with its places and settings, and when it becomes active.
 // Layout 1 keeps the plain section names, so settings from before layouts are its own.
 enum LayoutCondition { AlwaysCondition, InCarCondition, OutOfCarCondition, GarageCondition, ConditionCount };
 const wchar_t* ConditionNames[]={L"Always",L"In car",L"Out of car",L"Garage"};
-const wchar_t* ConditionDetails[]={L"Whenever no layout above it applies",L"While you drive",L"Spotting and replays",L"With the garage screen open"};
+const wchar_t* ConditionDetails[]={L"Alongside every other matching layout",L"While you drive",L"Spotting and replays",L"With the garage screen open"};
 struct Layout { int id=1; std::wstring name=L"Default"; int condition=AlwaysCondition; };
+bool LayoutApplies(int condition,int situation);
 // DialTitle, DialValue and DialValueNarrow follow the overlay's size: the Adjustments' name and value, as big as fits.
 enum FontId : unsigned char { Regular, Bold, Large, Small, Hero, SmallBold, DialTitle, DialValue, DialValueNarrow, FontCount };
 struct DrawCommand {
@@ -167,8 +174,9 @@ struct DrawCommand {
     Type type=Fill; FontId font=Regular; UINT align=DT_LEFT; RECT r{}; COLORREF color=0;
     std::array<float,5> shape{}; // Wind ring: center x/y, radius, scale, bearing (negative without direction). Outline: corner radius, line width (1 when 0), dashed when 1. RoundFill: corner radius. Ring: stroke width. Hatch: background color. Sparkline: stroke width, dashed when 1; its text holds the points, 1 + 0..1000 from bottom to top. Logo: atlas cell.
     std::wstring text;
+    bool background=false;
     bool operator==(const DrawCommand& o) const {
-        return type==o.type && font==o.font && align==o.align && r.left==o.r.left && r.top==o.r.top && r.right==o.r.right && r.bottom==o.r.bottom
+        return background==o.background && type==o.type && font==o.font && align==o.align && r.left==o.r.left && r.top==o.r.top && r.right==o.r.right && r.bottom==o.r.bottom
             && color==o.color && shape==o.shape && text==o.text;
     }
 };
@@ -246,10 +254,44 @@ constexpr const wchar_t* TrackMapPreviewName=L"Lime Rock Park · Grand Prix"; //
 // Background markers of a map without background: transparent, or a light veil while overlays can be moved,
 // since fully transparent pixels let clicks through. They are written as alpha, never as these colours.
 constexpr COLORREF TrackMapTransparentKey=RGB(1,2,3), TrackMapMoveKey=RGB(1,2,4);
+struct MatteSurface {
+    HDC dc=nullptr; HBITMAP bitmap=nullptr; HGDIOBJ original=nullptr; std::uint32_t* pixels=nullptr;
+    int width=0,height=0;
+    void Free() {
+        if(dc) { if(original) SelectObject(dc,original); DeleteDC(dc); }
+        if(bitmap) DeleteObject(bitmap);
+        dc=nullptr; bitmap=nullptr; original=nullptr; pixels=nullptr; width=height=0;
+    }
+    ~MatteSurface() { Free(); }
+    bool Ensure(int w,int h) {
+        if(dc && width==w && height==h) return true;
+        Free(); dc=CreateCompatibleDC(nullptr);
+        BITMAPINFO info{}; info.bmiHeader={sizeof(BITMAPINFOHEADER),w,-h,1,32,BI_RGB}; void* bits=nullptr;
+        bitmap=CreateDIBSection(nullptr,&info,DIB_RGB_COLORS,&bits,nullptr,0);
+        if(!dc || !bitmap) { Free(); return false; }
+        original=SelectObject(dc,bitmap); pixels=static_cast<std::uint32_t*>(bits); width=w; height=h;
+        SetBkMode(dc,TRANSPARENT); return true;
+    }
+};
 // One overlay window. A kind can have several instances; the first keeps the kind's plain name and settings section.
 struct Overlay {
-    HWND window=nullptr; int kind=0, number=1; Placement place;
+    HWND window=nullptr; int layout=1, kind=0, number=1; Placement place;
+    std::wstring customName;
+    bool editorPreview=false;
+    std::shared_ptr<rm::SpoutChannel> spout;
+    std::string spoutName;
+    std::vector<rm::SpoutRect> spoutDirty;
+    bool spoutFull=true;
+    rm::SpoutSettings spoutLastSettings{};
+    std::uint64_t spoutSequence=0;
+    std::uint32_t* dibPixels=nullptr;
+    std::uint64_t renderRevision=0, spoutRevision=~std::uint64_t{0};
+    MatteSurface blackMatte, whiteMatte;
+    bool foregroundMatte=false, backgroundComposed=false;
     Bands bands; TableSettings table; FuelSettings fuel; WeatherSettings weather; TrackMapSettings map; RadarSettings radar; TrafficSettings traffic; AdjustmentSettings adjust;
+    RadarTracker radarTracker; std::vector<RadarCar> radarCars; ULONGLONG radarNear=0;
+    std::array<double,MaxCars> radarAcross{}; std::array<bool,MaxCars> radarPresent{}; ULONGLONG radarGlided=0; unsigned radarResets=0;
+    std::vector<CarBehind> trafficCars; ULONGLONG trafficNear=0;
     bool setupChanges=true; // Pit Assist: in the pit lane, list in-car adjustments that differ from the setup.
     bool pitStrip=true;     // Pit Assist: the pit lane with your car, your box, where to brake and where the limiter can go off.
     bool pitSeconds=false;  // Pit Assist: count down to the brake points, box and exit in seconds instead of metres.
@@ -293,6 +335,8 @@ struct Overlay {
     // Rows for the current model version.
     mutable unsigned rowsVersion=~0u; mutable std::vector<Row> relativeRows; mutable std::vector<StandingsGroup> standingsGroups;
     void Free() {
+        blackMatte.Free(); whiteMatte.Free(); backgroundComposed=false; spoutFull=true; spoutDirty.clear();
+        ++renderRevision;
         if(dc) { SelectObject(dc,originalFont); SelectObject(dc,original); DeleteObject(bitmap); DeleteDC(dc); }
         for(const auto& logo:logos) DeleteObject(logo.bitmap);
         logos.clear();
@@ -303,7 +347,7 @@ struct Overlay {
         for(const auto& marker:mapMarkers) DeleteObject(marker.bitmap);
         mapMarkers.clear();
         for(const auto& text:mapTexts) DeleteObject(text.bitmap);
-        mapTexts.clear(); pixels=nullptr; mapPixels=nullptr; direct=false;
+        mapTexts.clear(); dibPixels=nullptr; pixels=nullptr; mapPixels=nullptr; direct=false;
         for(HFONT& font:fonts) if(font) { DeleteObject(font); font=nullptr; }
         dc=nullptr; bitmap=nullptr; width=height=dpi=0; scene.clear(); widths.clear();
     }
@@ -319,9 +363,13 @@ struct App {
     HINSTANCE instance=nullptr; HWND main=nullptr; HBRUSH brush=nullptr;
     RECT windowRect{}; bool windowMaximized=false;
     std::list<Overlay> overlays; // Grouped by kind, in instance order; each stays at its address for its window.
-    // Layouts in priority order and the active one; automatic switching follows a situation once it held for a second.
-    // layoutIdle: no layout applies to the situation, so the overlays stay hidden until one does or one is chosen by hand.
-    std::vector<Layout> layouts{Layout{}}; int layout=1, layoutSituation=-1, pendingSituation=-1; ULONGLONG pendingSince=0; bool layoutIdle=false;
+    // layout is the configuration being edited; every matching layout runs independently.
+    std::vector<Layout> layouts{Layout{}}; int layout=1;
+    std::vector<int> activeLayouts{1};
+    std::vector<int> previewLayouts;
+    bool layoutsLive=false;
+    std::vector<int> openLayoutGroups;
+    bool layoutGroupsInitialized=false;
     Frame frame; Session session; TelemetryPump pump; FuelCalculator fuel;
     EventRecorder events; PitHistory pitHistory; PitLimiterVisibility pitVisibility; SetupDials setupDials;
     // The adjustment being made, and each dial's lowest and highest value seen in this car (CarPath), kept for its
@@ -380,24 +428,38 @@ struct ProfileScope {
     Profiler::Entry* entry=nullptr; LARGE_INTEGER started{};
     explicit ProfileScope(const char* name) { if(profiler.on) { entry=&profiler.At(name); QueryPerformanceCounter(&started); } }
     template<class Name> explicit ProfileScope(bool,const Name& name) { if(profiler.on) { entry=&profiler.At(name()); QueryPerformanceCounter(&started); } }
-    ~ProfileScope() { if(entry) { LARGE_INTEGER now{}; QueryPerformanceCounter(&now); entry->ticks+=now.QuadPart-started.QuadPart; ++entry->calls; } }
+    void Stop() { if(entry) { LARGE_INTEGER now{}; QueryPerformanceCounter(&now); entry->ticks+=now.QuadPart-started.QuadPart; ++entry->calls; entry=nullptr; } }
+    ~ProfileScope() { Stop(); }
     ProfileScope(const ProfileScope&)=delete; ProfileScope& operator=(const ProfileScope&)=delete;
 };
+std::string ProfileName(const Overlay& o,const char* part);
 ULONGLONG ProcessCpuMicroseconds() {
     FILETIME created{},exited{},kernel{},user{}; GetProcessTimes(GetCurrentProcess(),&created,&exited,&kernel,&user);
     auto value=[](FILETIME t){ return (static_cast<ULONGLONG>(t.dwHighDateTime)<<32|t.dwLowDateTime)/10; };
     return value(kernel)+value(user);
 }
 std::wstring Numbered(const wchar_t* name,int number) { return number>1?std::wstring(name)+L" "+std::to_wstring(number):std::wstring(name); }
-std::wstring Name(const Overlay& o) { return Numbered(Titles[o.kind],o.number); }
+std::wstring Name(const Overlay& o) { return o.customName.empty()?Numbered(Titles[o.kind],o.number):o.customName; }
 // Sections of the active layout: "Layout 3: Relative 2"; layout 1 keeps the plain names.
 std::wstring LayoutPrefix(int id) { return id==1?std::wstring():L"Layout "+std::to_wstring(id)+L": "; }
-std::wstring Section(const Overlay& o) { return LayoutPrefix(app.layout)+Numbered(Sections[o.kind],o.number); }
-std::wstring KindSection(int kind) { return LayoutPrefix(app.layout)+Sections[kind]; }
+std::wstring Section(const Overlay& o) { return LayoutPrefix(o.layout)+Numbered(Sections[o.kind],o.number); }
+std::wstring KindSection(int kind,int layout=0) { return LayoutPrefix(layout?layout:app.layout)+Sections[kind]; }
 const Layout* ActiveLayout() { for(const auto& l:app.layouts) if(l.id==app.layout) return &l; return nullptr; }
-// The first instance of every kind always exists; Race Control follows the first Standings.
-Overlay& First(int kind) { return *std::find_if(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return o.kind==kind && o.number==1;}); }
-int InstanceCount(int kind) { return static_cast<int>(std::count_if(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return o.kind==kind;})); }
+bool LayoutRunning(int id) { return std::find(app.activeLayouts.begin(),app.activeLayouts.end(),id)!=app.activeLayouts.end(); }
+bool LayoutLive(int id) { return !app.preview && app.frame.connected && LayoutRunning(id); }
+bool LayoutPreviewRequested(int id) { return std::find(app.previewLayouts.begin(),app.previewLayouts.end(),id)!=app.previewLayouts.end(); }
+bool LayoutPreviewing(int id) { return app.preview?LayoutRunning(id):(LayoutPreviewRequested(id) && !LayoutLive(id)); }
+// Race Control also works with no layouts. Its settings fallback owns no window,
+// renderer or output and is never inserted into the overlay list.
+Overlay& First(int kind) {
+    const auto found=std::find_if(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return o.layout==app.layout && o.kind==kind && o.number==1;});
+    if(found!=app.overlays.end()) return *found;
+    static std::array<Overlay,OverlayCount> defaults;
+    auto& o=defaults[kind]; o.kind=kind;
+    if(IsTable(kind) && o.table.columnOrder.empty()) o.table.columnOrder=DefaultColumns[kind];
+    return o;
+}
+int InstanceCount(int kind,int layout=0) { return static_cast<int>(std::count_if(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return o.layout==(layout?layout:app.layout) && o.kind==kind;})); }
 void OpenRaceControl();
 void UpdateRaceControl(bool force=false);
 void CloseRaceControl();
@@ -546,7 +608,9 @@ std::wstring CompletedLaps(const Row& row) {
 // All overlay kinds draw the same configurable metric bands.
 bool MapOnly(const Overlay& o) { return o.kind==TrackMapKind && !o.map.background; }
 // Per-pixel alpha over the game: a map, radar or traffic without background.
-bool PerPixel(const Overlay& o) { return MapOnly(o) || (o.kind==RadarKind && !o.radar.background) || (o.kind==TrafficKind && !o.traffic.background); }
+bool TransparentContent(const Overlay& o) { return MapOnly(o) || (o.kind==RadarKind && !o.radar.background) || (o.kind==TrafficKind && !o.traffic.background); }
+bool PerPixel(const Overlay& o) { return o.place.backgroundOnly || TransparentContent(o); }
+int EffectiveOpacity(const Overlay& o) { return o.place.backgroundOnly && o.backgroundComposed?100:o.place.opacity; }
 // The Side Warning's bars, the Radar, Traffic and Adjustments are instruments to glance at, without header or footer.
 bool NoBands(const Overlay& o) { return MapOnly(o) || o.kind==SideWarningKind || o.kind==RadarKind || o.kind==TrafficKind || o.kind==AdjustmentsKind; }
 bool ShowOverlayHeader(const Overlay& o) { return o.bands.header && !NoBands(o); }
@@ -664,15 +728,18 @@ void ReadTable(const wchar_t* section,int kind,TableSettings& t) {
     }
 }
 void CreateOverlayWindow(Overlay& o);
-void DestroyOverlay(Overlay& o) { if(o.window) DestroyWindow(o.window); o.window=nullptr; }
+void Fit(Overlay& o,bool recover=false);
+void DestroyOverlay(Overlay& o) { o.spout.reset(); if(o.window) DestroyWindow(o.window); o.window=nullptr; }
 // Adds instance number of a kind after the kind's other instances, without settings or window yet.
-Overlay& AddInstance(int kind,int number) {
-    auto next=std::find_if(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return o.kind>kind || (o.kind==kind && o.number>number);});
-    auto& o=*app.overlays.emplace(next); o.kind=kind; o.number=number;
+Overlay& AddInstance(int kind,int number,int layout=0) {
+    if(!layout) layout=app.layout;
+    auto next=std::find_if(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return o.layout>layout || (o.layout==layout && (o.kind>kind || (o.kind==kind && o.number>number)));});
+    auto& o=*app.overlays.emplace(next); o.layout=layout; o.kind=kind; o.number=number;
     return o;
 }
 void ReadInstance(Overlay& o) {
     const auto section=Section(o); const int kind=o.kind;
+    wchar_t displayName[128]{}; GetPrivateProfileStringW(section.c_str(),L"DisplayName",L"",displayName,128,app.config.c_str()); o.customName=displayName;
     auto& p=o.place; const int offset=(o.number-1)*30; // Later instances start a little below and to the right.
     p.x=ReadInt(section.c_str(),L"X",DefaultPositions[kind].x+offset); p.y=ReadInt(section.c_str(),L"Y",DefaultPositions[kind].y+offset);
     p.scale=NormalizeScale(ReadInt(section.c_str(),L"Scale",100)); p.opacity=std::clamp(ReadInt(section.c_str(),L"Opacity",90),40,100);
@@ -680,6 +747,12 @@ void ReadInstance(Overlay& o) {
     p.rate=*std::find_if(std::begin(OverlayRates),std::end(OverlayRates)-1,[&](int choice){return choice>=rate;});
     p.enabled=ReadBool(section.c_str(),L"Enabled",kind!=TrackMapKind && kind!=SideWarningKind && kind!=RadarKind && kind!=TrafficKind && kind!=AdjustmentsKind); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
     p.rounded=ReadBool(section.c_str(),L"RoundedCorners",false);
+    p.spout=ReadBool(section.c_str(),L"SpoutOutput",false);
+    wchar_t mode[32]{},overrideMode[32]{};
+    GetPrivateProfileStringW(section.c_str(),L"SpoutAlphaMode",L"premultiplied",mode,32,app.config.c_str());
+    if(GetEnvironmentVariableW(L"RACEMATE_SPOUT_ALPHA",overrideMode,32)) wcscpy_s(mode,overrideMode);
+    p.spoutPremultiplied=_wcsicmp(mode,L"straight")!=0;
+    p.backgroundOnly=ReadBool(section.c_str(),L"BackgroundOpacityOnly",false);
     const Bands defaults=DefaultBands(kind); auto& b=o.bands;
     b.header=ReadBool(section.c_str(),L"ShowHeader",kind==PitLimiterKind?ReadBool(L"General",L"ShowTitleBar",false):defaults.header); b.headerMetrics=ReadSlots(section.c_str(),HeaderKeys,defaults.headerMetrics);
     b.footer.enabled=ReadBool(section.c_str(),L"ShowFooter",defaults.footer.enabled); b.footer.metrics=ReadSlots(section.c_str(),FooterKeys,defaults.footer.metrics);
@@ -728,7 +801,9 @@ void ReadInstance(Overlay& o) {
 }
 void LoadLayouts() {
     app.layouts.clear();
-    wchar_t order[512]{}; GetPrivateProfileStringW(L"Layouts",L"Order",L"1",order,512,app.config.c_str());
+    const bool explicitlyEmpty=ReadInt(L"Layouts",L"Count",-1)==0;
+    wchar_t order[512]{}; GetPrivateProfileStringW(L"Layouts",L"Order",explicitlyEmpty?L"":L"1",order,512,app.config.c_str());
+    if(explicitlyEmpty) order[0]=0;
     for(wchar_t* token=order;*token;) {
         wchar_t* end=nullptr; const long id=wcstol(token,&end,10); if(end==token) break;
         if(id>=1 && id<=999 && std::none_of(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==id;})) {
@@ -738,24 +813,36 @@ void LoadLayouts() {
         }
         token=end; if(*token==L',') ++token; else if(*token) break;
     }
-    if(std::none_of(app.layouts.begin(),app.layouts.end(),[](const Layout& l){return l.id==1;})) app.layouts.push_back({});
     app.layout=ReadInt(L"Layouts",L"Active",1);
-    if(!ActiveLayout()) app.layout=1;
+    if(!ActiveLayout()) app.layout=app.layouts.empty()?0:app.layouts.front().id;
+    app.activeLayouts.clear();
+    const int situation=app.frame.connected?CurrentSituation(app.frame):-1;
+    for(const auto& layout:app.layouts) if(LayoutApplies(layout.condition,situation)) app.activeLayouts.push_back(layout.id);
 }
 // The active layout's overlays: instances added or dropped to its counts, then its settings.
 void LoadOverlays() {
     // Each kind's section counts its instances; the Pit Assist and the Side Warning have only one.
-    for(int kind=0;kind<OverlayCount;++kind) {
-        const int count=SingleInstance(kind)?1:std::clamp(ReadInt(KindSection(kind).c_str(),L"Instances",1),1,99);
+    for(auto it=app.overlays.begin();it!=app.overlays.end();) {
+        if(std::none_of(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==it->layout;})) { DestroyOverlay(*it); it=app.overlays.erase(it); } else ++it;
+    }
+    for(const auto& layout:app.layouts) for(int kind=0;kind<OverlayCount;++kind) {
+        const int count=SingleInstance(kind)?1:std::clamp(ReadInt(KindSection(kind,layout.id).c_str(),L"Instances",1),1,99);
         for(int number=1;number<=count;++number)
-            if(std::none_of(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return o.kind==kind && o.number==number;})) AddInstance(kind,number);
+            if(std::none_of(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return o.layout==layout.id && o.kind==kind && o.number==number;})) AddInstance(kind,number,layout.id);
         for(auto it=app.overlays.begin();it!=app.overlays.end();) {
-            if(it->kind==kind && it->number>count) { DestroyOverlay(*it); it=app.overlays.erase(it); } else ++it;
+            if(it->layout==layout.id && it->kind==kind && it->number>count) { DestroyOverlay(*it); it=app.overlays.erase(it); } else ++it;
         }
     }
-    for(auto& o:app.overlays) { ReadInstance(o); if(!o.window && app.overlayClass) CreateOverlayWindow(o); }
+    for(auto& o:app.overlays) {
+        ReadInstance(o);
+        if(!LayoutRunning(o.layout) && !LayoutPreviewing(o.layout)) DestroyOverlay(o);
+        else if(app.overlayClass) { if(!o.window) CreateOverlayWindow(o); else o.due=0; }
+    }
 }
 void Load() {
+    wchar_t alphaOverride[32]{};
+    GetEnvironmentVariableW(L"RACEMATE_SPOUT_ALPHA",alphaOverride,32);
+    spoutPremultiplied=_wcsicmp(alphaOverride,L"straight")!=0;
     app.savedSettings.clear(); // The next Save() writes everything once.
     LoadLayouts(); LoadOverlays();
     app.showTitleBar=ReadBool(L"General",L"ShowTitleBar",false);
@@ -785,14 +872,17 @@ void Save() {
     };
     {
         std::wstring ids; for(const auto& l:app.layouts) ids+=(ids.empty()?L"":L",")+std::to_wstring(l.id);
-        write(L"Layouts",L"Order",ids); number(L"Layouts",L"Active",app.layout);
+        write(L"Layouts",L"Order",ids); number(L"Layouts",L"Count",static_cast<int>(app.layouts.size())); number(L"Layouts",L"Active",app.layout);
         for(const auto& l:app.layouts) { const auto section=L"Layout "+std::to_wstring(l.id); write(section.c_str(),L"Name",l.name); number(section.c_str(),L"Condition",l.condition); }
     }
-    for(int kind=0;kind<OverlayCount;++kind) if(!SingleInstance(kind)) number(KindSection(kind).c_str(),L"Instances",InstanceCount(kind));
+    for(const auto& layout:app.layouts) for(int kind=0;kind<OverlayCount;++kind) if(!SingleInstance(kind)) number(KindSection(kind,layout.id).c_str(),L"Instances",InstanceCount(kind,layout.id));
     for(const auto& o:app.overlays) {
         const auto name=Section(o); const auto* section=name.c_str(); const auto& p=o.place;
+        write(section,L"DisplayName",o.customName);
+        number(section,L"BackgroundOpacityOnly",p.backgroundOnly);
+        write(section,L"SpoutAlphaMode",p.spoutPremultiplied?L"premultiplied":L"straight");
         number(section,L"X",p.x); number(section,L"Y",p.y); number(section,L"Scale",p.scale); number(section,L"Opacity",p.opacity);
-        number(section,L"RefreshHz",p.rate); number(section,L"Enabled",p.enabled); number(section,L"GrowLeft",p.growLeft); number(section,L"GrowUp",p.growUp); number(section,L"RoundedCorners",p.rounded);
+        number(section,L"RefreshHz",p.rate); number(section,L"Enabled",p.enabled); number(section,L"GrowLeft",p.growLeft); number(section,L"GrowUp",p.growUp); number(section,L"RoundedCorners",p.rounded); number(section,L"SpoutOutput",p.spout);
         {
             const auto& b=o.bands; number(section,L"ShowHeader",b.header); number(section,L"ShowFooter",b.footer.enabled);
             for(int i=0;i<SlotCount;++i) { number(section,HeaderKeys[i],b.headerMetrics[i]); number(section,FooterKeys[i],b.footer.metrics[i]); }
@@ -873,11 +963,12 @@ void RemoveInstance(Overlay& o) {
     if(o.number==1) return;
     DeleteSection(Section(o));
     // Later instances move up a number, so their sections are written again under the new names.
-    const int kind=o.kind, number=o.number;
+    const int layout=o.layout, kind=o.kind, number=o.number;
     DestroyOverlay(o); app.overlays.remove_if([&](const Overlay& other){return &other==&o;});
-    for(auto& other:app.overlays) if(other.kind==kind && other.number>number) {
+    for(auto& other:app.overlays) if(other.layout==layout && other.kind==kind && other.number>number) {
         DeleteSection(Section(other));
         --other.number;
+        other.spout.reset();
     }
     Save();
 }
@@ -1003,6 +1094,10 @@ constexpr COLORREF Value=RGB(195,204,213), Frame=RGB(46,49,53), IconBack=RGB(36,
 constexpr COLORREF BarBack=RGB(29,31,35), HatchFore=RGB(131,96,66), HatchBack=RGB(52,45,42), HatchGrey=RGB(78,82,88), Missing=RGB(158,111,69);
 constexpr COLORREF SideRed=RGB(255,90,82); // The Side Warning: brighter than Red, seen from the corner of the eye.
 constexpr COLORREF ChartBar=RGB(80,82,85), CautionBar=RGB(122,99,38), PitBar=RGB(40,43,47), WindowOpen=RGB(46,160,92), LapAhead=RGB(34,37,40), LapDone=RGB(52,55,60);
+}
+bool SurfaceInk(COLORREF color) {
+    return color==Ink::Panel || color==Ink::Band || color==Ink::Line || color==Ink::Border ||
+        color==Ink::ClassBand || color==Ink::OwnRow || color==Ink::PitExitRow;
 }
 // A translucent ink pre-blended over a background.
 COLORREF Mix(COLORREF base,COLORREF ink,double alpha) {
@@ -1396,7 +1491,7 @@ ShownAdjustment CurrentAdjustment(const AdjustmentSettings& a) {
         s={AbsDial,4,6,1-static_cast<double>(app.now-app.adjustSample)/hold,1,12,true}; return s;
     }
     const int dial=app.dialWatcher.Shown();
-    if(dial<0 || !(app.frame.dialsKnown>>dial&1)) return s;
+    if(dial<0 || !(app.frame.dialsKnown>>dial&1) || !a.groups[GroupOf(dial)] || app.now-app.dialWatcher.ChangedAt()>=hold) return s;
     s.dial=dial; s.value=app.frame.dials[dial]; s.was=app.dialWatcher.Was();
     s.left=std::clamp(1-static_cast<double>(app.now-app.dialWatcher.ChangedAt())/hold,0.,1.);
     if(app.dialRanges>>dial&1) {
@@ -1407,13 +1502,13 @@ ShownAdjustment CurrentAdjustment(const AdjustmentSettings& a) {
     return s;
 }
 // The Adjustments overlay when enabled, else null.
-const Overlay* AdjustmentsOverlay() {
-    for(const auto& o:app.overlays) if(o.kind==AdjustmentsKind && o.place.enabled) return &o;
+const Overlay* AdjustmentsOverlay(int layout=0) {
+    for(const auto& o:app.overlays) if((!layout || o.layout==layout) && LayoutRunning(o.layout) && o.kind==AdjustmentsKind && (o.place.enabled || o.place.spout)) return &o;
     return nullptr;
 }
 // The settings for an adjustment shown in place of o now, else null.
 const AdjustmentSettings* AdjustmentInPlaceOf(const Overlay& o) {
-    const auto* a=AdjustmentsOverlay();
+    const auto* a=AdjustmentsOverlay(o.layout);
     return a && a->adjust.replace==o.kind && CurrentAdjustment(a->adjust).dial>=0?&a->adjust:nullptr;
 }
 void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCommand>& out) {
@@ -1421,18 +1516,20 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
     auto px=[&](int v){return MulDiv(v,dpi*o.place.scale,9600);};
     auto rect=[&](int x,int y,int w,int h){return RECT{px(x),px(y),px(x+w),px(y+h)};};
     const int titleOffset=ShowOverlayHeader(o)?0:px(32);
-    auto fill=[&](RECT r,COLORREF color) { r.top-=titleOffset; r.bottom-=titleOffset; out.push_back({DrawCommand::Fill,Regular,0,r,color}); };
+    auto fill=[&](RECT r,COLORREF color) { r.top-=titleOffset; r.bottom-=titleOffset; out.push_back({DrawCommand::Fill,Regular,0,r,color}); out.back().background=SurfaceInk(color); };
     auto label=[&](std::wstring text,RECT r,COLORREF color,FontId font,UINT align=DT_LEFT) {
         r.top-=titleOffset; r.bottom-=titleOffset; out.push_back({DrawCommand::Text,font,align,r,color,{},std::move(text)});
     };
     auto shape=[&](DrawCommand::Type type,RECT r,COLORREF color,int radius=3) {
         r.top-=titleOffset; r.bottom-=titleOffset; out.push_back({type,Regular,0,r,color,{static_cast<float>(px(radius))}});
+        out.back().background=(type==DrawCommand::Fill || type==DrawCommand::RoundFill) && SurfaceInk(color);
     };
     // Bars like the fuel tank: 12 px of a dark track with square ends; a mark on one is 2 px wide and stands 4 px over both edges.
     constexpr int BarHeight=12;
     auto barMark=[&](int x,int top,COLORREF ink) { fill(rect(x-1,top-4,2,BarHeight+8),ink); };
     const COLORREF white=Ink::White, muted=Ink::Muted;
-    out.push_back({DrawCommand::Fill,Regular,0,{0,0,width,height},PerPixel(o)?(app.edit?TrackMapMoveKey:TrackMapTransparentKey):Ink::Panel});
+    out.push_back({DrawCommand::Fill,Regular,0,{0,0,width,height},TransparentContent(o)?(app.edit?TrackMapMoveKey:TrackMapTransparentKey):Ink::Panel});
+    out.back().background=true;
     // Width in physical pixels, measured with the overlay's fonts exactly as DrawLabel will.
     // Most metric texts repeat between refreshes, so widths are kept until the fonts change.
     auto measure=[&](const std::wstring& text,FontId font) {
@@ -1536,7 +1633,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         struct Shown { std::wstring name; COLORREF color; double gap; };
         std::vector<Shown> cars;
         if(app.preview) cars={{L"#21  Luca Weber",RGB(255,218,89),.8},{L"#7  Sofia Laurent",RGB(51,206,255),1.9},{L"#14  Ben Clarke",RGB(255,218,89),2.6}};
-        else for(const auto& c:app.traffic) {
+        else for(const auto& c:o.trafficCars) {
             const auto d=std::find_if(app.session.drivers.begin(),app.session.drivers.end(),[&](const Driver& x){ return x.index==c.index; });
             if(d!=app.session.drivers.end()) cars.push_back({L"#"+Wide(d->number)+L"  "+Wide(d->name),ColorOf(d->classColor),c.gap});
         }
@@ -1576,7 +1673,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             return RECT{x-carWidth/2,y-carLength/2,x-carWidth/2+carWidth,y-carLength/2+carLength};
         };
         const RadarCar* nearest[2]{};
-        for(const auto& c:app.radarCars) {
+        for(const auto& c:o.radarCars) {
             if(std::abs(c.metres)>r.range+2.3) continue;
             const auto driver=std::find_if(app.session.drivers.begin(),app.session.drivers.end(),[&](const Driver& d){ return d.index==c.index; });
             const COLORREF color=driver!=app.session.drivers.end()?ColorOf(driver->classColor):Ink::Muted;
@@ -1711,7 +1808,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                 // A band in the darkened class color; the class name on the full color, then the chosen values.
                 const COLORREF color=ColorOf(group.color);
                 auto mix=[](COLORREF a,COLORREF b,double t){ return RGB(std::lround(GetRValue(a)*(1-t)+GetRValue(b)*t),std::lround(GetGValue(a)*(1-t)+GetGValue(b)*t),std::lround(GetBValue(a)*(1-t)+GetBValue(b)*t)); };
-                fill({0,px(y),width,px(y+25)},mix(Ink::Panel,color,.18));
+                fill({0,px(y),width,px(y+25)},mix(Ink::Panel,color,.18)); out.back().background=true;
                 auto name=Wide(group.name); const int tagWidth=std::min(measure(name,Bold)+px(24),width/2);
                 fill({0,px(y),tagWidth,px(y+25)},color);
                 const bool light=299*GetRValue(color)+587*GetGValue(color)+114*GetBValue(color)>140000;
@@ -2213,7 +2310,10 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         footer(changes.empty()?y:y+8);
     }
     // The 1 px border, last so it stays on top; the window region rounds the same corners. The Pit Assist's color needs none.
-    if(o.kind!=PitLimiterKind && o.kind!=SideWarningKind && !PerPixel(o)) out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{static_cast<float>(o.place.rounded?px(CornerRadius):0)}});
+    if(o.kind!=PitLimiterKind && o.kind!=SideWarningKind && !TransparentContent(o)) {
+        out.push_back({DrawCommand::Outline,Regular,0,{0,0,width,height},Ink::Border,{static_cast<float>(o.place.rounded?px(CornerRadius):0)}});
+        out.back().background=true;
+    }
 }
 // DrawTextW costs about three times as much as measuring and ExtTextOutW; it remains only for ellipsis.
 void DrawLabel(HDC dc,const DrawCommand& c) {
@@ -2329,6 +2429,7 @@ HBITMAP LogoBitmap(Overlay& o,int index,int size,COLORREF tint) {
     o.logos.push_back({index,size,bitmap}); return bitmap;
 }
 void PaintScene(Overlay& o,HRGN dirty) {
+    ++o.renderRevision;
     HDC dc=o.dc;
     SelectClipRgn(dc,dirty); o.direct=false; ++o.mapPass;
     int font=-1; bool numbered=false;
@@ -2344,6 +2445,21 @@ void PaintScene(Overlay& o,HRGN dirty) {
                 // Premultiplied: nothing, or the panel colour at a quarter so the map can be grabbed.
                 // Where the map's own pixels follow in this full pass, they replace it: the fill skips them.
                 GdiFlush(); const std::uint32_t value=c.color==TrackMapMoveKey?0x40030405u:0;
+                if(dirty) {
+                    // Direct DIB writes do not inherit SelectClipRgn. Respect the
+                    // dirty spans explicitly, particularly on transparent maps.
+                    std::vector<BYTE> data(GetRegionData(dirty,0,nullptr));
+                    if(!data.empty() && GetRegionData(dirty,static_cast<DWORD>(data.size()),reinterpret_cast<RGNDATA*>(data.data()))) {
+                        const auto* region=reinterpret_cast<const RGNDATA*>(data.data()); const auto* rects=reinterpret_cast<const RECT*>(region->Buffer);
+                        for(DWORD i=0;i<region->rdh.nCount;++i) {
+                            RECT area{}; if(!IntersectRect(&area,&c.r,&rects[i])) continue;
+                            const LONG left=std::max(0L,area.left),right=std::min(static_cast<LONG>(o.width),area.right);
+                            if(right<=left) continue;
+                            for(LONG y=std::max(0L,area.top);y<std::min(static_cast<LONG>(o.height),area.bottom);++y) std::fill(o.pixels+y*o.width+left,o.pixels+y*o.width+right,value);
+                        }
+                    }
+                    break;
+                }
                 RECT skip{};
                 if(!dirty && o.mapBitmap) for(const auto& m:o.scene) if(m.type==DrawCommand::Map && m.r.right-m.r.left==o.mapWidth && m.r.bottom-m.r.top==o.mapHeight) skip=m.r;
                 const LONG left=std::max(0L,c.r.left),right=std::min(static_cast<LONG>(o.width),c.r.right);
@@ -2436,6 +2552,7 @@ void PaintScene(Overlay& o,HRGN dirty) {
 }
 bool EnsureBuffer(Overlay& o,int width,int height,int dpi) {
     if(o.dc && o.width==width && o.height==height && o.dpi==dpi) return false;
+    ProfileScope creation(true,[&]{ return ProfileName(o,"buffer/fonts create"); });
     o.Free();
     HDC screen=GetDC(o.window);
     o.dc=CreateCompatibleDC(screen);
@@ -2448,13 +2565,13 @@ bool EnsureBuffer(Overlay& o,int width,int height,int dpi) {
 #endif
     if(dib) {
         BITMAPINFO info{}; info.bmiHeader={sizeof(BITMAPINFOHEADER),width,-height,1,32,BI_RGB}; void* bits=nullptr;
-        o.bitmap=CreateDIBSection(screen,&info,DIB_RGB_COLORS,&bits,nullptr,0); o.pixels=o.kind==TrackMapKind || o.kind==RadarKind || o.kind==TrafficKind?static_cast<std::uint32_t*>(bits):nullptr;
+        o.bitmap=CreateDIBSection(screen,&info,DIB_RGB_COLORS,&bits,nullptr,0); o.dibPixels=static_cast<std::uint32_t*>(bits); o.pixels=o.kind==TrackMapKind || o.kind==RadarKind || o.kind==TrafficKind?static_cast<std::uint32_t*>(bits):nullptr;
     }
     if(!o.bitmap) { o.bitmap=CreateCompatibleBitmap(screen,width,height); o.pixels=nullptr; }
     o.original=SelectObject(o.dc,o.bitmap);
     ReleaseDC(o.window,screen);
     const int size=std::max(8,MulDiv(14,dpi*o.place.scale,9600));
-    auto font=[&](int pixels,int weight){ return CreateFontW(-pixels,0,0,0,weight,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI"); };
+    auto font=[&](int pixels,int weight){ return CreateFontW(-pixels,0,0,0,weight,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,o.place.backgroundOnly?ANTIALIASED_QUALITY:CLEARTYPE_QUALITY,0,L"Segoe UI"); };
     auto scaled=[&](int pixels){ return MulDiv(pixels,dpi*o.place.scale,9600); };
     // The Adjustments' name in about an eighth of the height; the value in two fifths of it, or in a size that fits
     // six characters across a narrow overlay.
@@ -2470,12 +2587,73 @@ bool EnsureBuffer(Overlay& o,int width,int height,int dpi) {
 // An overlay's part of the profile, named after it.
 std::string ProfileName(const Overlay& o,const char* part) { std::string name="overlay "; for(wchar_t c:Name(o)) name+=static_cast<char>(c<128?c:'?'); return name+": "+part; }
 // The buffer with its alpha as the window's content, at the overlay's opacity.
-void PresentLayered(const Overlay& o) {
+void PresentLayered(const Overlay& o,HRGN dirty=nullptr) {
     if(!o.dc || !o.window) return;
     ProfileScope profile(true,[&]{ return ProfileName(o,"present (UpdateLayeredWindow)"); });
-    RECT r{}; GetWindowRect(o.window,&r); POINT position{r.left,r.top}, source{0,0}; SIZE size{o.width,o.height};
-    BLENDFUNCTION blend{AC_SRC_OVER,0,static_cast<BYTE>(o.place.opacity*255/100),AC_SRC_ALPHA};
-    UpdateLayeredWindow(o.window,nullptr,&position,&size,o.dc,&source,0,&blend,ULW_ALPHA);
+    auto present=[&](HWND window,LONG offset) {
+        RECT r{}; GetWindowRect(window,&r); POINT position{r.left,r.top},source{offset,0}; SIZE size{o.mirror?o.width/2:o.width,o.height};
+        BLENDFUNCTION blend{AC_SRC_OVER,0,static_cast<BYTE>(EffectiveOpacity(o)*255/100),AC_SRC_ALPHA};
+        if(dirty) {
+            RECT changed{}; GetRgnBox(dirty,&changed); RECT clip{offset,0,offset+size.cx,size.cy};
+            if(!IntersectRect(&changed,&changed,&clip)) return;
+            OffsetRect(&changed,-offset,0);
+            UPDATELAYEREDWINDOWINFO info{sizeof(info)}; info.pptDst=&position; info.psize=&size; info.hdcSrc=o.dc; info.pptSrc=&source; info.pblend=&blend; info.dwFlags=ULW_ALPHA; info.prcDirty=&changed;
+            UpdateLayeredWindowIndirect(window,&info);
+        } else UpdateLayeredWindow(window,nullptr,&position,&size,o.dc,&source,0,&blend,ULW_ALPHA);
+    };
+    present(o.window,0); if(o.mirror) present(o.mirror,o.width/2);
+}
+bool PaintBackgroundOpacity(Overlay& o,HRGN dirty=nullptr) {
+    if(!o.dibPixels || !o.blackMatte.Ensure(o.width,o.height) || !o.whiteMatte.Ensure(o.width,o.height)) return false;
+    ProfileScope passes(true,[&]{ return ProfileName(o,"alpha passes"); });
+    auto full=std::move(o.scene);
+    o.scene.clear();
+    for(const auto& c:full) if(c.background) o.scene.push_back(c);
+    const size_t count=static_cast<size_t>(o.width)*o.height;
+    std::vector<RECT> rectangles;
+    if(dirty) {
+        std::vector<BYTE> data(GetRegionData(dirty,0,nullptr));
+        if(!data.empty() && GetRegionData(dirty,static_cast<DWORD>(data.size()),reinterpret_cast<RGNDATA*>(data.data()))) {
+            const auto* region=reinterpret_cast<const RGNDATA*>(data.data()); const auto* rects=reinterpret_cast<const RECT*>(region->Buffer);
+            rectangles.assign(rects,rects+region->rdh.nCount);
+        }
+    } else rectangles.push_back({0,0,o.width,o.height});
+    auto eachPixel=[&](auto action) {
+        if(!dirty) { for(size_t i=0;i<count;++i) action(i); return; }
+        for(const auto& r:rectangles) for(int y=std::max(0L,r.top);y<std::min(static_cast<LONG>(o.height),r.bottom);++y) for(int x=std::max(0L,r.left);x<std::min(static_cast<LONG>(o.width),r.right);++x) action(static_cast<size_t>(y)*o.width+x);
+    };
+    if(dirty) eachPixel([&](size_t i){o.dibPixels[i]=0;}); else std::fill(o.dibPixels,o.dibPixels+count,0);
+    PaintScene(o,dirty); GdiFlush();
+    o.scene.clear(); for(const auto& c:full) if(!c.background) o.scene.push_back(c);
+    const auto dc=o.dc; auto* pixels=o.pixels; auto* dib=o.dibPixels;
+    o.foregroundMatte=true; o.pixels=nullptr;
+    for(auto* matte:{&o.blackMatte,&o.whiteMatte}) {
+        const bool white=matte==&o.whiteMatte;
+        if(dirty) eachPixel([&](size_t i){matte->pixels[i]=white?0xffffffffu:0xff000000u;}); else std::fill(matte->pixels,matte->pixels+count,white?0xffffffffu:0xff000000u);
+        o.dc=matte->dc; o.dibPixels=matte->pixels;
+        PaintScene(o,dirty); GdiFlush();
+    }
+    o.dc=dc; o.pixels=pixels; o.dibPixels=dib; o.foregroundMatte=false; o.scene=std::move(full);
+    passes.Stop();
+    ProfileScope compose(true,[&]{ return ProfileName(o,"alpha composition"); });
+    const bool transparent=TransparentContent(o);
+    const unsigned baseAlpha=transparent?(app.edit?64u:0u):255u;
+    const unsigned backgroundAlpha=baseAlpha*o.place.opacity/100;
+    eachPixel([&](size_t i) {
+        const auto black=o.blackMatte.pixels[i],white=o.whiteMatte.pixels[i],back=dib[i];
+        unsigned foregroundAlpha=0;
+        for(unsigned shift:{0u,8u,16u}) foregroundAlpha=std::max(foregroundAlpha,255u-static_cast<unsigned>(std::clamp(static_cast<int>((white>>shift)&255)-static_cast<int>((black>>shift)&255),0,255)));
+        const unsigned alpha=foregroundAlpha+(backgroundAlpha*(255-foregroundAlpha)+127)/255;
+        std::uint32_t result=alpha<<24;
+        for(unsigned shift:{0u,8u,16u}) {
+            unsigned b=(back>>shift)&255;
+            if(transparent && baseAlpha) b=std::min(255u,(b*255+baseAlpha/2)/baseAlpha);
+            const unsigned value=((black>>shift)&255)+(b*backgroundAlpha*(255-foregroundAlpha)+32512)/65025;
+            result|=std::min(255u,value)<<shift;
+        }
+        dib[i]=result;
+    });
+    o.backgroundComposed=true; return true;
 }
 #ifdef RACEMATE_DIAGNOSTICS
 std::array<LONGLONG,OverlayCount> refreshTicks{}; // Scene, changed areas and drawing into the buffer, per kind.
@@ -2497,7 +2675,7 @@ void RefreshOverlay(Overlay& o) {
     // A transparent window keeps what it was last given: an unchanged scene needs neither drawing nor presenting.
     // Opacity changes present on their own (ApplyOpacity); size and DPI changes come as a new buffer.
     if(o.layeredAlpha && !resized && app.sceneBuffer==o.scene) return;
-    const bool full=resized || app.sceneBuffer.size()!=o.scene.size() || o.layeredAlpha;
+    const bool full=resized || app.sceneBuffer.size()!=o.scene.size() || (o.layeredAlpha && !o.place.backgroundOnly);
     HRGN dirty=nullptr;
     if(!full) {
         // The old and new areas of what changed. Many small areas, such as cars moving on the track map,
@@ -2531,12 +2709,31 @@ void RefreshOverlay(Overlay& o) {
     }
 #endif
     std::swap(o.scene,app.sceneBuffer);
-    { ProfileScope p(true,[&]{ return ProfileName(o,"  drawing"); }); PaintScene(o,dirty); }
+    { ProfileScope p(true,[&]{ return ProfileName(o,"  drawing"); });
+        o.backgroundComposed=false;
+        if(!o.place.backgroundOnly || !PaintBackgroundOpacity(o,dirty)) {
+            PaintScene(o,dirty);
+            if(o.place.backgroundOnly && !TransparentContent(o) && o.dibPixels) {
+                GdiFlush(); for(size_t i=0;i<static_cast<size_t>(o.width)*o.height;++i) o.dibPixels[i]|=0xff000000u;
+            }
+        }
+    }
+    // Keep the accumulated source regions until the next publication, including
+    // multiple paints between exports. The worker has its own persistent image.
+    if(!o.place.spout) { o.spoutFull=true; o.spoutDirty.clear(); }
+    else if(!dirty) { o.spoutFull=true; o.spoutDirty.clear(); }
+    else if(!o.spoutFull) {
+        std::vector<BYTE> data(GetRegionData(dirty,0,nullptr));
+        if(!data.empty() && GetRegionData(dirty,static_cast<DWORD>(data.size()),reinterpret_cast<RGNDATA*>(data.data()))) {
+            const auto* region=reinterpret_cast<const RGNDATA*>(data.data()); const auto* rects=reinterpret_cast<const RECT*>(region->Buffer);
+            for(DWORD i=0;i<region->rdh.nCount;++i) o.spoutDirty.push_back({static_cast<unsigned>(std::max(0L,rects[i].left)),static_cast<unsigned>(std::max(0L,rects[i].top)),static_cast<unsigned>(std::max(0L,rects[i].right)),static_cast<unsigned>(std::max(0L,rects[i].bottom))});
+        }
+    }
     if(o.layeredAlpha && (o.kind==RadarKind || o.kind==TrafficKind) && o.pixels) {
         // GDI leaves its pixels without alpha: all but the transparent background become opaque.
         GdiFlush(); for(std::uint32_t* p=o.pixels,*end=p+static_cast<size_t>(o.width)*o.height;p<end;++p) if(*p && !(*p>>24)) *p|=0xff000000u;
     }
-    if(o.layeredAlpha) { PresentLayered(o); if(dirty) DeleteObject(dirty); return; }
+    if(o.layeredAlpha) { PresentLayered(o,dirty); if(dirty) DeleteObject(dirty); return; }
 #ifdef RACEMATE_DIAGNOSTICS
     // RACEMATE_FULL_COPY=1: every refresh copies the whole window, to separate the copy's fixed cost from its area.
     if(dirty && GetEnvironmentVariableW(L"RACEMATE_FULL_COPY",nullptr,0)) { DeleteObject(dirty); dirty=nullptr; }
@@ -2547,26 +2744,34 @@ void RefreshOverlay(Overlay& o) {
 }
 // X/Y store the fixed corner, rather than the changing top-left origin.
 void CaptureOverlayCorner(Overlay& o) {
+    if(!o.window) return;
     RECT r{}; GetWindowRect(o.window,&r);
     o.place.x=o.place.growLeft?r.right:r.left; o.place.y=o.place.growUp?r.bottom:r.top;
 }
 void SetOverlayOrigin(Overlay& o,int x,int y) {
-    const int dpi=GetDpiForWindow(o.window);
+    const int dpi=o.window?GetDpiForWindow(o.window):GetDpiForSystem();
     o.place.x=x+(o.place.growLeft?MulDiv(OverlayWidth(o),dpi*o.place.scale,9600):0);
     o.place.y=y+(o.place.growUp?MulDiv(BaseHeight(o),dpi*o.place.scale,9600):0);
 }
 // Opacity for the whole window, or per pixel for a map without background. Switching between the two needs the
 // layered style set anew: a window given SetLayeredWindowAttributes refuses UpdateLayeredWindow until then.
 void ApplyOpacity(const Overlay& o) {
+    if(!o.window) return;
     const bool perPixel=PerPixel(o);
     if(perPixel!=o.layeredAlpha) {
         const auto style=GetWindowLongPtrW(o.window,GWL_EXSTYLE);
         SetWindowLongPtrW(o.window,GWL_EXSTYLE,style&~WS_EX_LAYERED); SetWindowLongPtrW(o.window,GWL_EXSTYLE,style|WS_EX_LAYERED);
+        if(o.mirror) {
+            const auto mirror=GetWindowLongPtrW(o.mirror,GWL_EXSTYLE);
+            SetWindowLongPtrW(o.mirror,GWL_EXSTYLE,mirror&~WS_EX_LAYERED); SetWindowLongPtrW(o.mirror,GWL_EXSTYLE,mirror|WS_EX_LAYERED);
+        }
         o.layeredAlpha=perPixel;
     }
     if(perPixel) PresentLayered(o);
-    else SetLayeredWindowAttributes(o.window,0,static_cast<BYTE>(o.place.opacity*255/100),LWA_ALPHA);
-    if(o.mirror) SetLayeredWindowAttributes(o.mirror,0,static_cast<BYTE>(o.place.opacity*255/100),LWA_ALPHA);
+    else {
+        SetLayeredWindowAttributes(o.window,0,static_cast<BYTE>(o.place.opacity*255/100),LWA_ALPHA);
+        if(o.mirror) SetLayeredWindowAttributes(o.mirror,0,static_cast<BYTE>(o.place.opacity*255/100),LWA_ALPHA);
+    }
 }
 // The monitor the Side Warning's bars go on: while one is dragged, the one under the mouse, so they move over as
 // soon as it gets there; otherwise the one where they are.
@@ -2581,7 +2786,8 @@ void PlaceMirror(const Overlay& o) {
     SetWindowPos(o.mirror,HWND_TOPMOST,info.rcMonitor.left+info.rcMonitor.right-r.right,r.top,r.right-r.left,r.bottom-r.top,SWP_NOACTIVATE);
     InvalidateRect(o.mirror,nullptr,FALSE);
 }
-void Fit(Overlay& o,bool recover=false) {
+void Fit(Overlay& o,bool recover) {
+    if(!o.window) return;
     InvalidateModel();
     const int dpi=GetDpiForWindow(o.window);
     const int w=MulDiv(OverlayWidth(o),dpi*o.place.scale,9600),h=MulDiv(BaseHeight(o),dpi*o.place.scale,9600);
@@ -2609,7 +2815,7 @@ void Fit(Overlay& o,bool recover=false) {
     if(o.mirror) { SetWindowRgn(o.mirror,o.place.rounded?CreateRoundRectRgn(0,0,w+1,h+1,diameter,diameter):nullptr,TRUE); PlaceMirror(o); }
 }
 void CreateOverlayWindow(Overlay& o) {
-    CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_LAYERED|WS_EX_TRANSPARENT,L"RaceMate.Overlay",Name(o).c_str(),WS_POPUP,o.place.x,o.place.y,365,200,nullptr,nullptr,app.instance,&o);
+    CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_TRANSPARENT|WS_EX_LAYERED,L"RaceMate.Overlay",Name(o).c_str(),WS_POPUP,o.place.x,o.place.y,365,200,nullptr,nullptr,app.instance,&o);
     if(o.kind==SideWarningKind) {
         o.mirror=CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_LAYERED|WS_EX_TRANSPARENT,L"RaceMate.Mirror",Name(o).c_str(),WS_POPUP,0,0,0,0,nullptr,nullptr,app.instance,nullptr);
         SetWindowLongPtrW(o.mirror,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(&o));
@@ -2644,7 +2850,7 @@ LRESULT CALLBACK MirrorProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     }
     case WM_PRINTCLIENT: if(o->dc) BitBlt(reinterpret_cast<HDC>(wp),0,0,o->width/2,o->height,o->dc,o->width/2,0,SRCCOPY); return 0;
     case WM_ERASEBKGND: return 1;
-    case WM_NCHITTEST: return app.edit?HTCAPTION:HTTRANSPARENT;
+    case WM_NCHITTEST: return (app.edit || Editing(*o))?HTCAPTION:HTTRANSPARENT;
     case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
     }
     return DefWindowProcW(w,m,wp,lp);
@@ -2715,7 +2921,7 @@ int RefreshRate(const Overlay& o) {
     const auto& d=o.weather.display;
     const bool windArrow=o.kind==WeatherKind && d[WindModule] && d[WindRose] && d[WindRelative] && std::isfinite(RelativeWindAngle(app.frame,HeadingLive(),MapHeading()));
     // In place of the Adjustments, at their pace, so the time left runs down smoothly.
-    if(o.kind!=AdjustmentsKind && AdjustmentInPlaceOf(o)) { const auto* a=AdjustmentsOverlay(); return std::max(o.place.rate,a->place.rate); }
+    if(o.kind!=AdjustmentsKind && AdjustmentInPlaceOf(o)) { const auto* a=AdjustmentsOverlay(o.layout); return std::max(o.place.rate,a->place.rate); }
     return (o.kind==PitLimiterKind && app.pitVisibility.Warning()) || windArrow?std::max(o.place.rate,10):o.place.rate;
 }
 // While iRacing's frames set the pace, an overlay refreshes on every n-th frame (n = 60 / rate), so 15 Hz is
@@ -2743,32 +2949,32 @@ void UpdateSide() {
 }
 // The Radar's cars within its range; the preview has a car beside you on the left, two on the right (you are at the
 // edge of three wide, as the Side Warning shows), one ahead and one behind.
-void UpdateRadar(const Overlay& o) {
+void UpdateRadar(Overlay& o) {
     if(app.preview) {
         constexpr int left=1,beside=2,outside=4,ahead=0,behind=6;
-        app.radarCars={{beside,.5,1},{left,1.5,-1},{outside,-3,2},{ahead,11,0},{behind,-15,0}}; return;
+        o.radarCars={{beside,.5,1},{left,1.5,-1},{outside,-3,2},{ahead,11,0},{behind,-15,0}}; return;
     }
-    app.radar.Update(app.session,app.frame,o.radar.range); app.radarCars=app.radar.Cars();
+    o.radarTracker.Update(app.session,app.frame,o.radar.range); o.radarCars=o.radarTracker.Cars();
     // Lanes forgotten (another session or car): no car glides on from where it was drawn before.
-    if(app.radar.Resets()!=app.radarResets) { app.radarResets=app.radar.Resets(); app.radarPresent={}; app.radarNear=0; }
-    if(!app.radarCars.empty()) app.radarNear=app.now;
+    if(o.radarTracker.Resets()!=o.radarResets) { o.radarResets=o.radarTracker.Resets(); o.radarPresent={}; o.radarNear=0; }
+    if(!o.radarCars.empty()) o.radarNear=app.now;
     // Across, a car glides to its new lane in about a quarter of a second rather than jumping; one new on the radar
     // starts in its lane.
-    const double seconds=(app.now-app.radarGlided)/1000.0; app.radarGlided=app.now;
+    const double seconds=(app.now-o.radarGlided)/1000.0; o.radarGlided=app.now;
     std::array<bool,MaxCars> present{};
-    for(auto& c:app.radarCars) {
-        const double target=c.lane+c.offset; double& at=app.radarAcross[c.index];
-        if(!app.radarPresent[c.index] || seconds>1) at=target; else at+=(target-at)*(1-std::exp(-seconds/.07));
+    for(auto& c:o.radarCars) {
+        const double target=c.lane+c.offset; double& at=o.radarAcross[c.index];
+        if(!o.radarPresent[c.index] || seconds>1) at=target; else at+=(target-at)*(1-std::exp(-seconds/.07));
         if(std::abs(target-at)<.02) at=target;
         c.offset=at-c.lane; present[c.index]=true;
     }
-    app.radarPresent=present;
+    o.radarPresent=present;
 }
 // The cars behind you within Traffic's gap; the preview draws a sample of its own.
-void UpdateTraffic(const Overlay& o) {
-    if(app.preview) { app.traffic.clear(); return; }
-    app.traffic=CarsBehind(app.session,app.frame,o.traffic.gap,o.traffic.fasterOnly,&app.passing);
-    if(!app.traffic.empty()) app.trafficNear=app.now;
+void UpdateTraffic(Overlay& o) {
+    if(app.preview) { o.trafficCars.clear(); return; }
+    o.trafficCars=CarsBehind(app.session,app.frame,o.traffic.gap,o.traffic.fasterOnly,&app.passing);
+    if(!o.trafficCars.empty()) o.trafficNear=app.now;
 }
 bool Driving();
 // Each dial's range in this car, read on getting into another car and written as a value goes beyond it.
@@ -2796,20 +3002,83 @@ void UpdateDialRanges() {
 void UpdateAdjustments() {
     const auto* overlay=AdjustmentsOverlay();
     if(!overlay) { app.dialWatcher.Reset(); return; }
-    const auto& a=overlay->adjust; unsigned shown=0;
-    for(int d=0;d<DialCount;++d) if(a.groups[GroupOf(d)]) shown|=1u<<d;
+    unsigned shown=0; unsigned long long hold=0;
+    for(const auto& o:app.overlays) if(o.kind==AdjustmentsKind && LayoutRunning(o.layout) && (o.place.enabled || o.place.spout)) {
+        hold=std::max(hold,o.adjust.tenths*100ull);
+        for(int d=0;d<DialCount;++d) if(o.adjust.groups[GroupOf(d)]) shown|=1u<<d;
+    }
     UpdateDialRanges();
-    const int before=CurrentAdjustment(a).dial;
-    app.dialWatcher.Update(app.frame,app.now,a.tenths*100ull,shown);
-    const auto now=CurrentAdjustment(a);
-    if(now.dial!=before || app.dialWatcher.ChangedAt()==app.now)
-        for(auto& o:app.overlays) if(o.kind==AdjustmentsKind || o.kind==a.replace) o.due=0;
+    const int before=app.dialWatcher.Shown();
+    app.dialWatcher.Update(app.frame,app.now,hold,shown);
+    if(app.dialWatcher.Shown()!=before || app.dialWatcher.ChangedAt()==app.now)
+        for(auto& o:app.overlays) o.due=0;
+}
+// Export the existing image. OBS's default Spout input uses straight alpha;
+// the per-pixel Windows buffers contain premultiplied alpha.
+std::string SpoutSenderName(const Overlay& o) {
+    const auto layout=std::find_if(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==o.layout;});
+    const std::wstring wide=L"RaceMate - "+(layout!=app.layouts.end()?layout->name:L"Layout "+std::to_wstring(o.layout))+L" - "+Name(o);
+    const int bytes=WideCharToMultiByte(CP_UTF8,0,wide.data(),static_cast<int>(wide.size()),nullptr,0,nullptr,nullptr);
+    std::string name(static_cast<size_t>(bytes),'\0');
+    WideCharToMultiByte(CP_UTF8,0,wide.data(),static_cast<int>(wide.size()),name.data(),bytes,nullptr,nullptr);
+    // Spout's sender registry permits 255 UTF-8 bytes, excluding the terminator.
+    if(name.size()>255) {
+        size_t end=255; while(end && (static_cast<unsigned char>(name[end])&0xc0)==0x80) --end;
+        name.resize(end);
+    }
+    return name;
+}
+void PublishSpout(Overlay& o) {
+    if(!o.dibPixels || o.width<=0 || o.height<=0) return;
+    const auto name=SpoutSenderName(o);
+    if(o.spout && o.spoutName!=name) o.spout.reset();
+    rm::SpoutSettings settings;
+    settings.perPixel=PerPixel(o); settings.premultiplied=o.place.spoutPremultiplied; settings.opacity=EffectiveOpacity(o);
+    settings.radius=o.place.rounded?MulDiv(CornerRadius,o.dpi*o.place.scale,9600):0;
+    settings.panels=o.kind==SideWarningKind?2:1;
+    settings.visiblePanels=o.kind==SideWarningKind && !app.edit?static_cast<unsigned>(app.side.left)+2u*app.side.right:3u;
+    if(o.spout && o.spoutRevision==o.renderRevision && settings==o.spoutLastSettings && !o.spoutFull && o.spoutDirty.empty()) return;
+    ProfileScope profile(true,[&]{ return ProfileName(o,"Spout image preparation and queue"); });
+    const bool fresh=!o.spout;
+    if(fresh) { o.spoutName=name; o.spout=std::make_shared<rm::SpoutChannel>(name); }
+    GdiFlush();
+    o.spoutSequence=o.spout->SubmitRegions(o.width,o.height,o.dibPixels,o.spoutDirty,settings,o.spoutFull || fresh);
+    o.spoutFull=false; o.spoutDirty.clear(); o.spoutLastSettings=settings; o.spoutRevision=o.renderRevision;
 }
 // Your own car on track, live: the Radar's condition, near cars or not.
 bool Driving() { const auto& f=app.frame; return f.connected && f.onTrack && !f.replay && f.player>=0 && f.player<MaxCars && ReferenceCar(f)==f.player; }
+void PreviewData(double time);
+void RenderEditorPreview(Overlay& o,bool force) {
+    const int rate=RefreshRate(o);
+    if(!force && o.dc && !OverlayDue(o,rate)) return;
+    o.due=app.now+1000/rate;
+    // Only this draw sees sample data. Restore the live model before touching
+    // another overlay or its OBS source; no telemetry/analysis state is advanced.
+    auto frame=app.frame; auto session=app.session; auto weather=app.weatherHistory;
+    const bool preview=app.preview; const auto side=app.side;
+    const double pitStripLeft=app.pitStripLeft;
+    const int mapLayout=o.map.layout;
+    app.preview=true; app.weatherHistory.Reset(); PreviewData(app.now/1000.0); UpdateSide();
+    if(o.kind==TrackMapKind && !trackMap.ready) o.map.layout=CircleLayout;
+    if(o.kind==RadarKind) UpdateRadar(o);
+    if(o.kind==TrafficKind) UpdateTraffic(o);
+    InvalidateModel();
+    const int dpi=GetDpiForWindow(o.window);
+    RECT client{}; GetClientRect(o.window,&client);
+    if(client.bottom!=MulDiv(BaseHeight(o),dpi*o.place.scale,9600) || client.right!=MulDiv(OverlayWidth(o),dpi*o.place.scale,9600)) Fit(o);
+    RefreshOverlay(o);
+    o.map.layout=mapLayout;
+    app.frame=std::move(frame); app.session=std::move(session); app.weatherHistory=std::move(weather);
+    app.preview=preview; app.side=side; app.pitStripLeft=pitStripLeft;
+    InvalidateModel();
+}
 // Ticks refresh each overlay at its own rate; everything else (settings, hide, diagnostics) forces a refresh.
 void UpdateOverlays(bool force=true) {
     if(!app.overlayClass) return;
+    for(auto& o:app.overlays) {
+        if(!LayoutRunning(o.layout) && !LayoutPreviewing(o.layout) && !Editing(o)) { if(o.window || o.spout) DestroyOverlay(o); o.editorPreview=false; }
+        else if(!o.window) CreateOverlayWindow(o);
+    }
     UpdateTrackMap();
     InvalidateModel();
     const bool pitVisible=app.pitVisible=app.pitVisibility.Update(app.session,app.frame);
@@ -2817,9 +3086,10 @@ void UpdateOverlays(bool force=true) {
     UpdateAdjustments();
     UpdateSide();
     for(auto& o:app.overlays) {
-        bool visible=o.place.enabled && !app.hidden && (!app.layoutIdle || app.preview || app.edit) && (o.kind!=WeatherKind || std::any_of(o.weather.display.begin(),o.weather.display.begin()+WeatherPanelCount,[](bool value){return value;})) && (app.preview || (app.frame.connected && (o.kind!=PitLimiterKind || pitVisible)));
+        if(!o.window) continue;
+        bool visible=LayoutRunning(o.layout) && (o.place.enabled || o.place.spout) && !app.hidden && (o.kind!=WeatherKind || std::any_of(o.weather.display.begin(),o.weather.display.begin()+WeatherPanelCount,[](bool value){return value;})) && (app.preview || (app.frame.connected && (o.kind!=PitLimiterKind || pitVisible)));
         auto style=GetWindowLongPtrW(o.window,GWL_EXSTYLE);
-        const auto desired=app.edit?(style&~WS_EX_TRANSPARENT):(style|WS_EX_TRANSPARENT);
+        const auto desired=(app.edit || Editing(o))?(style&~WS_EX_TRANSPARENT):(style|WS_EX_TRANSPARENT);
         if(style!=desired) SetWindowLongPtrW(o.window,GWL_EXSTYLE,desired);
         if(o.mirror) {
             const auto mirror=GetWindowLongPtrW(o.mirror,GWL_EXSTYLE), wanted=app.edit?(mirror&~WS_EX_TRANSPARENT):(mirror|WS_EX_TRANSPARENT);
@@ -2830,7 +3100,7 @@ void UpdateOverlays(bool force=true) {
         if(o.kind==TrafficKind) {
             // While you drive with a car within the gap, and half a second after, so it doesn't flicker at its edge.
             if(visible) UpdateTraffic(o);
-            shown=visible=visible && (app.preview || app.edit || (Driving() && app.now-app.trafficNear<500));
+            shown=visible=visible && (app.preview || app.edit || (Driving() && app.now-o.trafficNear<500));
         }
         if(o.kind==AdjustmentsKind) {
             // Its own window: for a moment after you change a dial; never while it shows in place of other overlays.
@@ -2839,14 +3109,26 @@ void UpdateOverlays(bool force=true) {
         if(o.kind==RadarKind) {
             // While you drive: with a car in range and 2 s after the last one left it, or always if so chosen.
             if(visible) UpdateRadar(o);
-            shown=visible=visible && (app.preview || app.edit || (Driving() && (o.radar.always || app.now-app.radarNear<2000)));
+            shown=visible=visible && (app.preview || app.edit || (Driving() && (o.radar.always || app.now-o.radarNear<2000)));
         }
         if(o.kind==SideWarningKind) {
             shown=visible && (app.edit || app.side.left); mirrored=visible && (app.edit || app.side.right); visible=shown || mirrored;
+            if(!o.place.enabled) mirrored=false;
             if(mirrored!=static_cast<bool>(IsWindowVisible(o.mirror))) { ShowWindow(o.mirror,mirrored?SW_SHOWNOACTIVATE:SW_HIDE); if(mirrored) o.due=0; }
         }
+        const bool layoutPreview=LayoutPreviewing(o.layout) && !app.preview && !app.hidden && (o.place.enabled || o.place.spout);
+        const bool editorPreview=(Editing(o) && !visible) || layoutPreview;
+        if(editorPreview!=o.editorPreview) { o.editorPreview=editorPreview; o.due=0; if(!editorPreview) Fit(o); }
+        if(editorPreview) {
+            o.spout.reset();
+            if(!IsWindowVisible(o.window)) ShowWindow(o.window,SW_SHOWNOACTIVATE);
+            if(o.mirror) ShowWindow(o.mirror,SW_SHOWNOACTIVATE);
+            RenderEditorPreview(o,force); UpdateFrame(o); continue;
+        }
+        if(!o.place.enabled && !Editing(o)) shown=false;
         if(shown && !IsWindowVisible(o.window)) { ShowWindow(o.window,SW_SHOWNOACTIVATE); o.due=0; }
         if(!shown && IsWindowVisible(o.window)) ShowWindow(o.window,SW_HIDE);
+        if(!visible || !o.place.spout) o.spout.reset();
         UpdateFrame(o);
         if(visible) {
             const int dpi=GetDpiForWindow(o.window);
@@ -2856,6 +3138,7 @@ void UpdateOverlays(bool force=true) {
             else if(!OverlayDue(o,rate)) continue;
             if(client.bottom!=MulDiv(BaseHeight(o),dpi*o.place.scale,9600) || client.right!=MulDiv(OverlayWidth(o),dpi*o.place.scale,9600)) { Fit(o); InvalidateModel(); }
             RefreshOverlay(o);
+            if(o.place.spout) PublishSpout(o);
             if(app.refreshHook) app.refreshHook(o);
         }
     }
@@ -2863,12 +3146,13 @@ void UpdateOverlays(bool force=true) {
 // The preview's pace: the fastest enabled overlay, at least 10 Hz. Live, iRacing's frames set it.
 int ReadRate() {
     int rate=10;
-    for(const auto& o:app.overlays) if(o.place.enabled) rate=std::max(rate,RefreshRate(o));
+    for(const auto& o:app.overlays) if(Editing(o) || ((LayoutRunning(o.layout) || LayoutPreviewing(o.layout)) && (o.place.enabled || o.place.spout))) rate=std::max(rate,RefreshRate(o));
     return rate;
 }
 void Timer() {
     // Live, every iRacing frame ticks; the timer only keeps the window current when frames pause.
-    const int ms=app.preview?1000/ReadRate():(app.frame.connected?250:1000);
+    const bool editorPreview=std::any_of(app.overlays.begin(),app.overlays.end(),[](const Overlay& o){return o.editorPreview;});
+    const int ms=(app.preview || editorPreview)?1000/ReadRate():(app.frame.connected?250:1000);
     if(app.timerMs!=ms) { KillTimer(app.main,1); SetTimer(app.main,1,ms,nullptr); app.timerMs=ms; }
 }
 // Sample weather for the preview and diagnostics: light rain, the track cooling over the last 20 minutes.
@@ -2944,7 +3228,7 @@ void Tick() {
     {
         ProfileScope total("tick (everything below)");
         app.now=GetTickCount64(); ++app.ticks;
-        if(app.preview) PreviewData(app.diagnostics?0:app.now/1000.0);
+        if(app.preview) { PreviewData(app.diagnostics?0:app.now/1000.0); AutoLayout(); }
         else {
             Frame frame; Session session; bool sessionChanged=false;
             bool fresh=false;
@@ -2984,11 +3268,6 @@ void WriteProfile() {
     profiler.sessionStart=app.pump.ParseTicks(); profiler.parsesStart=app.pump.Parses();
 }
 void ShowSettings() { ShowWindow(app.main,IsIconic(app.main)?SW_RESTORE:SW_SHOW); SetForegroundWindow(app.main); UpdateOverlays(); }
-void TogglePreview() { app.preview=!app.preview; app.pitLane.Reset(); app.refuel.Reset(); app.frame={}; app.session={}; app.weatherHistory.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.events.Reset();
-    // The preview reads nothing; afterwards the thread starts afresh and sends the session again.
-    if(app.preview) app.pump.Stop(); else app.pump.Start(app.main,TelemetryMessage);
-    Tick(); RefreshPage();
-}
 void ToggleEdit() { app.edit=!app.edit; Tick(); UpdateOverlays(); RefreshPage(); }
 void ToggleHidden() { app.hidden=!app.hidden; UpdateOverlays(); RefreshPage(); }
 LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
@@ -3028,7 +3307,7 @@ LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     }
     case WM_PRINTCLIENT: InvalidateModel(); RefreshOverlay(*o); if(o->dc) BitBlt(reinterpret_cast<HDC>(wp),0,0,o->width,o->height,o->dc,0,0,SRCCOPY); return 0;
     case WM_ERASEBKGND: return 1;
-    case WM_NCHITTEST: return app.edit?HTCAPTION:HTTRANSPARENT;
+    case WM_NCHITTEST: return (app.edit || Editing(*o))?HTCAPTION:HTTRANSPARENT;
     case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
     case WM_ENTERSIZEMOVE: o->dragging=true; break;
     case WM_EXITSIZEMOVE: o->dragging=false; CaptureOverlayCorner(*o); Save(); return 0;
@@ -3043,7 +3322,7 @@ LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     case WM_WINDOWPOSCHANGED: if(o->mirror && !o->mirrorDragging) PlaceMirror(*o); UpdateFrame(*o); break; // The mirror and the rings follow while it is dragged or resized.
     case WM_DPICHANGED: Fit(*o); return 0;
     case WM_DISPLAYCHANGE: Fit(*o,true); return 0;
-    case WM_DESTROY: o->Free(); for(HWND window:{o->frame,o->mirror,o->mirrorFrame}) if(window) DestroyWindow(window); o->frame=o->mirror=o->mirrorFrame=nullptr; return 0;
+    case WM_DESTROY: o->spout.reset(); o->Free(); for(HWND window:{o->frame,o->mirror,o->mirrorFrame}) if(window) DestroyWindow(window); o->frame=o->mirror=o->mirrorFrame=nullptr; return 0;
     }
     return DefWindowProcW(w,m,wp,lp);
 }
@@ -3064,11 +3343,10 @@ void TrayMenu() {
     AppendMenuW(menu,MF_STRING,1,L"Open settings"); SetMenuDefaultItem(menu,1,FALSE); // Bold, like TPMate.
     AppendMenuW(menu,MF_STRING|(app.edit?MF_CHECKED:0),2,L"Move overlays");
     AppendMenuW(menu,MF_STRING,3,app.hidden?L"Show overlays":L"Hide overlays");
-    AppendMenuW(menu,MF_STRING|(app.preview?MF_CHECKED:0),4,L"Preview");
     AppendMenuW(menu,MF_STRING,6,L"Race Control");
     if(app.layouts.size()>1) {
         HMENU layouts=CreatePopupMenu();
-        for(size_t i=0;i<app.layouts.size();++i) AppendMenuW(layouts,MF_STRING|(app.layouts[i].id==app.layout && !app.layoutIdle?MF_CHECKED:0),100+i,app.layouts[i].name.c_str());
+        for(size_t i=0;i<app.layouts.size();++i) AppendMenuW(layouts,MF_STRING|(app.layouts[i].id==app.layout?MF_CHECKED:0),100+i,app.layouts[i].name.c_str());
         AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(layouts),L"Layout");
     }
     AppendMenuW(menu,MF_SEPARATOR,0,nullptr); AppendMenuW(menu,MF_STRING,5,L"Exit");
@@ -3076,7 +3354,7 @@ void TrayMenu() {
     int choice=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,p.x,p.y,0,app.main,nullptr);
     DestroyMenu(menu); PostMessageW(app.main,WM_NULL,0,0);
     if(choice>=100 && choice<100+static_cast<int>(app.layouts.size())) SwitchLayout(app.layouts[choice-100].id);
-    if(choice==6) OpenRaceControl(); if(choice==1) ShowSettings(); if(choice==2) ToggleEdit(); if(choice==3) ToggleHidden(); if(choice==4) TogglePreview(); if(choice==5) DestroyWindow(app.main);
+    if(choice==6) OpenRaceControl(); if(choice==1) ShowSettings(); if(choice==2) ToggleEdit(); if(choice==3) ToggleHidden(); if(choice==5) DestroyWindow(app.main);
 }
 LRESULT CALLBACK MainProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     static const UINT taskbarCreated=RegisterWindowMessageW(L"TaskbarCreated");
@@ -3152,7 +3430,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
 #else
     constexpr bool diagnostics=false;
 #endif
-    const bool benchmark=wcsstr(args,L"--benchmark")!=nullptr;
+    const bool benchmark=wcsstr(args,L"--benchmark")!=nullptr || wcsstr(args,L"--verify-alpha")!=nullptr;
     app.instance=instance; app.diagnostics=diagnostics || benchmark;
     profiler.on=wcsstr(args,L"--profile")!=nullptr; profiler.start=GetTickCount64(); profiler.cpuStart=ProcessCpuMicroseconds();
     HANDLE mutex=nullptr;
@@ -3171,6 +3449,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
     if(app.diagnostics) {
         wchar_t current[32768]{}; GetCurrentDirectoryW(32768,current);
         app.config=std::wstring(current)+L"\\build\\qa\\settings.ini"; CreateDirectoryW(L"build\\qa",nullptr);
+        if(wcsstr(args,L"--benchmark-spout")) app.config=std::wstring(current)+L"\\build\\qa\\spout-benchmark-defaults.ini";
+        if(wcsstr(args,L"--benchmark-renderers")) { app.config=std::wstring(current)+L"\\build\\qa\\renderer-benchmark.ini"; DeleteFileW(app.config.c_str()); }
         // Every run starts from the defaults: no check may depend on what an earlier run left behind.
         if(diagnostics) DeleteFileW(app.config.c_str());
     }
@@ -3200,8 +3480,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
     cls.lpfnWndProc=FrameProc; cls.lpszClassName=L"RaceMate.Frame"; RegisterClassExW(&cls);
     cls.lpfnWndProc=MirrorProc; cls.lpszClassName=L"RaceMate.Mirror"; RegisterClassExW(&cls);
     app.overlayClass=true;
-    for(auto& o:app.overlays) CreateOverlayWindow(o);
+    for(auto& o:app.overlays) if(LayoutRunning(o.layout)) CreateOverlayWindow(o);
 #ifdef RACEMATE_DIAGNOSTICS
+    if(wcsstr(args,L"--verify-alpha")) return RunAlphaRegression();
+    if(wcsstr(args,L"--benchmark-renderers")) return RunRendererBenchmark();
+    if(wcsstr(args,L"--benchmark-spout")) return RunSpoutBenchmark(wcsstr(args,L"--benchmark-spout-on")!=nullptr);
     if(diagnostics) return RunDiagnostics();
     if(wcsstr(args,L"--benchmark-tick")) return RunTickBenchmark();
     if(wcsstr(args,L"--benchmark-live")) return RunLiveBenchmark();

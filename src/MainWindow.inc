@@ -9,6 +9,7 @@ struct MainUi {
     HFONT text=nullptr, heading=nullptr;
     HWND title=nullptr, hint=nullptr, back=nullptr;
     Page page=Page::Overlays; Overlay* overlay=nullptr; // The overlay whose own page is open.
+    Overlay* expandedOverlay=nullptr; // Inline placement/name editor on the Overlays page.
 } ui;
 HWND CreateOverlaysPage(HWND parent);
 HWND CreateGeneralPage(HWND parent);
@@ -34,22 +35,23 @@ void UpdateStatus() {
     using Tone=StatusPanel::Tone;
     Tone tone=Tone::Neutral; std::wstring title,detail,button;
     if(app.edit) { tone=Tone::Busy; title=L"Moving overlays"; detail=L"Drag them where you want them. Other programs don't get mouse clicks on them meanwhile."; button=L"Done"; }
-    else if(app.preview) { tone=Tone::Busy; title=L"Preview with sample data"; detail=L"No live telemetry is read while the preview runs."; button=L"Stop preview"; }
+    else if(app.preview || (!app.frame.connected && !app.previewLayouts.empty())) { tone=Tone::Busy; title=L"Layout preview"; detail=L"Sample previews stay on screen. Live telemetry and OBS output are unchanged."; button=L"Layouts"; }
     else if(app.frame.connected) {
         tone=Tone::Active; title=L"Connected to iRacing";
         detail=Wide(app.session.track); if(!app.session.type.empty()) detail+=L"  \u00B7  "+Wide(app.session.type);
         detail+=L"  \u00B7  "+std::to_wstring(app.frame.tickRate>0?app.frame.tickRate:60)+L" Hz"; button=L"Move overlays";
     }
-    else { title=L"Waiting for iRacing"; detail=L"RaceMate connects as soon as a session is loaded."; button=L"Preview"; }
+    else { title=L"Waiting for iRacing"; detail=L"RaceMate connects as soon as a session is loaded."; button=L"Layouts"; }
     std::wstring problems;
     if(!app.trayAvailable && !app.diagnostics) problems=L"No tray icon: closing this window exits RaceMate";
     if(!app.hotkeyError.empty()) problems+=(problems.empty()?L"":L"  \u00B7  ")+std::wstring(L"Shortcut in use by another program: ")+app.hotkeyError;
     if(!problems.empty()) { if(tone==Tone::Neutral) tone=Tone::Busy; detail=problems; }
     ui.status.SetState(tone,title,detail,button,true);
 }
+void ShowPage(Page page,Overlay* overlay);
 void StatusButton() {
     if(app.edit || (!app.preview && app.frame.connected)) ToggleEdit();
-    else TogglePreview();
+    else ShowPage(Page::Overlays,nullptr);
 }
 int Dip(int value) { return MulDiv(value,GetDpiForWindow(app.main),96); }
 void CreateUiFonts() {
@@ -77,6 +79,7 @@ void LayoutMain() {
     place(ui.host.Handle(),left,148,content,height-148-20);
 }
 void ShowPage(Page page,Overlay* overlay=nullptr) {
+    ui.expandedOverlay=nullptr;
     ui.page=page; if(overlay) ui.overlay=overlay;
     const wchar_t* hints[]={L"Choose how many cars it shows, its columns and its header and footer.",
         L"Class leaders and the cars around you: rows, columns, header and footer.",
@@ -104,8 +107,11 @@ void ShowPage(Page page,Overlay* overlay=nullptr) {
     ui.host.SetContent(page==Page::Overlays?CreateOverlaysPage(host):page==Page::RaceControl?CreateRaceControlPage(host):(page==Page::Settings?CreateGeneralPage(host):(IsTable(ui.overlay->kind)?CreateTablePage(host,*ui.overlay):ui.overlay->kind==TrackMapKind?CreateTrackMapPage(host,*ui.overlay):CreateElementsPage(host,*ui.overlay))));
     LayoutMain();
 }
-void OpenOverlay(Overlay& o) { ShowPage(Page::Overlay,&o); }
-bool Editing(const Overlay& o) { return ui.page==Page::Overlay && ui.overlay==&o && IsWindowVisible(app.main) && !IsIconic(app.main); }
+void OpenOverlay(Overlay& o) { if(app.layout!=o.layout) { Save(); app.layout=o.layout; } ShowPage(Page::Overlay,&o); }
+bool Editing(const Overlay& o) {
+    return IsWindowVisible(app.main) && !IsIconic(app.main) &&
+        ((ui.page==Page::Overlay && ui.overlay==&o) || (ui.page==Page::Overlays && ui.expandedOverlay==&o));
+}
 void ShowRaceControlPage() { ShowSettings(); ShowPage(Page::RaceControl); }
 void CreateMainUi() {
     CreateUiFonts();
@@ -145,55 +151,81 @@ void RememberWindowPlacement() {
     app.windowRect=placement.rcNormalPosition; app.windowMaximized=placement.showCmd==SW_SHOWMAXIMIZED || (placement.flags&WPF_RESTORETOMAXIMIZED);
 }
 // Setting changes shared by the pages and the diagnostics.
-void SettingChanged() { Save(); UpdateOverlays(); }
+void SettingChanged() { Save(); AutoLayout(); UpdateOverlays(); }
 // A further instance of a kind with default settings.
 Overlay& NewInstance(int kind) {
     auto& o=AddInstance(kind,InstanceCount(kind)+1);
     ReadInstance(o); // A removed instance's section is gone, so this gives the defaults.
     o.place.enabled=true;
-    CreateOverlayWindow(o); SettingChanged(); return o;
+    if(LayoutRunning(o.layout)) CreateOverlayWindow(o); SettingChanged(); return o;
 }
 // Makes another layout the active one: the current one stays saved as it is, the other's overlays take
 // their places and settings. Instances the other layout lacks go, ones it has more of are created.
 void SwitchLayout(int id) {
-    if(app.layoutIdle && id==app.layout) { app.layoutIdle=false; UpdateOverlays(); RefreshPage(); return; }
-    app.layoutIdle=false;
     if(id==app.layout || std::none_of(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==id;})) return;
     Save(); app.layout=id;
-    LoadOverlays();
-    for(auto& o:app.overlays) if(o.window) { Fit(o); o.due=0; }
     SettingChanged();
     // An open overlay page is rebuilt for the new settings, or closed when its overlay is gone.
     if(ui.page==Page::Overlay) {
-        const bool kept=std::any_of(app.overlays.begin(),app.overlays.end(),[](const Overlay& o){return &o==ui.overlay;});
+        const bool kept=std::any_of(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return &o==ui.overlay && o.layout==id;});
         if(kept) ShowPage(Page::Overlay,ui.overlay); else ShowPage(Page::Overlays);
     } else RefreshPage();
 }
 // Every section of a layout's overlays, and what Save() remembers of them.
 void DeleteLayoutSections(int id) {
-    const auto prefix=LayoutPrefix(id); if(prefix.empty()) return;
+    const auto prefix=LayoutPrefix(id);
     std::vector<wchar_t> buffer(65536); GetPrivateProfileSectionNamesW(buffer.data(),static_cast<DWORD>(buffer.size()),app.config.c_str());
     std::vector<std::wstring> names;
-    for(const wchar_t* name=buffer.data();*name;name+=wcslen(name)+1) if(std::wstring_view(name).starts_with(prefix)) names.emplace_back(name);
+    for(const wchar_t* name=buffer.data();*name;name+=wcslen(name)+1) {
+        const std::wstring_view section(name);
+        bool owned=!prefix.empty() && section.starts_with(prefix);
+        if(id==1) for(const auto* base:Sections) {
+            const std::wstring_view kind(base);
+            if(section==kind) owned=true;
+            else if(section.starts_with(std::wstring(kind)+L" ")) {
+                const auto number=section.substr(kind.size()+1);
+                if(!number.empty() && std::all_of(number.begin(),number.end(),[](wchar_t c){return c>=L'0' && c<=L'9';})) owned=true;
+            }
+        }
+        if(owned) names.emplace_back(name);
+    }
     for(const auto& name:names) DeleteSection(name);
 }
 // A new layout at the end of the list: a copy of the active one, or default overlays.
 void AddLayout(bool copy) {
+    Save();
     int id=1; for(const auto& l:app.layouts) id=std::max(id,l.id+1);
     DeleteLayoutSections(id); // Nothing of an earlier layout with this number may come back.
+    if(copy) for(const auto& o:app.overlays) if(o.layout==app.layout) {
+        std::vector<wchar_t> contents(32768);
+        GetPrivateProfileSectionW(Section(o).c_str(),contents.data(),static_cast<DWORD>(contents.size()),app.config.c_str());
+        const auto target=LayoutPrefix(id)+Numbered(Sections[o.kind],o.number);
+        WritePrivateProfileSectionW(target.c_str(),contents.data(),app.config.c_str());
+    }
     app.layouts.push_back({id,L"Layout "+std::to_wstring(app.layouts.size()+1),AlwaysCondition});
-    if(copy) { Save(); app.layout=id; SettingChanged(); RefreshPage(); } // Save() writes the overlays as they are under the new names.
-    else SwitchLayout(id);
+    LoadOverlays(); SwitchLayout(id);
 }
-// Removes a layout with all its overlays' settings; the first layout stays.
+// Every layout can be removed, including the original and the last remaining one.
 void RemoveLayout(int id) {
-    if(id==1) return;
     const auto at=std::find_if(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==id;}); if(at==app.layouts.end()) return;
-    if(app.layout==id) SwitchLayout(1);
+    if(std::any_of(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return &o==ui.overlay && o.layout==id;})) {
+        if(ui.page==Page::Overlay) ShowPage(Page::Overlays);
+        ui.overlay=nullptr;
+    }
+    if(app.layout==id) {
+        const auto next=std::find_if(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id!=id;});
+        app.layout=next==app.layouts.end()?0:next->id;
+    }
+    for(auto it=app.overlays.begin();it!=app.overlays.end();) {
+        if(it->layout==id) { DestroyOverlay(*it); it=app.overlays.erase(it); } else ++it;
+    }
     DeleteLayoutSections(id);
     DeleteSection(L"Layout "+std::to_wstring(id));
     app.layouts.erase(std::find_if(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==id;}));
-    Save();
+    std::erase(app.activeLayouts,id);
+    std::erase(app.previewLayouts,id);
+    std::erase(app.openLayoutGroups,id);
+    Save(); UpdateOverlays();
 }
 bool LayoutApplies(int condition,int situation) {
     switch(condition) {
@@ -203,20 +235,24 @@ bool LayoutApplies(int condition,int situation) {
     default: return true;
     }
 }
-// When the situation changes and holds for a second, the first layout in the list whose condition applies
-// becomes active; with none, the overlays hide (a single In car layout shows only while driving).
-// A layout chosen by hand stays until the situation changes again.
+// Activate all matching layouts. Selecting a layout in the editor never overrides conditions.
 void AutoLayout() {
-    if(app.preview || !app.frame.connected) { app.pendingSituation=-1; return; }
-    const int situation=CurrentSituation(app.frame);
-    if(situation!=app.pendingSituation) { app.pendingSituation=situation; app.pendingSince=app.now; return; }
-    if(situation==app.layoutSituation || app.now-app.pendingSince<1000) return;
-    app.layoutSituation=situation;
-    for(const auto& l:app.layouts) if(LayoutApplies(l.condition,situation)) { SwitchLayout(l.id); return; }
-    if(!app.layoutIdle) { app.layoutIdle=true; UpdateOverlays(); RefreshPage(); }
+    const int situation=app.frame.connected?CurrentSituation(app.frame):-1;
+    std::vector<int> matches;
+    for(const auto& l:app.layouts) if(LayoutApplies(l.condition,situation)) matches.push_back(l.id);
+    const bool live=app.frame.connected && !app.preview;
+    if(matches==app.activeLayouts && live==app.layoutsLive) return;
+    app.layoutsLive=live;
+    app.activeLayouts=std::move(matches);
+    UpdateOverlays(); RefreshPage();
 }
 // After a condition or the order changed: the next tick picks the layout for the current situation again.
-void ReconsiderLayout() { app.layoutSituation=-1; }
+void ReconsiderLayout() { AutoLayout(); }
+void ToggleLayoutPreview(int id) {
+    if(LayoutPreviewRequested(id)) std::erase(app.previewLayouts,id);
+    else if(!LayoutLive(id)) app.previewLayouts.push_back(id);
+    UpdateOverlays(); UpdateStatus(); Timer(); RefreshPage();
+}
 // Moves an ID one place up (-1) or down (+1); false at either end.
 bool MoveInOrder(std::vector<int>& order,int id,int step) {
     const auto at=std::find(order.begin(),order.end(),id); if(at==order.end()) return false;
@@ -271,6 +307,13 @@ void SetColumnVisible(Overlay& o,int id,bool on) {
 }
 // corner: bit 0 right, bit 1 bottom. The overlay keeps its place; later growth starts from that corner.
 void SetOverlayCorner(Overlay& o,int corner) {
+    if(!o.window) {
+        const int dpi=GetDpiForSystem();
+        const int x=o.place.x-(o.place.growLeft?MulDiv(OverlayWidth(o),dpi*o.place.scale,9600):0);
+        const int y=o.place.y-(o.place.growUp?MulDiv(BaseHeight(o),dpi*o.place.scale,9600):0);
+        o.place.growLeft=(corner&1)!=0; o.place.growUp=(corner&2)!=0;
+        SetOverlayOrigin(o,x,y); SettingChanged(); return;
+    }
     o.place.growLeft=(corner&1)!=0; o.place.growUp=(corner&2)!=0;
     CaptureOverlayCorner(o); Fit(o); SettingChanged();
 }
@@ -288,6 +331,6 @@ void SetShowTitleBar(bool on) {
     Save(); UpdateOverlays();
 }
 void ResetPositions() {
-    for(auto& o:app.overlays) { const int offset=(o.number-1)*30; SetOverlayOrigin(o,DefaultPositions[o.kind].x+offset,DefaultPositions[o.kind].y+offset); Fit(o,true); }
+    for(auto& o:app.overlays) if(o.layout==app.layout) { const int offset=(o.number-1)*30; SetOverlayOrigin(o,DefaultPositions[o.kind].x+offset,DefaultPositions[o.kind].y+offset); Fit(o,true); }
     Save();
 }

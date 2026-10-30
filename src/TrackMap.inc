@@ -110,7 +110,7 @@ void UpdateNorth() {
 // A wind arrow while you watch another car live takes its heading from the official map, when its north is known.
 bool WindArrowNeedsMap() {
     return !app.preview && MapNorthTurn()>=0 && std::any_of(app.overlays.begin(),app.overlays.end(),[](const Overlay& o){
-        const auto& d=o.weather.display; return o.kind==WeatherKind && o.place.enabled && d[WindModule] && d[WindRose] && d[WindRelative]; });
+        const auto& d=o.weather.display; return o.kind==WeatherKind && LayoutRunning(o.layout) && (o.place.enabled || o.place.spout) && d[WindModule] && d[WindRose] && d[WindRelative]; });
 }
 // The reference car's compass heading from the official map: its direction of travel there, turned to north.
 double MapHeading() {
@@ -124,7 +124,7 @@ double MapHeading() {
 }
 void UpdateTrackMap() {
     // Only the official map needs the SVGs; circle and line work without them.
-    const bool enabled=WindArrowNeedsMap() || std::any_of(app.overlays.begin(),app.overlays.end(),[](const Overlay& o){return o.kind==TrackMapKind && o.place.enabled && o.map.layout==MapLayout;});
+    const bool enabled=WindArrowNeedsMap() || std::any_of(app.overlays.begin(),app.overlays.end(),[](const Overlay& o){return o.kind==TrackMapKind && LayoutRunning(o.layout) && (o.place.enabled || o.place.spout) && o.map.layout==MapLayout;});
     if(!enabled || (!app.preview && !app.frame.connected)) {
         if(trackMap.task.Running() || trackMap.ready || !trackMap.identity.empty()) {
             trackMap.task.Cancel(); trackMap.identity.clear(); trackMap.geometry={}; trackMap.ready=false; ++trackMap.revision;
@@ -133,7 +133,7 @@ void UpdateTrackMap() {
     }
     const int id=app.preview?353:app.session.trackId;
     const std::string name=app.preview?"limerock 2019 gp":app.session.trackName;
-    const bool labels=std::any_of(app.overlays.begin(),app.overlays.end(),[](const Overlay& o){return o.kind==TrackMapKind && o.place.enabled && o.map.layout==MapLayout && (o.map.cornerNumbers || o.map.cornerNames);});
+    const bool labels=std::any_of(app.overlays.begin(),app.overlays.end(),[](const Overlay& o){return o.kind==TrackMapKind && LayoutRunning(o.layout) && (o.place.enabled || o.place.spout) && o.map.layout==MapLayout && (o.map.cornerNumbers || o.map.cornerNames);});
     const std::string layout=std::to_string(id)+":"+trackmap::NormalizeName(name)+(app.preview?":preview":"");
     const std::string identity=layout+(labels?":labels":"");
     if(trackMap.identity!=identity) {
@@ -325,8 +325,9 @@ template<class Road,class Blocked> void DrawStartFinish(Gdiplus::Graphics& graph
 void PaintMap(Overlay& o,const DrawCommand& c,HRGN dirty) {
     if(o.map.layout==MapLayout && !trackMap.ready) return;
     const int width=c.r.right-c.r.left,height=c.r.bottom-c.r.top;
-    const int style=MapStyle(o.map);
+    const int style=MapStyle(o.map)|(o.foregroundMatte?0x40000000:0);
     if(!o.mapBitmap || o.mapRevision!=trackMap.revision || o.mapWidth!=width || o.mapHeight!=height || o.mapStyle!=style) {
+        ProfileScope creation(true,[&]{ return ProfileName(o,"map cache build"); });
         o.sectorPaths.clear(); o.sectorColors.clear(); o.sectorMask.clear();
         if(o.sectorBitmap) DeleteObject(o.sectorBitmap);
         o.sectorBitmap=nullptr; o.sectorPixels=nullptr;
@@ -340,7 +341,7 @@ void PaintMap(Overlay& o,const DrawCommand& c,HRGN dirty) {
             // Drawn with alpha: without background the empty map is transparent and every edge keeps its coverage.
             Gdiplus::Bitmap canvas(width,height,width*4,PixelFormat32bppPARGB,static_cast<BYTE*>(bits));
             Gdiplus::Graphics graphics(&canvas); graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias); graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
-            graphics.Clear(MapOnly(o)?Gdiplus::Color(0,0,0,0):Gdiplus::Color(255,12,15,19));
+            graphics.Clear((MapOnly(o) || o.foregroundMatte)?Gdiplus::Color(0,0,0,0):Gdiplus::Color(255,12,15,19));
             if(o.map.layout!=MapLayout) {
                 // The circuit as a ring or a bar in the map's color; start/finish as a white mark at 0 %.
                 const auto shape=MapShape(o,width,height); const float stroke=static_cast<float>(std::max(2,MulDiv(6,o.dpi*o.place.scale,9600)));
@@ -396,7 +397,8 @@ void PaintMap(Overlay& o,const DrawCommand& c,HRGN dirty) {
         return;
     }
     HDC source=CreateCompatibleDC(o.dc); const auto old=SelectObject(source,mapBitmap);
-    BitBlt(o.dc,c.r.left,c.r.top,width,height,source,0,0,SRCCOPY);
+    if(o.foregroundMatte) AlphaBlend(o.dc,c.r.left,c.r.top,width,height,source,0,0,width,height,BLENDFUNCTION{AC_SRC_OVER,0,255,AC_SRC_ALPHA});
+    else BitBlt(o.dc,c.r.left,c.r.top,width,height,source,0,0,SRCCOPY);
     SelectObject(source,old); DeleteDC(source);
 }
 // Premultiplied source over the buffer pixels: a few hundred pixels per car instead of an AlphaBlend call each.

@@ -84,6 +84,7 @@ public:
         std::vector<wchar_t> iconButtons;
         bool muted{};
         bool selected{};
+        int indent{}; // DIPs: child rows inside an expandable group.
         // Height in DIPs of the expanded area below the row; 0 when collapsed.
         int expandHeight{};
         // Rows with the same nonzero group can be reordered by dragging; draggable says whether this one can be picked up.
@@ -368,7 +369,7 @@ private:
                 layout.pill = {x - width, middle - Scale(11), x, middle + Scale(11)};
                 x -= width + Scale(12);
             }
-            int left = Scale(14);
+            int left = Scale(14 + row.indent);
             if (row.dragGroup)
             {
                 if (row.draggable) layout.grip = {left - Scale(4), middle - Scale(12), left + Scale(14), middle + Scale(12)};

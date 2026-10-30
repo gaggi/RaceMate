@@ -53,7 +53,7 @@ int RunDiagnostics() {
     // The page as built at startup, before anything refreshes it: one row per overlay, each with its own title.
     bool startupOk=false;
     if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) {
-        std::vector<std::wstring> titles; for(const auto& row:reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA))->Rows()) if(row.button==L"Settings") titles.push_back(row.title);
+        std::vector<std::wstring> titles; for(const auto& row:reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA))->Rows()) if(row.button==L"Settings" && row.toggle>=0) titles.push_back(row.title);
         startupOk=titles.size()>=OverlayCount; for(int kind=0;kind<OverlayCount && startupOk;++kind) startupOk=titles[kind]==Titles[kind];
     }
     report<<"Overlays page at startup lists every overlay by its own name: "<<(startupOk?"PASS":"FAIL")<<"\n"; allOk=(startupOk) && allOk;
@@ -604,7 +604,10 @@ int RunDiagnostics() {
         weatherOk=Export(app.main,L"build\\qa\\weather-settings.bmp") && weatherOk;
         for(int module=0;module<WeatherModuleCount;++module) { First(WeatherKind).weather.display[module]=false; SettingChanged(); Load(); weatherOk=!First(WeatherKind).weather.display[module] && weatherOk; }
         First(WeatherKind).bands.header=false; SettingChanged();
-        weatherOk=!IsWindowVisible(First(4).window) && BaseHeight(First(4))==40 && weatherOk;
+        weatherOk=First(4).editorPreview && IsWindowVisible(First(4).window) && BaseHeight(First(4))==40 && weatherOk;
+        ShowPage(Page::Overlays); UpdateOverlays();
+        weatherOk=!IsWindowVisible(First(4).window) && weatherOk;
+        OpenOverlay(First(WeatherKind));
         First(WeatherKind).weather.display.fill(true); SettingChanged(); PreviewWeather(); UpdateOverlays();
         weatherOk=IsWindowVisible(First(4).window) && BaseHeight(First(4))==84+36+62+76+108+32+32 && weatherOk;
         First(WeatherKind).bands.header=true; First(WeatherKind).bands.footer.enabled=true; SettingChanged();
@@ -660,6 +663,26 @@ int RunDiagnostics() {
         const Placement place=First(RelativeKind).place; const int rows=First(RelativeKind).table.rows;
         AddLayout(true); const int second=app.layout;
         layoutOk=app.layouts.size()==2 && second!=1 && First(RelativeKind).place.x==place.x && First(RelativeKind).table.rows==rows && layoutOk;
+        // Regression: sample-data mode must not restrict activation to the edited group.
+        auto& previewFirst=*std::find_if(app.overlays.begin(),app.overlays.end(),[](const Overlay& o){return o.layout==1 && o.kind==RelativeKind && o.number==1;});
+        auto& previewSecond=First(RelativeKind);
+        bool previewLayoutsOk=app.preview && app.activeLayouts.size()==2 && LayoutRunning(1) && LayoutRunning(second) && IsWindowVisible(previewFirst.window) && IsWindowVisible(previewSecond.window);
+        const HWND firstPreviewWindow=previewFirst.window, secondPreviewWindow=previewSecond.window;
+        SwitchLayout(1); UpdateOverlays();
+        previewLayoutsOk=previewFirst.window==firstPreviewWindow && previewSecond.window==secondPreviewWindow && LayoutRunning(second) && previewLayoutsOk;
+        SwitchLayout(second); ShowPage(Page::Overlays);
+        if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) {
+            int active=0; for(const auto& row:reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA))->Rows()) if(row.dragGroup==1 && row.pill==L"Preview" && row.pillTone==RowList::Tone::Warning) ++active;
+            previewLayoutsOk=active==2 && previewLayoutsOk;
+        } else previewLayoutsOk=false;
+        for(auto& l:app.layouts) l.condition=GarageCondition;
+        ReconsiderLayout(); UpdateOverlays();
+        previewLayoutsOk=app.activeLayouts.empty() && !previewFirst.window && !previewSecond.window && previewLayoutsOk;
+        for(auto& l:app.layouts) l.condition=AlwaysCondition;
+        ReconsiderLayout(); UpdateOverlays();
+        previewLayoutsOk=app.activeLayouts.size()==2 && IsWindowVisible(previewFirst.window) && IsWindowVisible(previewSecond.window) && previewLayoutsOk;
+        report<<"Sample rendering: two matching layouts, yellow Preview pills, independent editor selection, no fallback when none matches: "<<(previewLayoutsOk?"PASS":"FAIL")<<"\n";
+        layoutOk=previewLayoutsOk && layoutOk;
         First(RelativeKind).place.x+=200; First(RelativeKind).table.rows=5; Fit(First(RelativeKind)); SettingChanged();
         auto& extra=NewInstance(WeatherKind); (void)extra; layoutOk=InstanceCount(WeatherKind)==2 && layoutOk;
         SwitchLayout(1);
@@ -668,34 +691,128 @@ int RunDiagnostics() {
         SwitchLayout(second);
         layoutOk=First(RelativeKind).place.x==place.x+200 && First(RelativeKind).table.rows==5 && InstanceCount(WeatherKind)==2 && layoutOk;
         Load(); layoutOk=app.layout==second && app.layouts.size()==2 && First(RelativeKind).place.x==place.x+200 && InstanceCount(WeatherKind)==2 && layoutOk;
-        // The second layout in the car, ahead of the default for everything else.
+        // All applicable profiles run together; selecting one only changes the editor.
         for(auto& l:app.layouts) if(l.id==second) l.condition=InCarCondition;
-        std::swap(app.layouts[0],app.layouts[1]); SwitchLayout(1);
-        app.preview=false; app.frame.connected=app.frame.onTrack=true; app.frame.replay=app.frame.garage=false; app.layoutSituation=app.pendingSituation=-1;
-        app.now=1000000; AutoLayout(); app.now+=500; AutoLayout(); layoutOk=app.layout==1 && layoutOk;
-        app.now+=600; AutoLayout(); layoutOk=app.layout==second && layoutOk;
-        app.frame.onTrack=false; app.now+=100; AutoLayout(); app.now+=1100; AutoLayout(); layoutOk=app.layout==1 && layoutOk;
-        SwitchLayout(second); app.now+=5000; AutoLayout(); layoutOk=app.layout==second && layoutOk;
-        app.frame.garage=true; app.now+=100; AutoLayout(); app.now+=1100; AutoLayout(); layoutOk=app.layout==1 && layoutOk;
+        SwitchLayout(1);
+        app.preview=false; app.hidden=false; app.edit=false;
+        app.frame.connected=app.frame.onTrack=true; app.frame.replay=app.frame.garage=false;
+        AutoLayout(); UpdateOverlays();
+        auto find=[&](int id,int kind)->Overlay& { return *std::find_if(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return o.layout==id && o.kind==kind && o.number==1;}); };
+        auto& stream=find(1,RelativeKind); auto& car=find(second,RelativeKind);
+        layoutOk=app.activeLayouts.size()==2 && stream.window && car.window && IsWindowVisible(stream.window) && IsWindowVisible(car.window) && layoutOk;
+        const HWND streamWindow=stream.window;
+        layoutOk=Section(stream)!=Section(car) && layoutOk;
+        // Independent per-layout previews never stop live telemetry or publish samples.
+        bool perLayoutPreviewOk=true;
+        ToggleLayoutPreview(second); perLayoutPreviewOk=!LayoutPreviewRequested(second);
+        for(auto& l:app.layouts) if(l.id==second) l.condition=GarageCondition;
+        ReconsiderLayout(); stream.place.spout=true; UpdateOverlays();
+        const auto liveSource=stream.spout; const auto liveTime=app.frame.time;
+        ToggleLayoutPreview(second);
+        perLayoutPreviewOk=liveSource && stream.spout==liveSource && LayoutLive(1) && LayoutPreviewing(second) && car.editorPreview &&
+            IsWindowVisible(car.window) && !car.spout && !app.preview && app.frame.connected && app.frame.time==liveTime && perLayoutPreviewOk;
+        app.frame.connected=false; AutoLayout(); ToggleLayoutPreview(1);
+        perLayoutPreviewOk=LayoutPreviewing(1) && LayoutPreviewing(second) && !LayoutLive(1) && !LayoutLive(second) &&
+            IsWindowVisible(stream.window) && IsWindowVisible(car.window) && !stream.spout && !car.spout && !app.frame.connected && perLayoutPreviewOk;
+        const auto openGroups=app.openLayoutGroups; app.openLayoutGroups.clear(); ShowPage(Page::Overlays);
+        if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) {
+            int yellow=0, green=0; for(const auto& row:reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA))->Rows()) if(row.dragGroup==1) {
+                yellow+=row.pill==L"Preview" && row.pillTone==RowList::Tone::Warning;
+                green+=row.pill==L"Active";
+            }
+            perLayoutPreviewOk=yellow==2 && green==0 && perLayoutPreviewOk;
+        } else perLayoutPreviewOk=false;
+        perLayoutPreviewOk=Export(app.main,L"build\\qa\\layout-previews.bmp") && perLayoutPreviewOk;
+        ToggleLayoutPreview(1);
+        perLayoutPreviewOk=!LayoutPreviewing(1) && !IsWindowVisible(stream.window) && LayoutPreviewing(second) && IsWindowVisible(car.window) && perLayoutPreviewOk;
+        ToggleLayoutPreview(second);
+        perLayoutPreviewOk=app.previewLayouts.empty() && !car.window && !car.spout && perLayoutPreviewOk;
+        app.openLayoutGroups=openGroups; app.frame.connected=true;
+        for(auto& l:app.layouts) if(l.id==second) l.condition=InCarCondition;
+        stream.place.spout=false; AutoLayout(); UpdateOverlays(); ShowPage(Page::Overlays);
+        perLayoutPreviewOk=LayoutLive(1) && LayoutLive(second) && !LayoutPreviewing(1) && !LayoutPreviewing(second) && perLayoutPreviewOk;
+        report<<"Per-layout previews: independent toggles, yellow badges, no sample OBS output, live data/source preserved and live priority: "<<(perLayoutPreviewOk?"PASS":"FAIL")<<"\n";
+        layoutOk=perLayoutPreviewOk && layoutOk;
+        const auto streamSection=Section(stream), carSection=Section(car);
+        bool senderNamesOk=SpoutSenderName(stream)=="RaceMate - Default - Relative";
+        for(auto& l:app.layouts) if(l.id==second) l.name=L"OBS";
+        stream.customName=L"Stream relative"; car.customName=L"Driver relative"; Save(); Load();
+        layoutOk=Name(stream)==L"Stream relative" && Name(car)==L"Driver relative" && Section(stream)==streamSection && Section(car)==carSection && layoutOk;
+        senderNamesOk=SpoutSenderName(stream)=="RaceMate - Default - Stream relative" && SpoutSenderName(car)=="RaceMate - OBS - Driver relative" && senderNamesOk;
+        car.customName=L"\u00dcberblick";
+        senderNamesOk=SpoutSenderName(car)=="RaceMate - OBS - \xC3\x9C" "berblick" && senderNamesOk;
+        car.customName.assign(127,L'\u00e4');
+        const auto longSenderName=SpoutSenderName(car);
+        senderNamesOk=longSenderName.size()<=255 && MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,longSenderName.data(),static_cast<int>(longSenderName.size()),nullptr,0)>0 && senderNamesOk;
+        car.customName=L"Driver relative";
+        stream.place.spout=true; UpdateOverlays();
+        std::weak_ptr<rm::SpoutChannel> beforeRename=stream.spout;
+        stream.customName=L"Broadcast relative"; PublishSpout(stream);
+        senderNamesOk=beforeRename.expired() && stream.spoutName=="RaceMate - Default - Broadcast relative" && senderNamesOk;
+        stream.customName=L"Stream relative"; PublishSpout(stream);
+        report<<"Spout sender labels: layout and overlay display names, Default prefix, UTF-8, length limit and live rename: "<<(senderNamesOk?"PASS":"FAIL")<<"\n";
+        layoutOk=senderNamesOk && layoutOk;
+        const auto streamSource=stream.spout;
+        SwitchLayout(second); UpdateOverlays();
+        layoutOk=stream.window==streamWindow && app.activeLayouts.size()==2 && stream.spout==streamSource && streamSource && layoutOk;
+        // A setting or removal belongs to its profile, including renumbering added instances.
+        const auto streamPlace=stream.place; auto& extraRelative=NewInstance(RelativeKind);
+        extraRelative.place.spout=true; const auto extraSection=Section(extraRelative); Save();
+        RemoveInstance(extraRelative);
+        layoutOk=stream.place.x==streamPlace.x && InstanceCount(RelativeKind,1)==1 && layoutOk;
+        app.frame.onTrack=false; app.frame.garage=true; AutoLayout(); UpdateOverlays();
+        layoutOk=app.activeLayouts.size()==1 && LayoutRunning(1) && stream.window==streamWindow && !car.window && !car.dc && !car.spout && layoutOk;
+        stream.customName.clear(); stream.place.spout=false; Save(); UpdateOverlays();
+        // Editing an inactive profile does not activate it or affect the stream.
+        SwitchLayout(second); UpdateOverlays();
+        layoutOk=!car.window && stream.window==streamWindow && layoutOk;
         ShowPage(Page::Overlays); layoutOk=Export(app.main,L"build\\qa\\main-layouts.bmp") && layoutOk;
         RemoveLayout(second);
         wchar_t left[8]{}; GetPrivateProfileStringW((L"Layout "+std::to_wstring(second)+L": Relative").c_str(),L"X",L"",left,8,app.config.c_str());
         layoutOk=app.layouts.size()==1 && app.layout==1 && !left[0] && InstanceCount(WeatherKind)==1 && First(RelativeKind).place.x==place.x && layoutOk;
         Load(); layoutOk=app.layouts.size()==1 && layoutOk;
-        // A single In car layout: hidden in the garage, shown once driving, and a hand choice shows it anyway.
-        const bool savedHidden=app.hidden, savedEdit=app.edit; app.hidden=app.edit=false;
-        app.preview=false; app.frame.connected=app.frame.garage=true; app.frame.onTrack=app.frame.replay=false;
-        app.layouts[0].condition=InCarCondition; ReconsiderLayout();
-        app.now+=100; AutoLayout(); app.now+=1100; AutoLayout(); UpdateOverlays();
-        layoutOk=app.layoutIdle && !IsWindowVisible(First(RelativeKind).window) && layoutOk;
-        SwitchLayout(1); UpdateOverlays(); layoutOk=!app.layoutIdle && IsWindowVisible(First(RelativeKind).window) && layoutOk;
-        app.now+=100; AutoLayout(); app.now+=1100; AutoLayout(); layoutOk=!app.layoutIdle && layoutOk; // The situation has not changed.
-        app.frame.garage=false; app.frame.onTrack=true; app.now+=100; AutoLayout(); app.now+=1100; AutoLayout(); UpdateOverlays();
-        layoutOk=!app.layoutIdle && IsWindowVisible(First(RelativeKind).window) && layoutOk;
-        app.frame.onTrack=false; app.now+=100; AutoLayout(); app.now+=1100; AutoLayout(); layoutOk=app.layoutIdle && layoutOk;
-        app.layouts[0].condition=AlwaysCondition; app.layoutIdle=false; app.hidden=savedHidden; app.edit=savedEdit; Save();
-        app.frame=savedFrame; app.session=savedSession; app.preview=savedPreview; app.now=savedNow; app.layoutSituation=app.pendingSituation=-1; UpdateOverlays();
-        report<<"Layouts: own overlays, places and settings, switching, reload, conditions, none applying, manual choice and removal: "<<(layoutOk?"PASS":"FAIL")<<"\n"; allOk=layoutOk && allOk;
+        // No matching profile means no windows, buffers, or OBS channels, even after selecting it.
+        app.layouts[0].condition=InCarCondition; AutoLayout(); UpdateOverlays();
+        layoutOk=app.activeLayouts.empty() && std::all_of(app.overlays.begin(),app.overlays.end(),[](const Overlay& o){return !o.window && !o.dc && !o.spout;}) && layoutOk;
+        SwitchLayout(1); UpdateOverlays(); layoutOk=app.activeLayouts.empty() && !First(RelativeKind).window && layoutOk;
+        const auto liveFrame=app.frame; const auto liveSession=app.session;
+        First(RelativeKind).place.spout=true;
+        OpenOverlay(First(RelativeKind)); UpdateOverlays();
+        layoutOk=First(RelativeKind).editorPreview && IsWindowVisible(First(RelativeKind).window) && !First(RelativeKind).scene.empty() && !First(RelativeKind).spout &&
+            app.activeLayouts.empty() && !app.preview && app.frame.time==liveFrame.time && app.frame.onTrack==liveFrame.onTrack && app.session.key==liveSession.key && layoutOk;
+        ShowPage(Page::Overlays);
+        layoutOk=!First(RelativeKind).window && !First(RelativeKind).dc && layoutOk;
+        First(RelativeKind).place.spout=false;
+        app.frame.garage=false; app.frame.onTrack=true; AutoLayout(); UpdateOverlays();
+        layoutOk=LayoutRunning(1) && IsWindowVisible(First(RelativeKind).window) && layoutOk;
+        app.frame.onTrack=false; app.frame.replay=true; AutoLayout();
+        layoutOk=app.activeLayouts.empty() && !First(RelativeKind).window && layoutOk;
+        app.layouts[0].condition=AlwaysCondition; Save();
+        app.frame=savedFrame; app.session=savedSession; app.preview=savedPreview; app.now=savedNow; AutoLayout(); UpdateOverlays();
+        report<<"Layouts: independent settings, simultaneous matches, stream survives editor/situation changes, no fallback or inactive resources: "<<(layoutOk?"PASS":"FAIL")<<"\n"; allOk=layoutOk && allOk;
+    }
+    {
+        // Rename through the actual row editor; settings identity and layout ownership stay stable.
+        auto& relative=First(RelativeKind); const auto savedName=relative.customName; const auto section=Section(relative);
+        app.openLayoutGroups={app.layout}; ShowPage(Page::Overlays);
+        const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr);
+        auto* rows=list?reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA)):nullptr;
+        int row=-1; if(rows) for(size_t i=0;i<rows->Rows().size();++i) if(rows->Rows()[i].title==Name(relative) && rows->Rows()[i].toggle>=0) { row=static_cast<int>(i); break; }
+        bool renameOk=row>=0;
+        if(renameOk) {
+            rows->PressIconButton(row,0); rows->ScrollIntoView(row);
+            const HWND edit=GetDlgItem(list,205); renameOk=edit!=nullptr;
+            renameOk=Editing(relative) && FrameStyleOf(relative)==EditingFrame && IsWindowVisible(relative.window) && renameOk;
+            SetWindowTextW(edit,L"  Driver relative  ");
+            SendMessageW(list,WM_COMMAND,MAKEWPARAM(205,EN_KILLFOCUS),reinterpret_cast<LPARAM>(edit));
+            renameOk=relative.customName==L"Driver relative" && Section(relative)==section && renameOk;
+            renameOk=Export(app.main,L"build\\qa\\overlay-naming.bmp") && renameOk;
+            Load(); renameOk=relative.customName==L"Driver relative" && renameOk;
+            SetWindowTextW(edit,savedName.c_str());
+            SendMessageW(list,WM_COMMAND,MAKEWPARAM(205,EN_KILLFOCUS),reinterpret_cast<LPARAM>(edit));
+        }
+        relative.customName=savedName; Save(); ShowPage(Page::Overlays);
+        report<<"Overlay names: row editor, trimming, independent persistence and stable settings identity: "<<(renameOk?"PASS":"FAIL")<<"\n"; allOk=renameOk && allOk;
     }
     {
         // The Safety and iRating badge beside License and iRating, over drivers of every license class.
@@ -720,7 +837,10 @@ int RunDiagnostics() {
             auto* rows=list?reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA)):nullptr; int index=-1;
             if(rows) for(size_t i=0;i<rows->Rows().size() && index<0;++i) if(rows->Rows()[i].title==title) index=static_cast<int>(i);
             if(index<0) { fitOk=false; report<<"  no row "<<Ascii(title)<<"\n"; return; }
-            rows->PressIconButton(index,0);
+            if(expected==4 && title==ActiveLayout()->name) {
+                if(std::find(app.openLayoutGroups.begin(),app.openLayoutGroups.end(),app.layout)!=app.openLayoutGroups.end()) rows->PressIconButton(index,0);
+                rows->PressIconButton(index,0);
+            } else rows->PressIconButton(index,0);
             RECT visible{},host{}; GetClientRect(list,&visible); MapWindowPoints(list,nullptr,reinterpret_cast<POINT*>(&visible),2);
             GetClientRect(ui.host.Handle(),&host); MapWindowPoints(ui.host.Handle(),nullptr,reinterpret_cast<POINT*>(&host),2);
             visible.right=std::min(visible.right,host.right); int editors=0;
@@ -732,7 +852,7 @@ int RunDiagnostics() {
             rows->PressIconButton(index,0); // And collapsed again.
         };
         // The overlays, and a layout with its name and condition.
-        ShowPage(Page::Overlays); for(auto& o:app.overlays) if(o.number==1) check(Name(o));
+        app.openLayoutGroups={app.layout}; ShowPage(Page::Overlays); for(auto& o:app.overlays) if(o.number==1) check(Name(o),14);
         check(ActiveLayout()->name,4);
         for(int kind:{RelativeKind,FuelKind,WeatherKind}) { OpenOverlay(First(kind)); check(L"Header"); check(L"Footer"); }
         SetWindowPlacement(app.main,&saved); ShowPage(Page::Overlays);
@@ -1595,7 +1715,7 @@ int RunDiagnostics() {
         radar.radar.distances=false; UpdateOverlays(); radarOk=!text(L"6.4 m") && radarOk;
         radar.radar=savedRadar; Save(); Load(); radarOk=radar.radar.range==savedRadar.range && radar.radar.background && radarOk;
         // Live: no car in range hides it; a car 8 m ahead shows it, and it stays 2 s after the car left the range.
-        app.preview=false; app.frame.connected=app.frame.onTrack=true; app.frame.replay=false; app.frame.spotter=1; app.radar.Reset();
+        app.preview=false; app.frame.connected=app.frame.onTrack=true; app.frame.replay=false; app.frame.spotter=1; radar.radarTracker.Reset();
         for(int i=0;i<MaxCars;++i) if(i!=app.frame.player) app.frame.cars[i].pct=-1;
         auto& car=app.frame.cars[(app.frame.player+1)%10]; const double own_pct=app.frame.cars[app.frame.player].pct;
         car.pit=false; car.surface=3; car.pct=own_pct+60/app.session.trackMeters;
@@ -1605,7 +1725,7 @@ int RunDiagnostics() {
         app.now+=1500; UpdateOverlays(); radarOk=!IsWindowVisible(radar.window) && radarOk;
         radar.radar.always=true; UpdateOverlays(); radarOk=IsWindowVisible(radar.window) && radarOk;
         app.frame.replay=true; UpdateOverlays(); radarOk=!IsWindowVisible(radar.window) && radarOk;
-        app.frame=savedFrame; app.session=savedSession; radar.place=savedPlace; radar.radar=savedRadar; app.hidden=savedHidden; app.preview=true; app.radar.Reset(); Fit(radar); UpdateOverlays();
+        app.frame=savedFrame; app.session=savedSession; radar.place=savedPlace; radar.radar=savedRadar; app.hidden=savedHidden; app.preview=true; radar.radarTracker.Reset(); Fit(radar); UpdateOverlays();
         report<<"Radar: cars and lanes from above, distances, range, transparent, near-cars and always visibility: "<<(radarOk?"PASS":"FAIL")<<"\n"; allOk=radarOk && allOk;
     }
     {
@@ -1796,6 +1916,36 @@ int RunDiagnostics() {
     }
     ok=cornersOk && ok;
     report<<"Fixed corner: all four corners on every overlay, resize/shrink, no jump on selection and persisted anchors: "<<(cornersOk?"PASS":"FAIL")<<"\n"; allOk=(cornersOk) && allOk;
+    {
+        // Deleting the original or last profile must survive a reload, without
+        // deleting global settings or bringing old plain overlay sections back.
+        Save(); const auto originalConfig=app.config;
+        const auto deletionConfig=(std::filesystem::path(app.config).parent_path()/L"layout-deletion.ini").wstring();
+        bool deletionOk=CopyFileW(originalConfig.c_str(),deletionConfig.c_str(),FALSE)!=FALSE;
+        app.config=deletionConfig; Load(); ShowPage(Page::Overlays);
+        auto& extra=NewInstance(RelativeKind); extra.customName=L"Old instance"; extra.place.x=539; Save();
+        WritePrivateProfileStringW(L"General",L"DeletionProbe",L"keep",app.config.c_str());
+        WritePrivateProfileStringW(L"Weather notes",L"Keep",L"yes",app.config.c_str());
+        AddLayout(true); const int survivor=app.layout; SwitchLayout(1);
+        RemoveLayout(1); Load(); ShowPage(Page::Overlays);
+        wchar_t missing[32]{}, preserved[32]{};
+        GetPrivateProfileStringW(L"Relative 2",L"DisplayName",L"",missing,32,app.config.c_str());
+        GetPrivateProfileStringW(L"General",L"DeletionProbe",L"",preserved,32,app.config.c_str());
+        deletionOk=app.layouts.size()==1 && app.layout==survivor && app.layouts.front().id==survivor && !missing[0] &&
+            std::wstring(preserved)==L"keep" && InstanceCount(RelativeKind)==2 && deletionOk;
+        GetPrivateProfileStringW(L"Weather notes",L"Keep",L"",preserved,32,app.config.c_str());
+        deletionOk=std::wstring(preserved)==L"yes" && deletionOk;
+        RemoveLayout(survivor); Load(); ShowPage(Page::Overlays); UpdateOverlays();
+        deletionOk=app.layouts.empty() && app.overlays.empty() && app.activeLayouts.empty() && app.previewLayouts.empty() && app.layout==0 && ReadInt(L"Layouts",L"Count",-1)==0 && deletionOk;
+        OpenRaceControl(); UpdateRaceControl(true); CloseRaceControl();
+        deletionOk=app.overlays.empty() && deletionOk;
+        AddLayout(false);
+        deletionOk=app.layouts.size()==1 && app.overlays.size()==OverlayCount && First(RelativeKind).customName.empty() &&
+            First(RelativeKind).place.x!=539 && InstanceCount(RelativeKind)==1 && deletionOk;
+        ui.overlay=nullptr; app.config=originalConfig; Load(); ShowPage(Page::Overlays); UpdateOverlays();
+        report<<"Layouts: delete Default and last layout, preserve globals, persist empty state, Race Control without layouts and fresh recreation: "<<(deletionOk?"PASS":"FAIL")<<"\n";
+        allOk=deletionOk && allOk;
+    }
     Frame liveFrame; Session liveSession; Telemetry liveTelemetry;
     if(liveTelemetry.Read(liveFrame,liveSession)) {
         app.preview=false; app.frame=liveFrame; app.session=liveSession; First(StandingsKind).table.standings={}; raceControl.message.clear();
@@ -1814,6 +1964,83 @@ int RunDiagnostics() {
     ok=trayFallbackOk && listOk && updateOk && startupOk && ok;
     if(IsWindow(app.main)) DestroyWindow(app.main);
     DeleteObject(app.brush); return allOk && ok?0:2;
+}
+// Real-time, identical sample workload for external process CPU/GPU counter sampling.
+#include "RendererBenchmark.inc"
+#include "GdiAlphaDiagnostics.inc"
+// This only uses QA settings, and never replaces a running RaceMate instance.
+double QpcSeconds();
+int RunSpoutBenchmark(bool output) {
+    SetPriorityClass(GetCurrentProcess(),IDLE_PRIORITY_CLASS);
+    PROCESS_POWER_THROTTLING_STATE throttling{PROCESS_POWER_THROTTLING_CURRENT_VERSION,PROCESS_POWER_THROTTLING_EXECUTION_SPEED,PROCESS_POWER_THROTTLING_EXECUTION_SPEED};
+    SetProcessInformation(GetCurrentProcess(),ProcessPowerThrottling,&throttling,sizeof(throttling));
+    app.diagnostics=false; // Animate preview data, unlike fixed diagnostic screenshots.
+    app.preview=true; app.edit=false; app.hidden=false;
+    const bool stress=GetEnvironmentVariableW(L"RACEMATE_SPOUT_STRESS",nullptr,0)!=0;
+    const bool backgroundOnly=GetEnvironmentVariableW(L"RACEMATE_BENCH_BACKGROUND_ONLY",nullptr,0)!=0;
+    for(auto& o:app.overlays) {
+        o.place={}; o.place.spoutPremultiplied=spoutPremultiplied; o.place.rate=DefaultRates[o.kind]; o.place.opacity=90;
+        o.place.backgroundOnly=backgroundOnly;
+        o.place.enabled=o.number==1 && (o.kind==RelativeKind || o.kind==StandingsKind || o.kind==FuelKind ||
+            (stress && (o.kind==RadarKind || o.kind==TrackMapKind)));
+        o.place.spout=o.place.enabled && output;
+        o.place.rounded=o.kind==RelativeKind;
+        // Keep the initialized default columns/modules from Load(), rather than
+        // zero-initialized TableSettings/FuelSettings (which would hide their contents).
+        o.map.layout=CircleLayout;
+        // Keep the tested desktop output active, but away from the user's visible desktop.
+        o.place.x=-20000; o.place.y=-20000; Fit(o);
+        SetWindowPos(o.window,nullptr,-20000,-20000,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
+    }
+    profiler.on=true; profiler.autoWrite=false;
+    const auto root=std::filesystem::path(L"build/qa")/std::to_wstring(GetCurrentProcessId());
+    const auto stop=root.wstring()+L".stop";
+    const double start=QpcSeconds();
+    while(QpcSeconds()-start<60 && GetFileAttributesW(stop.c_str())==INVALID_FILE_ATTRIBUTES) {
+        app.now=GetTickCount64();
+        const double time=QpcSeconds()-start;
+        PreviewData(time);
+        // The normal preview intentionally keeps constant gaps. Change them here
+        // so Relative actually exports at 10 Hz, rather than timing an idle image.
+        for(int i=0;i<10;++i) {
+            auto& car=app.frame.cars[i];
+            car.pct=std::fmod(car.pct+.005*std::sin(time*(.7+i*.13))+1,1.);
+            car.estTime=car.pct*PreviewLeaderPace;
+            car.f2Time+=.5*std::sin(time*(.9+i*.1));
+            car.last+=.1*std::sin(time+i);
+        }
+        UpdateOverlays(false);
+        for(const auto& o:app.overlays) if(o.place.enabled) {
+            RECT position{}; GetWindowRect(o.window,&position);
+            if(position.left>-10000) SetWindowPos(o.window,nullptr,-20000,-20000,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
+        }
+        MSG message{}; while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)) {
+            if(message.message!=WM_TIMER) { TranslateMessage(&message); DispatchMessageW(&message); }
+        }
+        Sleep(10);
+    }
+    std::ofstream report(root.wstring()+L".txt");
+    report<<"Spout="<<output<<", stress="<<stress<<", backgroundOnly="<<backgroundOnly<<"\n";
+    LARGE_INTEGER frequency{}; QueryPerformanceFrequency(&frequency);
+    for(auto& o:app.overlays) if(o.place.enabled) {
+        report<<o.kind<<": "<<o.width<<"x"<<o.height<<" @ "<<o.place.rate<<" Hz\n";
+        const auto& e=profiler.At(ProfileName(o,"Spout image preparation and queue"));
+        report<<"  exports="<<e.calls<<", preparation us/export="<<(e.calls?e.ticks*1e6/frequency.QuadPart/e.calls:0)<<"\n";
+        const auto& drawing=profiler.At(ProfileName(o,"  drawing"));
+        report<<"  draws="<<drawing.calls<<", drawing us/frame="<<(drawing.calls?drawing.ticks*1e6/frequency.QuadPart/drawing.calls:0)<<"\n";
+        if(backgroundOnly) {
+            size_t opaque=0,background=0,invalid=0;
+            for(size_t i=0;i<static_cast<size_t>(o.width)*o.height;++i) {
+                const auto p=o.dibPixels[i],a=p>>24;
+                opaque+=a==255; background+=a==229;
+                invalid+=((p&255)>a || ((p>>8)&255)>a || ((p>>16)&255)>a);
+            }
+            report<<"  alpha validation: opaque="<<opaque<<", background="<<background<<", invalid premultiplied="<<invalid<<"\n";
+            Export(o.window,root.wstring()+L"-"+std::to_wstring(o.kind)+L".bmp",true);
+        }
+    }
+    for(auto& o:app.overlays) DestroyOverlay(o);
+    return 0;
 }
 // Main-thread cost of one connected refresh with a 60-car multiclass race and every overlay visible.
 int RunTickBenchmark() {

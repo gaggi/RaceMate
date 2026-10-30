@@ -30,7 +30,7 @@ Radar lanes and the Side Warning come from iRacing's spotter; without it (off th
 
 Start iRacing on the same machine and join a session. RaceMate reads the local shared-memory interface and retries a disconnected connection about once per second. There is no account or server configuration to enter.
 
-Confirm **Preview is off**: its banner explicitly states that live telemetry is not being read. A successful connection replaces that banner with session information. If necessary, quit RaceMate via the tray menu and launch it again after entering the session.
+Layout previews do not stop live telemetry. A yellow **Preview** badge identifies sample overlays; a green **Active** badge identifies a layout using live SIM data. If necessary, quit RaceMate via the tray menu and launch it again after entering the session.
 
 Starting the executable twice normally brings the existing settings window forward; it does not create a second live instance.
 
@@ -90,7 +90,7 @@ Misalignment in particular corners can result from schematic SVG distance differ
 
 ## Race Control cannot replay an event
 
-Get out of the car before using camera/replay controls. Check **Replay from** and the chosen camera group. In Preview these actions are simulated. In a live session, old footage may no longer exist in iRacing's replay buffer; RaceMate stops waiting after twelve seconds and explains the limitation.
+Get out of the car before using camera/replay controls. Check **Replay from** and the chosen camera group. Layout previews do not simulate Race Control commands: when connected, camera and replay controls still act on iRacing. In a live session, old footage may no longer exist in iRacing's replay buffer; RaceMate stops waiting after twelve seconds and explains the limitation.
 
 Previous/Next follow filtered events chronologically, not the visible sort order. Clear the car/category filters if expected events seem absent. The feed contains only observed events from the current session, up to its 2,000-event limit.
 
@@ -123,3 +123,12 @@ Every ten seconds it overwrites `%LOCALAPPDATA%\RaceMate\profile.txt` with the p
 Include the RaceMate version/architecture, Windows version, monitor arrangement/scaling, iRacing display mode, session type, track/layout and car. Describe the steps, expected result and actual result; mention driving, live spectating or replay and whether Preview reproduces it.
 
 A screenshot and the relevant setting names are often enough. A profile is useful for performance reports. Developers can use `--live-summary` or `--dump-vars` as described in [Development](development.md#live-telemetry-inspection); inspect telemetry dumps before sharing because session information can contain driver and session identifiers.
+
+## OBS output has black corners or dark edges
+
+Match RaceMate's per-overlay **OBS alpha mode** to the Spout2 Capture source's
+composite mode. RaceMate defaults to **Premultiplied**; select OBS's corresponding
+premultiplied mode. For OBS **Default** (straight alpha), choose **Straight** in
+RaceMate. **Opaque** discards transparency, including rounded corners. A mismatch
+between straight and premultiplied alpha can cause dark edges or incorrect
+brightness. RaceMate and OBS should run on the same GPU.

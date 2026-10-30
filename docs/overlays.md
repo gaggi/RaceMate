@@ -324,3 +324,67 @@ Each header and footer offers the same list, with four slots. Use **None** to le
 Incidents include the race warning/disqualification limits when provided. The leader forecasts always describe the **overall leader**, even when you are watching another class. Fuel and pit metrics explicitly labeled **your car** continue to use player data.
 
 For example, `Lap 8 / ~19.32` combines the reference car's current lap with the leader's fractional projection. It is distinct from the rounded finishing lap in **Current / Expected Final Lap**. A forecast is marked `~`; unavailable values show `—`.
+
+## OBS output (Spout2)
+
+RaceMate can optionally publish each overlay as a separate Spout2 source on the
+same Windows PC. The existing GDI image is reused; enabling OBS output does not
+replace the desktop renderer.
+
+1. Install the [OBS Spout2 plugin](https://github.com/Off-World-Live/obs-spout2-plugin)
+   matching your OBS installation and restart OBS.
+2. In RaceMate's Overlays page, expand an overlay with the arrow and enable
+   **OBS output**. Layout previews are for the screen only; OBS output requires live SIM data.
+3. In OBS, add a **Spout2 Capture** source and select **RaceMate - Default - Relative**
+   (or **RaceMate - your layout name - your overlay name**). Every sender includes
+   both display names, including the Default layout. Renaming either updates the
+   sender label; select its new name in OBS afterward. In RaceMate, **OBS alpha
+   mode** defaults to **Premultiplied** for each overlay. Select the corresponding
+   premultiplied composite mode in OBS. Choose **Straight** in RaceMate only when
+   using OBS's straight-alpha **Default** mode. **Opaque** ignores transparency.
+   A mismatch can cause dark edges or incorrect opacity. The selection is saved
+   as `SpoutAlphaMode` in that overlay's INI section. The diagnostic environment
+   override `RACEMATE_SPOUT_ALPHA` accepts `premultiplied` or `straight`.
+4. Position and scale the source independently in OBS. Turn off the overlay's
+   main row switch if it should appear only in OBS; that switch controls the
+   desktop window. With OBS output off too, the overlay is inactive.
+
+Each instance has its own source and shares its content, size, opacity, refresh
+rate and visibility conditions with RaceMate. To use different content in the
+stream, add a second overlay instance where the overlay type supports instances,
+configure it separately, disable its desktop switch and enable its OBS output.
+All currently matching layouts are exported independently. Layouts selected for editing do not replace running stream layouts. **Hide all overlays** also hides OBS sources.
+Conditional overlays disappear when their conditions no longer apply.
+Side Warning exports both bars next to each other in one image; crop/duplicate
+the source in OBS to place the bars separately.
+
+RaceMate and OBS should use the same GPU, especially on laptops. A sender being
+available does not confirm that OBS is connected. There is no network output or support for a second streaming
+PC through this feature.
+
+Only changed images are submitted, at the overlay's configured update rate.
+The UI copies changed source spans into a reusable pending canvas. A worker
+converts those spans into a persistent export buffer, updates its persistent
+Direct3D texture, and sends it through Spout. Pending updates retain all dirty
+regions even when several frames are merged. Uploads use the bounding rectangle
+of those regions; the rectangle can include unchanged pixels between them.
+
+Premultiplied background-only output at full export opacity requires no alpha
+conversion. Other modes use opacity and reciprocal lookup tables. Rounded-corner
+masks are cached until geometry changes. Export preparation still has a CPU cost;
+it is not a zero-copy path. With no OBS output enabled at startup, no worker or
+DirectX device is created. Closing all sources releases their GPU resources.
+
+### Local verification
+
+The normal build and CTest checks require no OBS installation. An additional,
+explicit hardware test requires a working Windows Direct3D11 GPU:
+
+```powershell
+cmake --build build/x64 --config Release --target RaceMateSpoutTests
+.\build\x64\Release\RaceMateSpoutTests.exe
+```
+
+This verifies actual shared-texture transfer and readback, including BGRA/alpha,
+resizing, simultaneous sources, cleanup and restart. It does not measure OBS
+latency or prove compatibility with every GPU/OBS setup.
