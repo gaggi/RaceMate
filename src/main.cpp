@@ -57,35 +57,35 @@ constexpr int DefaultRates[]={10,1,1,10,1,20,20,20,10,20};
 enum Column {
     PositionColumn, NumberColumn, DriverColumn, GapColumn, IntervalColumn, BestColumn, LastColumn,
     LicenseColumn, IRatingColumn, TiresColumn, PitLapColumn, PitTimeColumn, PitStopColumn,
-    LapsColumn, GainedColumn, StatusColumn, BrandColumn, RatingChangeColumn, StintColumn, StopsColumn, FuelColumn, CombinedRatingColumn, SectorsColumn
+    LapsColumn, GainedColumn, StatusColumn, BrandColumn, RatingChangeColumn, StintColumn, StopsColumn, FuelColumn, CombinedRatingColumn, SectorsColumn, TeamColumn
 };
-constexpr int ColumnCount=SectorsColumn+1;
+constexpr int ColumnCount=TeamColumn+1;
 // License..PitStop are the optional driver columns, also used by Race Control; Brand..Stint came later with their own keys.
-constexpr int DriverColumnCount=PitStopColumn-LicenseColumn+1, ExtraColumnCount=SectorsColumn-BrandColumn+1;
+constexpr int DriverColumnCount=PitStopColumn-LicenseColumn+1, ExtraColumnCount=TeamColumn-BrandColumn+1;
 // Widths include the 8 px gap to the next column; Status is the badge after the driver's name, not a column.
 struct ColumnInfo { const wchar_t* title; int width, compactWidth; UINT align=DT_RIGHT; };
 constexpr ColumnInfo Columns[]={
     {L"P",36,32},{L"#",50,50,DT_CENTER},{L"DRIVER",180,170,DT_LEFT},{L"GAP",70,60},{L"INT",64,56},{L"BEST",80,72},{L"LAST",80,72},
     {L"LICENSE",70,58,DT_CENTER},{L"iRATING",66,48},{L"TIRES",54,30,DT_CENTER},{L"PIT LAP",64,48},{L"PIT TIME",74,66},{L"PIT STOP",80,72},
-    {L"LAPS",50,42},{L"GAIN",50,42},{L"STATUS",0,0,DT_LEFT},{L"CAR",124,116,DT_LEFT},{L"iR ±",54,46},{L"STINT",58,46,DT_CENTER},{L"STOPS",56,32,DT_CENTER},{L"FUEL",62,58,DT_CENTER},{L"RATING",70,58,DT_CENTER},{L"SECTORS ~",240,240}};
+    {L"LAPS",50,42},{L"GAIN",50,42},{L"STATUS",0,0,DT_LEFT},{L"CAR",124,116,DT_LEFT},{L"iR ±",54,46},{L"STINT",58,46,DT_CENTER},{L"STOPS",56,32,DT_CENTER},{L"FUEL",62,58,DT_CENTER},{L"RATING",70,58,DT_CENTER},{L"SECTORS ~",240,240},{L"TEAM",160,150,DT_LEFT}};
 static_assert(std::size(Columns)==ColumnCount);
 const wchar_t* DriverColumnKeys[]={L"ShowLicense",L"ShowIRating",L"ShowTires",L"ShowLastPitLap",L"ShowPitTime",L"ShowPitStopTime"};
-const wchar_t* ExtraColumnKeys[]={L"ShowCar",L"ShowIRatingChange",L"ShowStint",L"ShowStops",L"ShowFuelFinish",L"ShowCombinedRating",L"ShowSectors"};
+const wchar_t* ExtraColumnKeys[]={L"ShowCar",L"ShowIRatingChange",L"ShowStint",L"ShowStops",L"ShowFuelFinish",L"ShowCombinedRating",L"ShowSectors",L"ShowTeam"};
 // Saved orders keep their place; columns a file does not list yet go before their default successor.
 const std::vector<int> DefaultColumns[]={
-    {PositionColumn,NumberColumn,DriverColumn,StatusColumn,BrandColumn,LicenseColumn,IRatingColumn,CombinedRatingColumn,RatingChangeColumn,StintColumn,StopsColumn,BestColumn,LastColumn,GapColumn,
+    {PositionColumn,NumberColumn,DriverColumn,StatusColumn,TeamColumn,BrandColumn,LicenseColumn,IRatingColumn,CombinedRatingColumn,RatingChangeColumn,StintColumn,StopsColumn,BestColumn,LastColumn,GapColumn,
      SectorsColumn,TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn,FuelColumn},
-    {PositionColumn,GainedColumn,NumberColumn,DriverColumn,StatusColumn,BrandColumn,GapColumn,IntervalColumn,BestColumn,LastColumn,StintColumn,StopsColumn,LapsColumn,
+    {PositionColumn,GainedColumn,NumberColumn,DriverColumn,StatusColumn,TeamColumn,BrandColumn,GapColumn,IntervalColumn,BestColumn,LastColumn,StintColumn,StopsColumn,LapsColumn,
      SectorsColumn,LicenseColumn,IRatingColumn,CombinedRatingColumn,RatingChangeColumn,TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn,FuelColumn}};
 // Header and footer metrics. The values are stored in the Header*/Footer* keys.
 enum Metric {
     NoMetric, TrackMetric, IncidentsMetric, TrackTempMetric, AirTempMetric, TemperaturesMetric, TimeRemainingMetric, TimeElapsedMetric,
     CurrentLapMetric, FinalLapMetric, LapsRemainingMetric, LocalTimeMetric, SimTimeMetric, SessionTypeMetric, WetnessMetric, WindMetric,
     SofMetric, OverlayNameMetric, PositionMetric, BrakeBiasMetric, StopsNeededMetric, DeclaredWetMetric,
-    LeaderDistanceMetric, WhiteFlagTimeMetric, LapLeaderDistanceMetric, TrackLayoutMetric, PitExitMetric, FuelAtFinishMetric
+    LeaderDistanceMetric, WhiteFlagTimeMetric, LapLeaderDistanceMetric, TrackLayoutMetric, PitExitMetric, FuelAtFinishMetric, HumidityMetric
 };
-constexpr int MetricCount=FuelAtFinishMetric+1;
-const wchar_t* MetricTitles[]={L"None",L"Track",L"Incidents",L"Track Temperature",L"Air Temperature",L"Temperatures",L"Session Time Remaining",L"Session Time Elapsed",L"Current Lap",L"Current / Expected Final Lap",L"Estimated Laps Remaining",L"Local Time",L"Sim Time",L"Session Type",L"Track Wetness",L"Wind",L"Class SOF",L"Overlay Name",L"Position in Class",L"Brake Bias (your car)",L"Stops Needed (your car)",L"Declared Wet",L"Leader projected race distance",L"Time left at leader's final lap",L"Current lap / Leader projected distance",L"Track and layout",L"Pit exit (your car)",L"Fuel at finish (your car)"};
+constexpr int MetricCount=HumidityMetric+1;
+const wchar_t* MetricTitles[]={L"None",L"Track",L"Incidents",L"Track Temperature",L"Air Temperature",L"Temperatures",L"Session Time Remaining",L"Session Time Elapsed",L"Current Lap",L"Current / Expected Final Lap",L"Estimated Laps Remaining",L"Local Time",L"Sim Time",L"Session Type",L"Track Wetness",L"Wind",L"Class SOF",L"Overlay Name",L"Position in Class",L"Brake Bias (your car)",L"Stops Needed (your car)",L"Declared Wet",L"Leader projected race distance",L"Time left at leader's final lap",L"Leader lap / Leader projected distance",L"Track and layout",L"Pit exit (your car)",L"Fuel at finish (your car)",L"Humidity"};
 static_assert(std::size(MetricTitles)==MetricCount);
 // The first slot sits on the left, the others right-aligned in order. Keys keep their earlier names.
 constexpr int SlotCount=4;
@@ -96,9 +96,10 @@ constexpr Slots DefaultHeader{OverlayNameMetric,SofMetric,IncidentsMetric,TimeRe
 // Fuel Calculator modules, top to bottom; each switch is stored under its key.
 enum FuelModule {
     TankModule, FiguresModule, HistoryModule, CautionMarks, RefuelCard, WindowCard, TimelineModule,
-    OneShorterRow, TargetRow, OneLongerRow, TwoLongerRow, LeaderDistanceModule, WhiteFlagTimeModule, PitExitModule, TargetRefuel, ShorterCard
+    OneShorterRow, TargetRow, OneLongerRow, TwoLongerRow, LeaderDistanceModule, WhiteFlagTimeModule, PitExitModule, TargetRefuel, ShorterCard,
+    OwnLapsModule
 };
-constexpr int FuelModuleCount=ShorterCard+1;
+constexpr int FuelModuleCount=OwnLapsModule+1;
 struct ModuleInfo { const wchar_t* key; const wchar_t* title; const wchar_t* detail; bool on; };
 constexpr ModuleInfo FuelModules[]={
     {L"ShowTank",L"Tank",L"Fuel, range in laps and a bar of the fuel to the finish",true},
@@ -119,7 +120,8 @@ constexpr ModuleInfo FuelModules[]={
     // Switched in the expanded Target row: on each target row, the fuel to add when you stop on that lap.
     {L"ShowTargetRefuel",L"Fuel to add at the stop",L"For each target: stopping a lap later leaves a lap less to fuel for",true},
     // The forecast counts no stops still to come: before the leader's, the race may run a lap shorter.
-    {L"ShowOneLapShorter",L"One lap shorter",L"Fuel to add if the race runs a lap shorter than forecast, as when the leader still has to stop",true}};
+    {L"ShowOneLapShorter",L"One lap shorter",L"Fuel to add if the race runs a lap shorter than forecast, as when the leader still has to stop",true},
+    {L"ShowOwnLaps",L"Your laps at finish",L"The lap you finish on, and in orange how many fewer than the leader when you are lapped; refuel counts these laps",false}};
 static_assert(std::size(FuelModules)==FuelModuleCount);
 // Consumption figures in display order; app.fuelRows follows this order.
 struct FigureInfo { int metric; const wchar_t* heading; const wchar_t* title; const wchar_t* key; bool on; };
@@ -156,7 +158,7 @@ constexpr ModuleInfo WeatherModules[]={
     {L"ShowHumidityHistory",L"Humidity",L"A dashed line on its own scale",false}};
 static_assert(std::size(WeatherModules)==WeatherModuleCount);
 // Modules in their default order; the page moves them, the rest are display options.
-const std::vector<int> FuelOrder{TankModule,FiguresModule,LeaderDistanceModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,ShorterCard,WindowCard,TimelineModule,PitExitModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow};
+const std::vector<int> FuelOrder{TankModule,FiguresModule,LeaderDistanceModule,OwnLapsModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,ShorterCard,WindowCard,TimelineModule,PitExitModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow};
 const std::vector<int> WeatherOrder{ConditionModule,RainModule,TemperatureModule,TemperatureHistoryModule,WindModule,DetailsModule,UsageModule};
 const wchar_t* WetnessNames[]={L"—",L"Dry",L"Mostly Dry",L"Very Lightly Wet",L"Lightly Wet",L"Moderately Wet",L"Very Wet",L"Extremely Wet"};
 struct Placement { int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=true, growLeft=false, growUp=false, rounded=false, spout=false, backgroundOnly=false, spoutPremultiplied=true; };
@@ -370,7 +372,6 @@ struct App {
     std::vector<int> previewLayouts;
     bool layoutsLive=false;
     std::vector<int> openLayoutGroups;
-    bool layoutGroupsInitialized=false;
     Frame frame; Session session; TelemetryPump pump; FuelCalculator fuel;
     EventRecorder events; PitHistory pitHistory; PitLimiterVisibility pitVisibility; SetupDials setupDials;
     // The adjustment being made, and each dial's lowest and highest value seen in this car (CarPath), kept for its
@@ -385,6 +386,8 @@ struct App {
     WeatherHistory weatherHistory;
     bool preview=false, edit=false, hidden=false, diagnostics=false;
     bool startWithWindows=false, startMinimized=false, showTitleBar=false, checkUpdates=true;
+    // While overlays are dragged: snap to the grid (gridSize DIPs) and to the edges and centre lines of the others.
+    bool snapToGrid=true, snapToOverlays=true; int gridSize=10;
     bool settingsError=false, trayAvailable=false;
     // Values Save() last wrote, keyed "section\nkey"; Save() only writes what differs.
     std::map<std::wstring,std::wstring> savedSettings; unsigned settingsWrites=0;
@@ -544,11 +547,11 @@ int WeatherHeight(const Overlay& o) {
     return std::max(h,40);
 }
 // Values in the strip layout, including the two independent overall-leader forecasts.
-int FuelStripCount(const Overlay& o) { const auto& d=o.fuel.display; return 2*d[TankModule]+d[FiguresModule]+d[RefuelCard]+d[WindowCard]+d[TargetRow]+d[OneLongerRow]+d[LeaderDistanceModule]+d[WhiteFlagTimeModule]+d[PitExitModule]; }
+int FuelStripCount(const Overlay& o) { const auto& d=o.fuel.display; return 2*d[TankModule]+d[FiguresModule]+d[RefuelCard]+d[WindowCard]+d[TargetRow]+d[OneLongerRow]+d[LeaderDistanceModule]+d[OwnLapsModule]+d[WhiteFlagTimeModule]+d[PitExitModule]; }
 constexpr int FuelPanelWidth=440, FuelStripCell=86;
 // Whether the strip layout shows a module or uses an option; the page marks the others "Panel only".
 bool InStrip(int kind,int id) {
-    if(kind==FuelKind) return id==TankModule || id==FiguresModule || id==RefuelCard || id==WindowCard || id==TargetRow || id==OneLongerRow || id==LeaderDistanceModule || id==WhiteFlagTimeModule || id==PitExitModule;
+    if(kind==FuelKind) return id==TankModule || id==FiguresModule || id==RefuelCard || id==WindowCard || id==TargetRow || id==OneLongerRow || id==LeaderDistanceModule || id==OwnLapsModule || id==WhiteFlagTimeModule || id==PitExitModule;
     return id==ConditionModule || id==RainModule || id==TemperatureModule || id==WindModule || id==TrendArrows || id==WindRelative;
 }
 // The panel's modules that show, in their order. Refuel and pit window share a row when
@@ -563,7 +566,7 @@ bool IsTarget(int id) { return id>=OneShorterRow && id<=TwoLongerRow; }
 int FuelHeight(const Overlay& o) {
     if(o.fuel.strip) return 50;
     // A row of cards is 104 high: 12 above and below an 80 high card. Up to three cards next to each other share it.
-    constexpr int heights[]={112,52,104,0,104,104,46,24,24,24,24,32,32,32,0,104};
+    constexpr int heights[]={112,52,104,0,104,104,46,24,24,24,24,32,32,32,0,104,32};
     static_assert(std::size(heights)==FuelModuleCount);
     const auto shown=FuelShown(o); int h=0;
     for(size_t k=0;k<shown.size();++k) {
@@ -840,14 +843,45 @@ void LoadOverlays() {
         else if(app.overlayClass) { if(!o.window) CreateOverlayWindow(o); else o.due=0; }
     }
 }
+// The keys of a section as GetPrivateProfileSection lists them ("key=value", each ended by a zero), remembered as written.
+void RememberSection(const std::wstring& section,const wchar_t* lines,size_t length) {
+    for(const wchar_t* line=lines;line<lines+length && *line;line+=wcslen(line)+1) {
+        const wchar_t* equals=wcschr(line,L'='); if(!equals || equals==line) continue;
+        app.savedSettings[section+L"\n"+std::wstring(line,equals)]=equals+1;
+    }
+}
+// What the file holds, so the first Save() after loading writes only what changed: each key written costs a
+// rewrite of the whole file, and all of them took seconds, with the window blocked.
+void RememberSavedSettings() {
+    app.savedSettings.clear();
+    std::vector<wchar_t> names(4096);
+    for(DWORD length;(length=GetPrivateProfileSectionNamesW(names.data(),static_cast<DWORD>(names.size()),app.config.c_str()))>=names.size()-2 && names.size()<(1u<<22);) names.resize(names.size()*4);
+    std::vector<wchar_t> lines(16384);
+    for(const wchar_t* section=names.data();*section;section+=wcslen(section)+1) {
+        DWORD length=0;
+        while((length=GetPrivateProfileSectionW(section,lines.data(),static_cast<DWORD>(lines.size()),app.config.c_str()))>=lines.size()-2 && lines.size()<(1u<<22)) lines.resize(lines.size()*4);
+        RememberSection(section,lines.data(),length);
+    }
+}
+// One setting, written only when the file holds another value. Every write to settings.ini goes through here,
+// so what is remembered stays what the file holds.
+bool WriteSetting(const wchar_t* section,const wchar_t* key,const std::wstring& value) {
+    const auto id=std::wstring(section)+L"\n"+key;
+    if(const auto saved=app.savedSettings.find(id); saved!=app.savedSettings.end() && saved->second==value) return true;
+    ++app.settingsWrites;
+    if(!WritePrivateProfileStringW(section,key,value.c_str(),app.config.c_str())) return false;
+    app.savedSettings[id]=value; return true;
+}
 void Load() {
     wchar_t alphaOverride[32]{};
     GetEnvironmentVariableW(L"RACEMATE_SPOUT_ALPHA",alphaOverride,32);
     spoutPremultiplied=_wcsicmp(alphaOverride,L"straight")!=0;
-    app.savedSettings.clear(); // The next Save() writes everything once.
+    RememberSavedSettings();
     LoadLayouts(); LoadOverlays();
     app.showTitleBar=ReadBool(L"General",L"ShowTitleBar",false);
     app.checkUpdates=ReadBool(L"General",L"CheckForUpdates",true);
+    app.snapToGrid=ReadBool(L"General",L"SnapToGrid",true); app.snapToOverlays=ReadBool(L"General",L"SnapToOverlays",true);
+    app.gridSize=std::clamp(ReadInt(L"General",L"GridSize",10),2,100);
     app.opponentFuelExtraLaps=std::clamp(ReadInt(L"General",L"OpponentFuelExtraLaps",3),0,10);
     app.startWithWindows=ReadBool(L"General",L"StartWithWindows",false);
     app.startMinimized=ReadBool(L"General",L"StartMinimized",false);
@@ -855,18 +889,12 @@ void Load() {
     app.windowMaximized=ReadBool(L"General",L"WindowMaximized",false);
     for(int i=0;i<HotkeyCount;++i) { const WORD hotkey=static_cast<WORD>(ReadInt(L"Hotkeys",HotkeyKeys[i],DefaultHotkeys[i])); app.hotkeys[i]=LOBYTE(hotkey)?hotkey:0; }
 }
-// Each WritePrivateProfileString call rewrites the file; all keys take about 100 ms, so
-// only keys whose value changed since the last write go out. A missing file gets all.
+// Each WritePrivateProfileString call rewrites the file; all keys take seconds, so only keys whose value
+// differs from the file go out. A missing file gets all.
 void Save() {
     bool success=true;
     if(GetFileAttributesW(app.config.c_str())==INVALID_FILE_ATTRIBUTES) app.savedSettings.clear();
-    auto write=[&](const wchar_t* section,const wchar_t* key,const std::wstring& value) {
-        const auto id=std::wstring(section)+L"\n"+key;
-        if(const auto saved=app.savedSettings.find(id); saved!=app.savedSettings.end() && saved->second==value) return;
-        ++app.settingsWrites;
-        if(WritePrivateProfileStringW(section,key,value.c_str(),app.config.c_str())) app.savedSettings[id]=value;
-        else success=false;
-    };
+    auto write=[&](const wchar_t* section,const wchar_t* key,const std::wstring& value) { if(!WriteSetting(section,key,value)) success=false; };
     auto number=[&](const wchar_t* section,const wchar_t* key,int value) { write(section,key,std::to_wstring(value)); };
     auto order=[&](const wchar_t* section,const wchar_t* key,const std::vector<int>& ids) {
         std::wstring text; for(int id:ids) { if(!text.empty()) text+=L","; text+=std::to_wstring(id); } write(section,key,text);
@@ -946,6 +974,7 @@ void Save() {
     number(L"General",L"ShowTitleBar",app.showTitleBar);
     number(L"General",L"OpponentFuelExtraLaps",app.opponentFuelExtraLaps);
     number(L"General",L"StartWithWindows",app.startWithWindows); number(L"General",L"StartMinimized",app.startMinimized); number(L"General",L"CheckForUpdates",app.checkUpdates);
+    number(L"General",L"SnapToGrid",app.snapToGrid); number(L"General",L"SnapToOverlays",app.snapToOverlays); number(L"General",L"GridSize",app.gridSize);
     if(app.windowRect.right>app.windowRect.left) {
         number(L"General",L"WindowLeft",app.windowRect.left); number(L"General",L"WindowTop",app.windowRect.top);
         number(L"General",L"WindowRight",app.windowRect.right); number(L"General",L"WindowBottom",app.windowRect.bottom);
@@ -1001,7 +1030,7 @@ FuelPlan PreviewPlan() {
     auto& race=p.prediction; race.status=PredictionStatus::Racing; race.leader=0; race.leaderPace=PreviewLeaderPace; race.ownPace=PreviewOwnPace;
     // The leader at 7.5 laps with 630 s left: 11.8 laps to go, the final lap starting 17 s before the clock runs out.
     auto& finish=race.finish; finish.valid=true; finish.winner=0; finish.leaderTotalDistance=19+17/race.leaderPace; finish.leaderDistance=finish.leaderTotalDistance-7.5; finish.finalLapTimeLeft=17;
-    finish.ownDistance=p.lapsToFinish;
+    finish.ownDistance=p.lapsToFinish; finish.leaderLaps=finish.ownLaps=20;
     // The last value is the qualifying maximum, from four counted qualifying laps.
     const double burns[]={3.09,3.12,3.10,3.21,2.98,3.11,3.13,3.24}; const int counts[]={1,10,5,12,12,12,3,4};
     static_assert(std::size(burns)==FuelMetricCount && std::size(counts)==FuelMetricCount);
@@ -1449,7 +1478,8 @@ const CellRenderer CellRenderers[]={
     +[](const Row& r,const Overlay& o,Cell& c) {
         c.text=IRatingText(r.driver.rating,o.table.driverShortView[2]); if(c.text==L"—") { c.ink=Ink::Muted; return; }
         c.box=Cell::Filled; c.boxColor=r.driver.license.empty()?Ink::NeutralBadge:LicenseFill(r.driver); c.ink=RGB(255,255,255); c.font=SmallBold; },
-    +[](const Row&,const Overlay&,Cell&) {} // Sector cells are drawn individually in BuildScene.
+    +[](const Row&,const Overlay&,Cell&) {}, // Sector cells are drawn individually in BuildScene.
+    +[](const Row& r,const Overlay&,Cell& c) { if(r.driver.team.empty()) { c.text=L"—"; c.ink=Ink::Muted; return; } c.text=Wide(r.driver.team); c.ink=Ink::Value; }
 };
 static_assert(std::size(CellRenderers)==ColumnCount);
 bool Editing(const Overlay& o); // Its own page is open in the visible main window.
@@ -1896,6 +1926,11 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                 break;
             case OneLongerRow: item(L"+1 LAP",target(1)>=0?Format(target(1),2):L"—",targetInk(target(1))); break;
             case LeaderDistanceModule: item(L"LEADER LAPS",LeaderDistanceValue(),Ink::Accent); break;
+            case OwnLapsModule: {
+                const int laps=OwnFinishLaps(), fewer=OwnLapsFewer();
+                item(L"YOUR LAPS",laps<0?L"—":std::to_wstring(laps)+(fewer>0?L" −"+std::to_wstring(fewer):L""),fewer>0?Ink::Orange:Ink::Accent);
+                break;
+            }
             case WhiteFlagTimeModule: item(L"FINAL LAP",WhiteFlagTimeValue(),white); break;
             case PitExitModule: item(L"PIT EXIT",PitExit().valid?L"P"+std::to_wstring(PitExit().classPosition):L"—",Ink::Accent); break;
             default: break;
@@ -1923,6 +1958,17 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                     separator();
                     label(id==LeaderDistanceModule?L"LEADER LAPS AT FINISH":L"TIME LEFT AT LEADER'S FINAL LAP",rect(16,y,W-150,32),Ink::Label,Small);
                     label(id==LeaderDistanceModule?LeaderDistanceValue()+L" laps":WhiteFlagTimeValue(),rect(W-142,y,126,32),id==LeaderDistanceModule?Ink::Accent:white,Bold,DT_RIGHT);
+                    y+=32;
+                }
+                if(id==OwnLapsModule) {
+                    // Lapped: how many laps fewer than the leader, so the fuel needed is not read off the leader's laps.
+                    separator();
+                    const int laps=OwnFinishLaps(), fewer=OwnLapsFewer();
+                    const std::wstring value=laps>=0?std::to_wstring(laps)+L" laps":L"—";
+                    label(L"YOUR LAPS AT FINISH",rect(16,y,W-150,32),Ink::Label,Small);
+                    label(value,rect(W-142,y,126,32),Ink::Accent,Bold,DT_RIGHT);
+                    if(fewer>0) label(std::to_wstring(fewer)+(fewer==1?L" lap":L" laps")+L" fewer than leader",
+                        {px(16)+measure(L"YOUR LAPS AT FINISH",Small)+px(12),px(y),px(W-16)-measure(value,Bold)-px(10),px(y+32)},Ink::Orange,Small,DT_RIGHT);
                     y+=32;
                 }
                 if(id==TankModule) {
@@ -2899,9 +2945,10 @@ void Fit(Overlay& o,bool recover) {
     if(recover || !monitor) {
         if(!monitor) { monitor=MonitorFromWindow(app.main,MONITOR_DEFAULTTONEAREST); MONITORINFO info{sizeof(info)}; GetMonitorInfoW(monitor,&info); x=info.rcWork.left+30; y=info.rcWork.top+50; }
         MONITORINFO info{sizeof(info)}; GetMonitorInfoW(monitor,&info);
-        x=static_cast<int>(std::clamp<LONG>(x,info.rcWork.left-w+60,info.rcWork.right-60));
-        const LONG maxY=o.kind==FuelKind?std::max(info.rcWork.top,info.rcWork.bottom-h):info.rcWork.bottom-32;
-        y=static_cast<int>(std::clamp<LONG>(y,info.rcWork.top,maxY));
+        // Kept on the monitor, not off the taskbar: overlays may cover it, as iRacing does. The Fuel Calculator stays whole.
+        x=static_cast<int>(std::clamp<LONG>(x,info.rcMonitor.left-w+60,info.rcMonitor.right-60));
+        const LONG maxY=o.kind==FuelKind?std::max(info.rcMonitor.top,info.rcMonitor.bottom-h):info.rcMonitor.bottom-32;
+        y=static_cast<int>(std::clamp<LONG>(y,info.rcMonitor.top,maxY));
         o.place.x=x+(o.place.growLeft?w:0); o.place.y=y+(o.place.growUp?h:0);
     }
     if(o.kind==SideWarningKind) {
@@ -3337,7 +3384,7 @@ void Tick() {
             { ProfileScope p("telemetry take (read on its own thread)"); fresh=app.pump.Take(frame,session,sessionChanged); }
             if(fresh) {
                 const bool was=app.frame.connected;
-                app.frame=frame; if(sessionChanged) app.session=std::move(session);
+                app.frame=frame; if(sessionChanged) { KeepIncidents(session,app.session); app.session=std::move(session); }
                 if(frame.connected || was) ProcessFrame(frame.connected);
             }
             AutoLayout();
@@ -3372,6 +3419,7 @@ void WriteProfile() {
 void ShowSettings() { ShowWindow(app.main,IsIconic(app.main)?SW_RESTORE:SW_SHOW); SetForegroundWindow(app.main); UpdateOverlays(); }
 void ToggleEdit() { app.edit=!app.edit; Tick(); UpdateOverlays(); RefreshPage(); }
 void ToggleHidden() { app.hidden=!app.hidden; UpdateOverlays(); RefreshPage(); }
+#include "Snapping.inc"
 LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     auto* o=reinterpret_cast<Overlay*>(GetWindowLongPtrW(w,GWLP_USERDATA));
     if(m==WM_NCCREATE) { o=static_cast<Overlay*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams); o->window=w; SetWindowLongPtrW(w,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(o)); }
@@ -3412,8 +3460,9 @@ LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     case WM_NCHITTEST: return (app.edit || Editing(*o))?HTCAPTION:HTTRANSPARENT;
     case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
     case WM_ENTERSIZEMOVE: o->dragging=true; break;
-    case WM_EXITSIZEMOVE: o->dragging=false; CaptureOverlayCorner(*o); Save(); return 0;
+    case WM_EXITSIZEMOVE: o->dragging=false; HideGuides(); CaptureOverlayCorner(*o); Save(); return 0;
     case WM_WINDOWPOSCHANGING:
+        if(auto* p=reinterpret_cast<WINDOWPOS*>(lp); o->dragging && !(p->flags&SWP_NOMOVE)) SnapDrag(*o,*p);
         // The Side Warning's bars are dragged up or down, or onto another monitor; across they keep their distance apart.
         if(auto* p=reinterpret_cast<WINDOWPOS*>(lp); o->kind==SideWarningKind && !(p->flags&SWP_NOMOVE)) {
             RECT now{}; GetWindowRect(w,&now); const int width=p->flags&SWP_NOSIZE?now.right-now.left:p->cx, height=p->flags&SWP_NOSIZE?now.bottom-now.top:p->cy;
@@ -3581,6 +3630,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
     cls.lpfnWndProc=OverlayProc; cls.hbrBackground=nullptr; cls.lpszClassName=L"RaceMate.Overlay"; RegisterClassExW(&cls);
     cls.lpfnWndProc=FrameProc; cls.lpszClassName=L"RaceMate.Frame"; RegisterClassExW(&cls);
     cls.lpfnWndProc=MirrorProc; cls.lpszClassName=L"RaceMate.Mirror"; RegisterClassExW(&cls);
+    cls.lpfnWndProc=DefWindowProcW; cls.hbrBackground=CreateSolidBrush(GuideInk); cls.lpszClassName=L"RaceMate.Guide"; RegisterClassExW(&cls);
     app.overlayClass=true;
     for(auto& o:app.overlays) if(LayoutRunning(o.layout)) CreateOverlayWindow(o);
 #ifdef RACEMATE_DIAGNOSTICS

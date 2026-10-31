@@ -324,7 +324,7 @@ int ReferenceCar(const Frame& f) {
 Session ParseSession(const std::string& yaml, int sessionNumber) {
     Session s; s.number = sessionNumber;
     std::string section, subSession, sessionId;
-    Driver driver; double tank=-1, fuelFraction=-1;
+    Driver driver; double tank=-1, fuelFraction=-1; int teamIncidents=-1;
     int listIndent = -1, driverIndent = -1, currentSession = -1;
     bool inDrivers = false;
     bool inResults = false, hasResult = false;
@@ -339,9 +339,11 @@ Session ParseSession(const std::string& yaml, int sessionNumber) {
     };
     auto save = [&] {
         if (driver.index >= 0 && driver.index < MaxCars && !driver.paceCar && !driver.spectator) {
+            // The car's count, as the limits count it; the current driver's alone restarts at each driver change.
+            if(teamIncidents>=0) driver.incidentCount=teamIncidents;
             driver.brand=CarBrand(driver.carPath,driver.carName); s.drivers.push_back(driver);
         }
-        driver = {};
+        driver = {}; teamIncidents=-1;
     };
     size_t start = 0;
     while (start < yaml.size()) {
@@ -451,6 +453,7 @@ Session ParseSession(const std::string& yaml, int sessionNumber) {
         if (key == "CarScreenName") driver.carName = value;
         if (key == "CarPath") driver.carPath = value;
         if (key == "UserName") driver.name = value;
+        if (key == "TeamName") driver.team = value;
         if (key == "CarNumber") driver.number = value;
         if(key=="CarClassEstLapTime") { const double n=Number(value); driver.estimatedLapTime=ValidTime(n)?n:-1; }
         if (key == "CarClassID") driver.classId = Integer(value,0);
@@ -459,6 +462,7 @@ Session ParseSession(const std::string& yaml, int sessionNumber) {
         if (key == "LicString") driver.license = value;
         if (key == "LicColor") driver.licenseColor = static_cast<unsigned>(std::strtoul(value.c_str(), nullptr, 0));
         if (key == "CurDriverIncidentCount") driver.incidentCount = Integer(value,-1);
+        if (key == "TeamIncidentCount") teamIncidents = Integer(value,-1);
         if (key == "IRating") driver.rating = Integer(value,0);
         if (key == "CarIsPaceCar") driver.paceCar = value == "1" || value == "true";
         if (key == "IsSpectator") driver.spectator = value == "1" || value == "true";
@@ -476,6 +480,12 @@ Session ParseSession(const std::string& yaml, int sessionNumber) {
     if(!sectorsValid) s.sectors.clear();
     s.key = sessionId + ":" + subSession;
     return s;
+}
+void KeepIncidents(Session& next, const Session& previous) {
+    if(next.key!=previous.key || next.number!=previous.number) return;
+    // A car's points only grow during a session, so a lower or missing count is iRacing no longer sharing it.
+    for(auto& d:next.drivers)
+        for(const auto& p:previous.drivers) if(p.index==d.index && p.number==d.number) { d.incidentCount=std::max(d.incidentCount,p.incidentCount); break; }
 }
 std::string CarBrand(const std::string& carPath, const std::string& carName) {
     // CarPath fragments, most specific first; ^ matches only at the start. The logo atlas uses the same names.

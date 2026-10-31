@@ -4,13 +4,13 @@ public:
     OverlaysPage() : PageWindow(ui.heading,ui.text) {}
 private:
     enum class Key { None, Instance, Add, Move, Hide, Reset, Layout, AddLayout };
-    static constexpr int ListId=100, ScaleId=200, OpacityId=201, CornerId=202, RateId=203, SpoutId=204, OverlayNameId=205, BackgroundOpacityId=206, SpoutAlphaId=207, LayoutNameId=220, LayoutConditionId=221;
+    static constexpr int ListId=100, ScaleId=200, OpacityId=201, CornerId=202, RateId=203, SpoutId=204, OverlayNameId=205, BackgroundOpacityId=206, LayoutNameId=220, LayoutConditionId=221;
     static constexpr const wchar_t* Corners[]={L"Top left",L"Top right",L"Bottom left",L"Bottom right"};
 
     void OnCreate() override {
         list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont());
         editors_.Attach(list_,Instance(),TextFont());
-        if(!app.layoutGroupsInitialized) { app.openLayoutGroups.push_back(app.layout); app.layoutGroupsInitialized=true; }
+        // Layouts start folded; the ones opened stay open while RaceMate runs.
         Refresh();
     }
     void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
@@ -102,9 +102,11 @@ private:
         editors_.Check(BackgroundOpacityId,L"Background only",place.backgroundOnly,458,46,140);
         editors_.Label(L"Fixed corner",0,82,84); editors_.Combo(CornerId,corners,Corner(place),88,82,130);
         editors_.Label(L"Updates",280,82,84); editors_.Combo(RateId,rates,rate,368,82,130);
-        editors_.Check(SpoutId,L"OBS output",place.spout,0,118,260);
-        editors_.Label(L"OBS alpha mode",280,118,130);
-        editors_.Combo(SpoutAlphaId,{L"Premultiplied",L"Straight"},place.spoutPremultiplied?0:1,420,118,178);
+        // Output and alpha mode in one choice: premultiplied is the usual case, straight only for OBS's Default mode.
+        editors_.Label(L"OBS output",0,118,84);
+        const HWND obs=editors_.Combo(SpoutId,{L"Off",L"On",L"On, straight alpha"},!place.spout?0:(place.spoutPremultiplied?1:2),88,118,130);
+        SendMessageW(obs,CB_SETDROPPEDWIDTH,MulDiv(170,GetDpiForWindow(obs),96),0);
+        if(place.spout) editors_.Label((L"Sender: "+Wide(SpoutSenderName(*expanded_))).c_str(),280,118,0);
         syncing_=false; editors_.Position();
     }
     void Expand(Overlay* o) {
@@ -188,12 +190,10 @@ private:
             }
             return true;
         }
-        if(id==SpoutId && code==BN_CLICKED && expanded_ && !syncing_) {
-            expanded_->place.spout=SendMessageW(editors_.Get(SpoutId),BM_GETCHECK,0,0)==BST_CHECKED;
-            SettingChanged(); Refresh(); BuildEditors(); return true;
-        }
-        if(id==SpoutAlphaId && code==CBN_SELCHANGE && expanded_ && !syncing_) {
-            expanded_->place.spoutPremultiplied=SendMessageW(editors_.Get(SpoutAlphaId),CB_GETCURSEL,0,0)==0;
+        if(id==SpoutId && code==CBN_SELCHANGE && expanded_ && !syncing_) {
+            // Off keeps the alpha mode for the next time it is switched on.
+            const auto choice=SendMessageW(editors_.Get(SpoutId),CB_GETCURSEL,0,0);
+            expanded_->place.spout=choice>0; if(choice>0) expanded_->place.spoutPremultiplied=choice==1;
             SettingChanged(); Refresh(); BuildEditors(); return true;
         }
         if(id==PageRefreshId) { Refresh(); return true; }

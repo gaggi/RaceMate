@@ -126,9 +126,9 @@ A screenshot and the relevant setting names are often enough. A profile is usefu
 
 ## OBS output has black corners or dark edges
 
-Match RaceMate's per-overlay **OBS alpha mode** to the Spout2 Capture source's
-composite mode. RaceMate defaults to **Premultiplied**; select OBS's corresponding
-premultiplied mode. For OBS **Default** (straight alpha), choose **Straight** in
-RaceMate. **Opaque** discards transparency, including rounded corners. A mismatch
+Match RaceMate's per-overlay **OBS output** choice to the Spout2 Capture source's
+composite mode. **On** sends premultiplied alpha; select OBS's corresponding
+premultiplied mode. For OBS **Default** (straight alpha), choose **On, straight alpha**
+in RaceMate. **Opaque** discards transparency, including rounded corners. A mismatch
 between straight and premultiplied alpha can cause dark edges or incorrect
 brightness. RaceMate and OBS should run on the same GPU.

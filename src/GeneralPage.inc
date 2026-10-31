@@ -3,9 +3,9 @@ class GeneralPage : public PageWindow {
 public:
     GeneralPage() : PageWindow(ui.heading,ui.text) {}
 private:
-    enum class Key { None, StartWithWindows, StartMinimized, TitleBar, OpponentFuel, PitLane, PitService, Hotkey, CheckUpdates, Version };
-    static constexpr int ListId=100, HotkeyId=200, LaneEditId=202, TiresEditId=203, RateEditId=204;
-    static constexpr int LaneRow=10, ServiceRow=11;
+    enum class Key { None, StartWithWindows, StartMinimized, TitleBar, OpponentFuel, PitLane, PitService, Hotkey, CheckUpdates, Version, SnapToGrid, SnapToOverlays };
+    static constexpr int ListId=100, HotkeyId=200, LaneEditId=202, TiresEditId=203, RateEditId=204, GridEditId=205;
+    static constexpr int LaneRow=10, ServiceRow=11, GridRow=12;
     // Below 5 Hz short offtracks and pit timing get lost.
 
     void OnCreate() override {
@@ -55,6 +55,9 @@ private:
         toggle(Key::StartMinimized,L"Start minimized",L"Starts in the tray; enabled overlays work as usual.",app.startMinimized);
         header(L"Overlays");
         toggle(Key::TitleBar,L"Headers on all overlays",L"Switches the header of every overlay at once; each overlay's page also sets its own header and footer.",app.showTitleBar);
+        toggle(Key::SnapToGrid,L"Snap to grid while moving",L"Every "+std::to_wstring(app.gridSize)+L" px from the corner of the screen. Hold Alt while dragging to place freely.",app.snapToGrid);
+        rows.back().iconButtons={expanded_==GridRow?Glyph::Collapse:Glyph::Expand}; rows.back().expandHeight=expanded_==GridRow?48:0;
+        toggle(Key::SnapToOverlays,L"Snap to other overlays",L"Edges and centre lines line up with other overlays and the screen; a magenta line shows where.",app.snapToOverlays);
         header(L"Opponent fuel estimate");
         RowList::Row fuel; fuel.title=L"Additional laps with fuel saving";
         fuel.detail=L"+"+std::to_wstring(app.opponentFuelExtraLaps)+(app.opponentFuelExtraLaps==1?L" lap":L" laps")+L" for yellow SAVE. Green END uses your normal full-tank range. Shared by Relative and Standings."; fuel.button=L"Choose...";
@@ -104,7 +107,7 @@ private:
     }
     int ExpandedRow() const {
         for(size_t i=0;i<keys_.size();++i) {
-            if((keys_[i]==Key::PitLane && expanded_==LaneRow) || (keys_[i]==Key::PitService && expanded_==ServiceRow)) return static_cast<int>(i);
+            if((keys_[i]==Key::PitLane && expanded_==LaneRow) || (keys_[i]==Key::PitService && expanded_==ServiceRow) || (keys_[i]==Key::SnapToGrid && expanded_==GridRow)) return static_cast<int>(i);
         }
         return -1;
     }
@@ -112,6 +115,10 @@ private:
         editors_.Clear();
         const int row=ExpandedRow(); if(row<0) return;
         editors_.Begin(row);
+        if(expanded_==GridRow) {
+            editors_.Label(L"Grid size",0,10,84); editors_.Edit(GridEditId,std::to_wstring(app.gridSize),88,10,64); editors_.Label(L"px  \u00B7  2 to 100",158,10,0);
+            editors_.Position();
+        }
         if(expanded_==LaneRow || expanded_==ServiceRow) {
             // Empty means learned (lane) or not set; times are per track and per car.
             auto seconds=[](double value){ return value>0?Format(value,1):std::wstring(); };
@@ -148,6 +155,14 @@ private:
             if(code==EN_CHANGE && capturing_>=0 && LOBYTE(hotkey)) { app.hotkeys[capturing_]=hotkey; Save(); EndCapture(); }
             return true;
         }
+        if(id==GridEditId) {
+            if(code==EN_KILLFOCUS) {
+                const int size=_wtoi(editors_.Text(GridEditId).c_str());
+                if(size>0) { app.gridSize=std::clamp(size,2,100); Save(); }
+                Refresh(); BuildEditors();
+            }
+            return true;
+        }
         if(id==LaneEditId || id==TiresEditId || id==RateEditId) {
             if(code==EN_KILLFOCUS) { ApplyPitTime(id); Refresh(); }
             return true;
@@ -177,6 +192,11 @@ private:
         case Key::PitLane: if(code==RowList::kIconButton || code==RowList::kActivated) Expand(LaneRow); break;
         case Key::PitService: if(code==RowList::kIconButton || code==RowList::kActivated) Expand(ServiceRow); break;
         case Key::CheckUpdates: if(code==RowList::kToggled) { SetCheckUpdates(on); Refresh(); } break;
+        case Key::SnapToGrid:
+            if(code==RowList::kToggled) { app.snapToGrid=on; Save(); Refresh(); }
+            else if(code==RowList::kIconButton || code==RowList::kActivated) Expand(GridRow);
+            break;
+        case Key::SnapToOverlays: if(code==RowList::kToggled) { app.snapToOverlays=on; Save(); Refresh(); } break;
         case Key::Version:
             if(code==RowList::kIconButton) UpdateChecker::OpenReleasePage(updates.release.releasePageUrl);
             else if(code==RowList::kButton) UpdateVersionButton();

@@ -297,6 +297,7 @@ void MulticlassEnduranceTests() {
     Near(prediction.finish.ownDistance,30.5,"slow class needs half the distance plus its eligible finish crossing");
     Near(prediction.finish.ownFinishIn,3660,"lapped slow class finishes at first own line crossing after flag");
     Require(prediction.finish.leaderCrossings==61 && prediction.finish.ownCrossings==31,"thirty further laps lost over one remaining hour");
+    Require(prediction.finish.leaderLaps==161 && prediction.finish.ownLaps==81,"finishing laps show the lapped car's eighty laps fewer");
     // Learn fuel independently, then feed the slow-class forecast into the entire fuel plan.
     FuelCalculator fuel; auto learning=f; learning.time=0; learning.lapCompleted=0; learning.fuel=100;
     fuel.Update(s,learning);

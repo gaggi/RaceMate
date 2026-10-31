@@ -200,7 +200,11 @@ void AddLayout(bool copy) {
         std::vector<wchar_t> contents(32768);
         GetPrivateProfileSectionW(Section(o).c_str(),contents.data(),static_cast<DWORD>(contents.size()),app.config.c_str());
         const auto target=LayoutPrefix(id)+Numbered(Sections[o.kind],o.number);
-        WritePrivateProfileSectionW(target.c_str(),contents.data(),app.config.c_str());
+        // A whole section at once; remembered, so the next Save() does not write its keys one by one again.
+        if(WritePrivateProfileSectionW(target.c_str(),contents.data(),app.config.c_str())) {
+            size_t length=0; while(length+1<contents.size() && (contents[length] || contents[length+1])) ++length;
+            RememberSection(target,contents.data(),length+1);
+        }
     }
     app.layouts.push_back({id,L"Layout "+std::to_wstring(app.layouts.size()+1),AlwaysCondition});
     LoadOverlays(); SwitchLayout(id);

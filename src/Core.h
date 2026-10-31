@@ -28,6 +28,7 @@ struct Driver {
     std::string license; unsigned licenseColor = 0x989fa9;
     double estimatedLapTime = -1;
     std::string brand; // Manufacturer, from CarBrand().
+    std::string team; // TeamName; in solo events iRacing repeats the driver's name.
 };
 std::string TireLabel(const Driver&, int compound);
 // Manufacturer from CarPath, else the first word of CarScreenName; empty without either.
@@ -59,6 +60,8 @@ struct Session {
     std::vector<std::pair<std::string,std::string>> setup; int setupUpdate = -1;
 };
 Session ParseSession(const std::string& yaml, int sessionNumber);
+// Keeps the incident points of the same session's earlier update where the new one has fewer or none, as after the race.
+void KeepIncidents(Session& next, const Session& previous);
 // In-car adjustments that can be changed while driving (the dc variables), against the loaded setup.
 enum Dial { BrakeBiasDial, AbsDial, TractionDial, Traction2Dial, ThrottleDial, MixtureDial, EngineBrakingDial,
     PeakBrakeBiasDial, Traction3Dial, Traction4Dial, EnginePowerDial, BoostDial, AntiRollFrontDial, AntiRollRearDial,
@@ -303,6 +306,7 @@ constexpr int FuelMetricCount = static_cast<int>(FuelMetric::Count);
 struct FinishScenario {
     bool valid = false;
     int winner = -1, leaderCrossings = -1, ownCrossings = -1;
+    int leaderLaps = -1, ownLaps = -1; // Laps each will have completed at the finish; fewer own laps when lapped.
     double leaderTotalDistance = -1; // Total leader progress at timer expiry; at the finish for lap-limited races.
     double leaderDistance = -1, leaderFinishIn = -1, raceFinishIn = -1, ownDistance = -1, ownFinishIn = -1;
     double finalLapTimeLeft = -1; // Race clock at the start of the leader's projected final lap.

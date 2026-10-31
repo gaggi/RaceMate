@@ -287,16 +287,17 @@ int RunDiagnostics() {
         auto& finish=app.fuelPlan.prediction.finish;
         finish.leaderTotalDistance=19.08; finish.finalLapTimeLeft=13;
         forecastOk=LeaderDistanceValue()==L"~19.08" && WhiteFlagTimeValue()==L"~13 s" && forecastOk;
-        forecastOk=FooterValue(LapLeaderDistanceMetric)==L"Lap 8 / ~19.08" && forecastOk;
+        forecastOk=FooterValue(LapLeaderDistanceMetric)==L"Leader lap 8 / ~19.08" && forecastOk;
         const Frame savedFrame=app.frame;
-        app.frame.onTrack=false; app.frame.camera=0; app.frame.cars[0].lap=12;
-        forecastOk=FooterValue(LapLeaderDistanceMetric)==L"Lap 12 / ~19.08" && forecastOk;
+        // The leader's lap whichever car you watch, and not your own.
+        app.frame.onTrack=false; app.frame.camera=3; app.frame.cars[0].completed=11; app.frame.cars[3].lap=5;
+        forecastOk=FooterValue(LapLeaderDistanceMetric)==L"Leader lap 12 / ~19.08" && forecastOk;
         app.frame=savedFrame;
         finish.finalLapTimeLeft=73; forecastOk=WhiteFlagTimeValue()==L"~1:13" && forecastOk;
         finish.finalLapTimeLeft=0; forecastOk=WhiteFlagTimeValue()==L"~0 s" && forecastOk;
         finish.finalLapTimeLeft=std::numeric_limits<double>::quiet_NaN(); forecastOk=WhiteFlagTimeValue()==L"—" && forecastOk;
         finish.valid=false; forecastOk=LeaderDistanceValue()==L"—" && WhiteFlagTimeValue()==L"—" && forecastOk;
-        forecastOk=FooterValue(LapLeaderDistanceMetric)==L"Lap 8 / —" && forecastOk;
+        forecastOk=FooterValue(LapLeaderDistanceMetric)==L"Leader lap 8 / —" && forecastOk;
         app.fuelPlan=savedPlan;
         // One registry and renderer for both bands of every kind, including the Pit Assist.
         for(int kind=0;kind<OverlayCount;++kind) {
@@ -394,13 +395,24 @@ int RunDiagnostics() {
     report<<"Main window DPI changes keep the current page: "<<(viewportOk?"PASS":"FAIL")<<"\n";
     allOk=viewportOk && allOk;
     {
-        // Save() writes only changed keys; after Load() or without a file it writes all again.
+        // Save() writes only changed keys, also right after Load(); without a file it writes all again.
         Save(); const unsigned before=app.settingsWrites; Save();
         bool saveOk=app.settingsWrites==before;
         app.showTitleBar=!app.showTitleBar; Save(); saveOk=app.settingsWrites==before+1 && saveOk;
         const bool title=app.showTitleBar; Load(); saveOk=app.showTitleBar==title && saveOk;
         app.showTitleBar=!app.showTitleBar; Save(); Load(); saveOk=app.showTitleBar!=title && saveOk;
+        const unsigned loaded=app.settingsWrites; Save(); saveOk=app.settingsWrites==loaded && saveOk;
+        // Snapping: the nearest of start, middle and end within reach goes onto its line; the grid counts from the monitor.
+        {
+            const std::vector<SnapLine> lines{{100,0,50},{300,0,50}}; const SnapLine* hit=nullptr;
+            saveOk=SnapAxis(95,40,lines,8,hit)==5 && hit==&lines[0] && saveOk;
+            saveOk=SnapAxis(237,120,lines,8,hit)==3 && hit==&lines[1] && saveOk; // Its middle, 297, goes onto 300.
+            saveOk=SnapAxis(150,40,lines,8,hit)==0 && hit==nullptr && saveOk;
+            saveOk=SnapToGrid(1924,1920,10)==1920 && SnapToGrid(1926,1920,10)==1930 && SnapToGrid(-13,0,10)==-10 && saveOk;
+        }
+        const auto kept=app.config+L".kept"; MoveFileExW(app.config.c_str(),kept.c_str(),MOVEFILE_REPLACE_EXISTING);
         const unsigned full=app.settingsWrites; Save(); saveOk=app.settingsWrites-full>100 && saveOk;
+        MoveFileExW(kept.c_str(),app.config.c_str(),MOVEFILE_REPLACE_EXISTING);
         report<<"Settings save only changed keys and survive a reload: "<<(saveOk?"PASS":"FAIL")<<"\n"; allOk=saveOk && allOk;
     }
     {
@@ -575,6 +587,7 @@ int RunDiagnostics() {
         app.frame.airTemperature=-5; app.frame.timeOfDay=86400+65*60;
         footerOk=FooterValue(4)==L"Air -5°C" && FooterValue(12)==L"Sim 01:05" && FooterValue(8)==L"Lap 8" && footerOk;
         app.frame.incidents=3; app.session.incidentLimit=17; footerOk=FooterValue(2)==L"3/17x" && footerOk;
+        app.frame.humidity=0.62; footerOk=FooterValue(HumidityMetric)==L"Humidity 62 %" && footerOk;
         app.session.type="Practice"; footerOk=FooterValue(2)==L"3x" && footerOk;
         app.session.type="Qualify"; footerOk=FooterValue(2)==L"3x" && footerOk; app.session.type="Race";
         app.frame.onTrack=false; app.frame.camera=0; app.frame.cars[0].lap=12; app.session.drivers[0].incidentCount=4;
@@ -1052,7 +1065,7 @@ int RunDiagnostics() {
         auto& fuel=First(FuelKind); const int paired=BaseHeight(fuel);
         ok=MoveInOrder(fuel.fuel.order,WindowCard,1) && BaseHeight(fuel)==paired+104 && ok;
         MoveInOrder(fuel.fuel.order,TankModule,2); Load();
-        ok=First(FuelKind).fuel.order==std::vector<int>{LeaderDistanceModule,FiguresModule,TankModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,ShorterCard,TimelineModule,WindowCard,PitExitModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow} && BaseHeight(First(FuelKind))==paired+104 && ok;
+        ok=First(FuelKind).fuel.order==std::vector<int>{LeaderDistanceModule,FiguresModule,TankModule,OwnLapsModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,ShorterCard,TimelineModule,WindowCard,PitExitModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow} && BaseHeight(First(FuelKind))==paired+104 && ok;
         ok=Export(First(FuelKind).window,L"build\\qa\\fuel-reordered.bmp") && ok;
         auto& weather=First(WeatherKind); const int weatherHeight=BaseHeight(weather);
         ok=MoveInOrder(weather.weather.order,ConditionModule,3) && BaseHeight(weather)==weatherHeight && ok;
@@ -1330,6 +1343,7 @@ int RunDiagnostics() {
         for(int i=RaceFuelField;i<RaceFieldCount;++i) WritePrivateProfileStringW(L"RaceControl",(L"Field"+std::to_wstring(i)).c_str(),nullptr,app.config.c_str());
         WritePrivateProfileStringW(L"RaceControl",L"EventField7",nullptr,app.config.c_str());
         for(const auto key:RaceInfoKeys) WritePrivateProfileStringW(L"RaceControl",key,nullptr,app.config.c_str());
+        RememberSavedSettings(); // Deleted behind WriteSetting's back, so the keys are written again on restore.
         LoadRaceFields();
         for(int i=RaceFuelField;i<RaceFieldCount;++i) extrasOk=!raceControl.fields[i] && extrasOk;
         extrasOk=!raceControl.eventFields[RaceEventLapField] && !raceControl.info[0] && !raceControl.info[1] && extrasOk;
@@ -1357,12 +1371,15 @@ int RunDiagnostics() {
         leader.car.stintLaps=10; saver.car.stintLaps=2; unknown.car.stintLaps=-1;
         leader.car.stops=10; saver.car.stops=2; unknown.car.stops=-1;
         leader.driver.brand="BMW"; saver.driver.brand="Audi"; unknown.driver.brand.clear();
+        leader.driver.team="Zeta Racing"; saver.driver.team="Alpha Motorsport"; unknown.driver.team.clear();
+        extrasOk=RaceStandingCell(leader,RaceTeamField)==L"Zeta Racing" && RaceStandingCell(unknown,RaceTeamField)==L"\u2014" && extrasOk;
+        overlay={{},Ink::White}; CellRenderers[TeamColumn](leader,First(RelativeKind),overlay); extrasOk=overlay.text==L"Zeta Racing" && extrasOk;
         app.ratingChanges.fill(NoRatingChange); app.ratingVersion=app.modelVersion;
         app.ratingChanges[leader.driver.index]=12; app.ratingChanges[saver.driver.index]=-10;
         extrasOk=RaceStandingCell(leader,RaceRatingChangeField)==L"+12" && RaceStandingCell(saver,RaceRatingChangeField)==L"-10" && RaceStandingCell(unknown,RaceRatingChangeField)==L"\u2014" && extrasOk;
         extrasOk=RaceStandingCell(leader,RaceStintTimeField)==L"8:57" && RaceStandingCell(unknown,RaceStintTimeField)==L"\u2014" && extrasOk;
         extrasOk=RaceStandingCell(leader,RaceStopsField)==L"10" && RaceStandingCell(unknown,RaceStopsField)==L"\u2014" && extrasOk;
-        for(int column:{RaceFuelField,RaceStintLapsField,RaceStintTimeField,RaceStopsField,RaceRatingChangeField,RaceBrandField}) {
+        for(int column:{RaceFuelField,RaceStintLapsField,RaceStintTimeField,RaceStopsField,RaceRatingChangeField,RaceBrandField,RaceTeamField}) {
             raceControl.sortColumn=column;
             for(bool descending:{false,true}) {
                 raceControl.sortDescending=descending; std::vector<Row> rows{unknown,saver,leader}; SortRaceRows(rows);

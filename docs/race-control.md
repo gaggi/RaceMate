@@ -48,7 +48,7 @@ Camera and replay controls operate **when you are out of the car**.
 4. Use **‹ Previous** and **Next ›** to review adjacent visible events.
 5. Select **Go live** in the banner when you want to return to live action.
 
-**Live** focuses the event's car in the live session. The other modes seek to the selected lead time before the event, then focus the car and play. On a standings driver, double-click or **Watch** replays the last 5/10 seconds of that car relative to the moment on screen.
+**Live** focuses the event's car in the live session. The other modes seek to the selected lead time before the event, then focus the car and play. On a standings driver, double-click or **Watch** always shows that car live, leaving the replay if needed; **Replay from** applies to events only.
 
 A replay jump waits for iRacing to reach the requested time before switching camera and playing. If it cannot reach it within **12 seconds**, playback continues from the available position and the interface explains that the footage may be older than the replay buffer retains.
 
@@ -56,13 +56,13 @@ A replay jump waits for iRacing to reach the requested time before switching cam
 
 ## Standings and optional information
 
-Standings include class stripes, status pills and your incident count. Available statuses include Pit, Out, Tow, Repair, Black, DQ and Inactive.
+Standings include class stripes, status pills and your incident count. In team races the count is the car's team total, which is what the incident limits use, including while a teammate drives. If iRacing stops sharing a car's points, for example after the race, the last known count stays visible. Available statuses include Pit, Out, Tow, Repair, Black, DQ and Inactive.
 
 Open the **Race Control** settings page, or right-click a table heading, to choose displayed fields. Its column switches are independent of overlay column switches. The settings list the columns left to right as the tables show them: drag a row by the grip at its left to move that column, in the standings and in the events alike. In the window itself, drag a column heading left or right; the settings follow. The sector columns move together. The order is saved; columns added in later versions appear next to their default neighbour.
 
 | Group | Available fields |
 | --- | --- |
-| Identity/order | Position, car number, driver, class, completed laps, positions gained |
+| Identity/order | Position, car number, driver, team name, class, completed laps, positions gained |
 | Timing | Gap, interval, best lap, last lap |
 | Status | Track/pit status, flags, incidents, tires |
 | Driver information | License/safety rating, iRating, car brand, estimated iRating change |
@@ -70,7 +70,7 @@ Open the **Race Control** settings page, or right-click a table heading, to choo
 | Fuel | Opponent Fuel to finish with shared END/SAVE semantics |
 | Event table | Timestamp, type, car, driver, details and optional event lap |
 
-Fuel to finish, laps since stop, stint time, pit stops, iRating change and car brand were added as optional fields and start disabled. Stint time runs from an observed race start or pit exit and is unavailable in the pits, replay or after a telemetry gap. Missing values generally show a dash; missing opponent fuel is blank.
+Fuel to finish, laps since stop, stint time, pit stops, iRating change, car brand and team name were added as optional fields and start disabled. Stint time runs from an observed race start or pit exit and is unavailable in the pits, replay or after a telemetry gap. Missing values generally show a dash; missing opponent fuel is blank.
 
 ![Race Control with optional stint, fuel and driver information enabled](images/race-control-fields.png)
 

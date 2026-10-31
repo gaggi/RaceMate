@@ -23,6 +23,26 @@ void ReviewRegressionTests() {
         "invalid and fractional car indices must not become real drivers");
     Require(malformed.drivers[0].rating == 0 && malformed.drivers[0].incidentCount == -1,
         "invalid numeric metadata retains missing-value defaults");
+    const char* teamYaml =
+        "WeekendInfo:\n SessionID: 1\n SubSessionID: 2\n"
+        "DriverInfo:\n Drivers:\n"
+        " - CarIdx: 3\n   CarNumber: 574\n   TeamName: Apex Endurance\n   CurDriverIncidentCount: 4\n   TeamIncidentCount: 19\n"
+        " - CarIdx: 4\n   CarNumber: 555\n   CurDriverIncidentCount: 7\n";
+    const auto team = ParseSession(teamYaml, 0);
+    Require(team.drivers.size() == 2 && team.drivers[0].incidentCount == 19 && team.drivers[1].incidentCount == 7,
+        "a team car counts the team's incident points, not only the current driver's");
+    Require(team.drivers[0].team == "Apex Endurance" && team.drivers[1].team.empty(), "the team name comes from TeamName");
+    auto after = ParseSession(
+        "WeekendInfo:\n SessionID: 1\n SubSessionID: 2\n"
+        "DriverInfo:\n Drivers:\n"
+        " - CarIdx: 3\n   CarNumber: 574\n   CurDriverIncidentCount: -1\n   TeamIncidentCount: -1\n"
+        " - CarIdx: 4\n   CarNumber: 555\n   CurDriverIncidentCount: 0\n", 0);
+    KeepIncidents(after, team);
+    Require(after.drivers[0].incidentCount == 19 && after.drivers[1].incidentCount == 7,
+        "incident points stay when a later update of the same session no longer shares them");
+    auto other = ParseSession(teamYaml, 1); other.drivers[1].incidentCount = 0;
+    KeepIncidents(other, team);
+    Require(other.drivers[1].incidentCount == 0, "a new session starts its incident points afresh");
 
     Session session; session.type = "Race"; session.number = 0; session.key = "review";
     Frame frame; frame.connected = frame.onTrack = true; frame.session = 0; frame.state = 4;

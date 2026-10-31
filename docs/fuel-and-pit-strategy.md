@@ -57,7 +57,11 @@ Where each car is within its lap comes from iRacing's estimate (`CarIdxEstTime`)
 | Time left at leader's final lap | Projected race-clock time remaining when that leader starts the final lap |
 | Current / Expected Final Lap | Current and rounded finishing lap for your car or the watched car |
 | Estimated Laps Remaining | Remaining distance for the reference car |
-| Current lap / Leader projected distance | Reference car's current lap alongside the overall leader's fractional projection |
+| Leader lap / Leader projected distance | The overall leader's current lap alongside its fractional projection, for example `Leader lap 70 / ~86.70` |
+
+The Fuel Calculator module **Your laps at finish** (off by default) shows the lap your car finishes on. When that is fewer laps than the leader, as when you are lapped, it adds in orange how many fewer, for example `2 laps fewer than leader`; in the strip layout the value reads `85 −2`. Refuel, Needed and the pit window are calculated from your own laps, not the leader's.
+
+The current lap keeps counting with your car while a teammate drives it.
 
 The leader metrics work before your fuel consumption is learned. They are available in every overlay's header/footer, as separate Fuel Calculator modules and as optional race information in Race Control.
 

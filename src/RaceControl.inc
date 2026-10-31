@@ -1,7 +1,7 @@
 // Race Control window: live/replay banner, event feed and full standings. The replay bar
-// sets what a double-click on an event or a driver does: watch live, or replay 5 / 10 s back. Event recording runs independently of the window.
+// sets what a double-click on an event does: watch live, or replay 5 / 10 s back. A driver is always watched live. Event recording runs independently of the window.
 // Append stored field IDs so existing configurations keep their meaning.
-enum { RaceIncidentsField=18, RaceFuelField, RaceStintLapsField, RaceStintTimeField, RaceStopsField, RaceRatingChangeField, RaceBrandField, RaceSectorTimesField, RaceFieldCount };
+enum { RaceIncidentsField=18, RaceFuelField, RaceStintLapsField, RaceStintTimeField, RaceStopsField, RaceRatingChangeField, RaceBrandField, RaceSectorTimesField, RaceTeamField, RaceFieldCount };
 constexpr int FirstEventField=2, RaceEventLapField=7, RaceEventFieldCount=8;
 enum { RaceLeaderDistanceInfo, RaceWhiteFlagInfo, RaceInfoCount };
 const wchar_t* RaceInfoKeys[]={L"ShowLeaderDistance",L"ShowWhiteFlagTime"};
@@ -34,6 +34,8 @@ struct RaceControlWindow {
 constexpr int RaceSectorColumn=1000;
 bool RaceSectorShown() { return raceControl.showSectors && raceControl.fields[RaceSectorTimesField]; }
 int RaceFieldOf(int column) { return column>=RaceSectorColumn?RaceSectorTimesField:column; }
+// Left-aligned and sorted as text.
+bool RaceTextField(int column) { return column==2 || column==3 || column==8 || column==15 || column==RaceBrandField || column==RaceTeamField; }
 // Posted after a heading was dropped elsewhere: the columns are rebuilt in the stored order outside the drag.
 constexpr UINT RaceColumnsMovedMessage=WM_APP+40;
 enum RaceControlId {
@@ -118,7 +120,7 @@ void UpdateRaceCameras() {
 void SetRaceCamera(int index) {
     if(index<0 || index>=static_cast<int>(raceControl.cameras.size())) return;
     raceControl.cameraName=Wide(raceControl.cameras[index].name);
-    WritePrivateProfileStringW(L"RaceControl",L"Camera",raceControl.cameraName.c_str(),app.config.c_str());
+    WriteSetting(L"RaceControl",L"Camera",raceControl.cameraName);
     UpdateCameraButton();
 }
 void ChooseRaceCamera() {
@@ -187,18 +189,10 @@ void ReplayRaceEvent(int selected,int lead) {
         L"Replay requested: #"+Wide(event.number)+L" at "+EventClock(std::max(0.0,event.time-lead))+L". Footage must be in iRacing's replay buffer.",
         event.session,std::max(0.0,event.time-lead));
 }
-// From the moment on screen: the replay position while reviewing, else the live session time.
-void ReplayRaceCar(const std::string& number,int lead) {
-    if(lead<=0) { WatchRaceCarLive(number); return; }
-    if(!CanControlSim()) return;
-    const auto& f=app.frame;
-    const bool review=ReviewingReplay(f); const int session=review?f.replaySession:f.session; const double time=review?f.replayTime:f.time;
-    SendRaceJump(number,ReplayMessage(std::max(0,session),time,lead),L"Replay requested: #"+Wide(number)+L", "+std::to_wstring(lead)+L" s back.",std::max(0,session),std::max(0.0,time-lead));
-}
 int RaceReplayLead() { return RaceReplayLeads[std::clamp(raceControl.replayMode,0,2)]; }
 void SetRaceReplayMode(int mode) {
     raceControl.replayMode=std::clamp(mode,0,2); raceControl.replay.SetSelected(raceControl.replayMode);
-    WritePrivateProfileStringW(L"RaceControl",L"ReplayFrom",std::to_wstring(raceControl.replayMode).c_str(),app.config.c_str());
+    WriteSetting(L"RaceControl",L"ReplayFrom",std::to_wstring(raceControl.replayMode));
 }
 int SelectedEventIndex() {
     for(int i=0;i<static_cast<int>(raceControl.events.size());++i) if(raceControl.events[i].id==raceControl.selectedEvent) return i;
@@ -232,7 +226,8 @@ void StepRaceEvent(int step) {
     ListView_EnsureVisible(raceControl.feed,index,FALSE);
     UpdateRaceSelection(); ReplayRaceEvent(index,RaceReplayLead());
 }
-void ActOnSelectedDriver() { if(const int row=SelectedRowIndex(); row>=0 && row<static_cast<int>(raceControl.rows.size())) ReplayRaceCar(raceControl.rows[row].driver.number,RaceReplayLead()); }
+// A driver is always watched live: Replay from applies to events only.
+void ActOnSelectedDriver() { if(const int row=SelectedRowIndex(); row>=0 && row<static_cast<int>(raceControl.rows.size())) WatchRaceCarLive(raceControl.rows[row].driver.number); }
 void ApplyRaceOnTop() {
     if(!raceControl.window) return;
     SetWindowPos(raceControl.window,raceControl.onTop?HWND_TOPMOST:HWND_NOTOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
@@ -240,7 +235,7 @@ void ApplyRaceOnTop() {
 }
 void SetRaceOnTop(bool on) {
     raceControl.onTop=on;
-    WritePrivateProfileStringW(L"RaceControl",L"AlwaysOnTop",on?L"1":L"0",app.config.c_str());
+    WriteSetting(L"RaceControl",L"AlwaysOnTop",on?L"1":L"0");
     ApplyRaceOnTop(); RefreshPage();
 }
 void UpdateRaceControl(bool force);
@@ -308,7 +303,7 @@ void LayoutRaceControl() {
 }
 void SaveRaceSplit() {
     const auto value=std::to_wstring(raceControl.splitPermille);
-    WritePrivateProfileStringW(L"RaceControl",L"SplitPermille",value.c_str(),app.config.c_str());
+    WriteSetting(L"RaceControl",L"SplitPermille",value);
 }
 void SetRaceSplit(int value,bool save) {
     value=std::clamp(value,100,900);
@@ -426,6 +421,7 @@ std::wstring RaceStandingCell(const Row& row,int column) {
     case RaceStopsField: return row.car.stops>=0?std::to_wstring(row.car.stops):L"\u2014";
     case RaceRatingChangeField: { const int change=RaceRatingChange(row); return change==NoRatingChange?L"\u2014":(change>0?L"+":L"")+std::to_wstring(change); }
     case RaceBrandField: return row.driver.brand.empty()?L"\u2014":Wide(row.driver.brand);
+    case RaceTeamField: return row.driver.team.empty()?L"\u2014":Wide(row.driver.team);
     case RaceSectorTimesField: return L"No SDK splits";
     default:return column>=RaceSectorColumn?Format(SectorColumnTime(row.driver.index,column-RaceSectorColumn,raceControl.sectorParts),2):DriverValue(row,column-9);
     }
@@ -533,7 +529,7 @@ void UpdateRaceControl(bool force) {
         for(int i=0;i<static_cast<int>(columns.size());++i) {
             const int c=columns[i]; LVCOLUMNW col{}; col.mask=LVCF_TEXT|LVCF_WIDTH|LVCF_FMT;
             std::wstring title=c>=RaceSectorColumn?SectorColumnTitle(c-RaceSectorColumn,raceControl.sectorParts):RaceFieldTitle(c);
-            col.pszText=title.data(); col.cx=width(raceControl.widths,c,RaceFieldWidth(c)); col.fmt=c==2 || c==3 || c==8 || c==15 || c==RaceBrandField?LVCFMT_LEFT:LVCFMT_RIGHT;
+            col.pszText=title.data(); col.cx=width(raceControl.widths,c,RaceFieldWidth(c)); col.fmt=RaceTextField(c)?LVCFMT_LEFT:LVCFMT_RIGHT;
             ListView_InsertColumn(raceControl.standings,i,&col);
         }
         raceControl.columns=columns;
@@ -651,7 +647,7 @@ LRESULT RaceCustomDraw(NMLVCUSTOMDRAW& draw) {
         RECT text=cell; text.left=strip.right+MulDiv(4,dpi,96); text.right-=MulDiv(6,dpi,96);
         const auto value=RaceStandingCell(*row,column);
         const auto old=SelectObject(dc,raceControl.font); SetBkMode(dc,TRANSPARENT); SetTextColor(dc,draw.clrText);
-        DrawTextW(dc,value.c_str(),static_cast<int>(value.size()),&text,DT_SINGLELINE|DT_VCENTER|DT_NOPREFIX|DT_END_ELLIPSIS|(column==2 || column==3 || column==8 || column==15 || column==RaceBrandField?DT_LEFT:DT_RIGHT));
+        DrawTextW(dc,value.c_str(),static_cast<int>(value.size()),&text,DT_SINGLELINE|DT_VCENTER|DT_NOPREFIX|DT_END_ELLIPSIS|(RaceTextField(column)?DT_LEFT:DT_RIGHT));
         SelectObject(dc,old); return CDRF_SKIPDEFAULT;
     }
     if(column==8) {

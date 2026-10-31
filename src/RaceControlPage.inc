@@ -8,7 +8,7 @@ private:
     static constexpr int ListId=100, SectorPartsEditId=200;
     static constexpr const wchar_t* FieldNames[]={L"Position",L"Car number",L"Driver",L"Class",L"Gap",L"Interval",L"Best lap",L"Last lap",
         L"Track and pit status",L"License and safety rating",L"iRating",L"Tires",L"Last pit lap",L"Pit lane time",L"Pit stop time",L"Flags",
-        L"Completed laps",L"Positions gained",L"Incidents",L"Fuel to finish",L"Laps since stop",L"Stint time",L"Pit stops",L"iRating change",L"Car brand",L"Observed sector times"};
+        L"Completed laps",L"Positions gained",L"Incidents",L"Fuel to finish",L"Laps since stop",L"Stint time",L"Pit stops",L"iRating change",L"Car brand",L"Observed sector times",L"Team name"};
     static constexpr const wchar_t* EventNames[]={L"Replay from 5 s before",L"Replay from 10 s before",L"Time",L"Event",L"Car number",L"Driver",L"Details",L"Event lap"};
     static_assert(std::size(FieldNames)==RaceFieldCount);
 
@@ -103,8 +103,8 @@ private:
             const int icon=code==RowList::kIconButton?list_.NotifiedIconButton():-1;
             if(code==RowList::kToggled) {
                 raceControl.showSectors=on; raceControl.fields[RaceSectorTimesField]=on;
-                if(!on && std::none_of(raceControl.fields.begin(),raceControl.fields.begin()+RaceSectorTimesField,[](bool v){return v;})) raceControl.fields[2]=true;
-                if(!on && raceControl.sortColumn>=RaceSectorTimesField) raceControl.sortColumn=-1;
+                if(!on && !RaceOtherFieldShown()) raceControl.fields[2]=true;
+                if(!on && RaceFieldOf(raceControl.sortColumn)==RaceSectorTimesField) raceControl.sortColumn=-1;
                 SaveRaceFields(); UpdateRaceControl(true); Refresh();
             } else if(code==RowList::kMoved) {
                 if(MoveToPlace(raceControl.fieldOrder,ids_[row],ids_[list_.DropRow()])) { SaveRaceFields(); UpdateRaceControl(true); Refresh(); }

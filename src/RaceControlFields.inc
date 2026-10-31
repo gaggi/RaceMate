@@ -1,21 +1,22 @@
 // Race Control columns, their persistence and sorting. Standings fields are stored as
-// Field0..Field25; Field25 (sector times) shows one column per sector, sorted by the IDs from RaceSectorColumn. Event fields 2..7 are stored as EventField2..7; 0 and 1 were the old
+// Field0..Field26; Field25 (sector times) shows one column per sector, sorted by the IDs from RaceSectorColumn. Event fields 2..7 are stored as EventField2..7; 0 and 1 were the old
 // per-row replay buttons and are no longer shown.
 const wchar_t* RaceEventTitles[]={L"",L"",L"TIME",L"EVENT",L"#",L"DRIVER",L"DETAILS",L"LAP"};
 const int RaceEventWidths[]={0,0,64,100,40,140,330,50};
 constexpr int RaceEventOrder[]={2,RaceEventLapField,3,4,5,6};
 static_assert(std::size(RaceEventTitles)==RaceEventFieldCount && std::size(RaceEventOrder)==RaceEventFieldCount-FirstEventField);
 const wchar_t* RaceFieldTitle(int id) {
-    const wchar_t* titles[]={L"P",L"#",L"DRIVER",L"CLASS",L"GAP",L"INT",L"BEST",L"LAST",L"STATUS",L"LICENSE",L"iRATING",L"TIRES",L"PIT LAP",L"PIT TIME",L"PIT STOP",L"FLAGS",L"LAPS",L"GAIN",L"INC",L"FUEL",L"STINT LAPS",L"STINT TIME",L"STOPS",L"iR +/-",L"CAR",L"SECTOR TIMES ~"};
+    const wchar_t* titles[]={L"P",L"#",L"DRIVER",L"CLASS",L"GAP",L"INT",L"BEST",L"LAST",L"STATUS",L"LICENSE",L"iRATING",L"TIRES",L"PIT LAP",L"PIT TIME",L"PIT STOP",L"FLAGS",L"LAPS",L"GAIN",L"INC",L"FUEL",L"STINT LAPS",L"STINT TIME",L"STOPS",L"iR +/-",L"CAR",L"SECTOR TIMES ~",L"TEAM"};
     static_assert(std::size(titles)==RaceFieldCount);
     return titles[id];
 }
-int RaceFieldWidth(int id) { if(id>=RaceSectorColumn) return raceControl.sectorParts==3?58:66; const int widths[]={40,38,130,50,64,60,78,78,84,82,72,100,70,80,88,158,54,54,44,70,84,96,62,72,110,360}; static_assert(std::size(widths)==RaceFieldCount); return widths[id]; }
+int RaceFieldWidth(int id) { if(id>=RaceSectorColumn) return raceControl.sectorParts==3?58:66; const int widths[]={40,38,130,50,64,60,78,78,84,82,72,100,70,80,88,158,54,54,44,70,84,96,62,72,110,360,150}; static_assert(std::size(widths)==RaceFieldCount); return widths[id]; }
 // Left to right by default; dragging in the settings changes and stores the order.
-constexpr int RaceFieldOrder[]={0,1,2,4,5,8,RaceFuelField,RaceIncidentsField,15,3,RaceBrandField,6,7,RaceSectorTimesField,16,17,9,10,RaceRatingChangeField,11,RaceStintLapsField,RaceStintTimeField,RaceStopsField,12,13,14};
+constexpr int RaceFieldOrder[]={0,1,2,RaceTeamField,4,5,8,RaceFuelField,RaceIncidentsField,15,3,RaceBrandField,6,7,RaceSectorTimesField,16,17,9,10,RaceRatingChangeField,11,RaceStintLapsField,RaceStintTimeField,RaceStopsField,12,13,14};
 static_assert(std::size(RaceFieldOrder)==RaceFieldCount);
 void SaveRaceFields() {
-    auto write=[&](const std::wstring& key,int value) { const auto text=std::to_wstring(value); WritePrivateProfileStringW(L"RaceControl",key.c_str(),text.c_str(),app.config.c_str()); };
+    // Only changed keys go out: a click on a column or a sort must not rewrite the file some 45 times.
+    auto write=[&](const std::wstring& key,int value) { WriteSetting(L"RaceControl",key.c_str(),std::to_wstring(value)); };
     for(int i=0;i<RaceFieldCount;++i) write(L"Field"+std::to_wstring(i),raceControl.fields[i]);
     for(int i=FirstEventField;i<RaceEventFieldCount;++i) write(L"EventField"+std::to_wstring(i),raceControl.eventFields[i]);
     for(int i=0;i<RaceInfoCount;++i) write(RaceInfoKeys[i],raceControl.info[i]);
@@ -26,9 +27,14 @@ void SaveRaceFields() {
     write(L"ShowSectors",raceControl.showSectors); write(L"SectorParts",raceControl.sectorParts);
     auto order=[&](const wchar_t* key,const std::vector<int>& ids) {
         std::wstring text; for(int id:ids) text+=(text.empty()?L"":L",")+std::to_wstring(id);
-        WritePrivateProfileStringW(L"RaceControl",key,text.c_str(),app.config.c_str());
+        WriteSetting(L"RaceControl",key,text);
     };
     order(L"FieldOrder",raceControl.fieldOrder); order(L"EventOrder",raceControl.eventOrder);
+}
+// Whether a field other than the sector times is on.
+bool RaceOtherFieldShown() {
+    for(int i=0;i<RaceFieldCount;++i) if(i!=RaceSectorTimesField && raceControl.fields[i]) return true;
+    return false;
 }
 void LoadRaceFields() {
     // Saved orders keep their place; columns added later go before their default successor.
@@ -46,7 +52,7 @@ void LoadRaceFields() {
     for(int i=FirstEventField;i<RaceEventFieldCount;++i) raceControl.eventFields[i]=ReadInt(L"RaceControl",(L"EventField"+std::to_wstring(i)).c_str(),i<RaceEventLapField)!=0;
     for(int i=0;i<RaceInfoCount;++i) raceControl.info[i]=ReadBool(L"RaceControl",RaceInfoKeys[i],false);
     if(std::none_of(raceControl.fields.begin(),raceControl.fields.end(),[](bool v){return v;})) raceControl.fields[2]=true;
-    if(!raceControl.showSectors && std::none_of(raceControl.fields.begin(),raceControl.fields.begin()+RaceSectorTimesField,[](bool v){return v;})) raceControl.fields[2]=true;
+    if(!raceControl.showSectors && !RaceOtherFieldShown()) raceControl.fields[2]=true;
     if(std::none_of(raceControl.eventFields.begin(),raceControl.eventFields.end(),[](bool v){return v;})) raceControl.eventFields[5]=true;
     const int sort=ReadInt(L"RaceControl",L"SortColumn",-1);
     raceControl.sortColumn=sort>=RaceSectorColumn && sort<RaceSectorColumn+SectorTiming::MaxSegments?sort:std::clamp(sort,-1,RaceFieldCount-1);
@@ -57,7 +63,7 @@ void LoadRaceFields() {
     raceControl.replayMode=std::clamp(ReadInt(L"RaceControl",L"ReplayFrom",1),0,2);
     raceControl.splitPermille=std::clamp(ReadInt(L"RaceControl",L"SplitPermille",560),100,900);
     if(raceControl.sortColumn>=0 && !raceControl.fields[RaceFieldOf(raceControl.sortColumn)]) raceControl.sortColumn=-1;
-    if(!raceControl.showSectors && raceControl.sortColumn>=RaceSectorTimesField) raceControl.sortColumn=-1;
+    if(!raceControl.showSectors && RaceFieldOf(raceControl.sortColumn)==RaceSectorTimesField) raceControl.sortColumn=-1;
 }
 double RaceNumber(const std::string& value) {
     if(value.empty() || !std::all_of(value.begin(),value.end(),[](unsigned char c){return c>='0' && c<='9';})) return std::numeric_limits<double>::quiet_NaN();
@@ -90,8 +96,9 @@ double RaceSortNumber(const Row& row,int col) {
 void SortRaceRows(std::vector<Row>& rows) {
     const int col=raceControl.sortColumn; if(col<0) return;
     std::stable_sort(rows.begin(),rows.end(),[&](const Row& a,const Row& b) {
-        if(col==2 || col==3 || col==8 || col==15 || col==RaceBrandField) {
+        if(RaceTextField(col)) {
             if(col==RaceBrandField && a.driver.brand.empty()!=b.driver.brand.empty()) return !a.driver.brand.empty();
+            if(col==RaceTeamField && a.driver.team.empty()!=b.driver.team.empty()) return !a.driver.team.empty();
             const auto av=RaceStandingCell(a,col),bv=RaceStandingCell(b,col); return raceControl.sortDescending?av>bv:av<bv;
         }
         const double av=RaceSortNumber(a,col),bv=RaceSortNumber(b,col); const bool ak=std::isfinite(av),bk=std::isfinite(bv);

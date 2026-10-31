@@ -39,6 +39,13 @@ std::wstring LeaderDistanceValue() {
     return p.finish.valid && std::isfinite(p.finish.leaderTotalDistance) && p.finish.leaderTotalDistance>=0
         ?L"~"+Format(p.finish.leaderTotalDistance,2):L"—";
 }
+// The lap your car finishes on, the one the fuel plan counts; -1 without a forecast.
+int OwnFinishLaps() { const auto& finish=Plan().prediction.finish; return finish.valid?finish.ownLaps:-1; }
+// How many laps fewer than the leader you finish, as when lapped; 0 on the leader's lap.
+int OwnLapsFewer() {
+    const auto& finish=Plan().prediction.finish;
+    return finish.valid && finish.ownLaps>=0 && finish.leaderLaps>finish.ownLaps?finish.leaderLaps-finish.ownLaps:0;
+}
 std::wstring WhiteFlagTimeValue() {
     const auto& p=Plan().prediction; const double seconds=p.finish.finalLapTimeLeft;
     if(!p.finish.valid || !std::isfinite(seconds) || seconds<0 || seconds>=604800) return L"—";
@@ -82,7 +89,12 @@ MetricText Metric(int metric,const Overlay* o=nullptr) {
     case LeaderDistanceMetric: return {L"Leader ",LeaderDistanceValue(),L" laps"};
     case WhiteFlagTimeMetric: return {L"Final lap ",WhiteFlagTimeValue()};
     case CurrentLapMetric: return {L"Lap ",current>0?std::to_wstring(current):L"—"};
-    case LapLeaderDistanceMetric: return {L"Lap ",current>0?std::to_wstring(current):L"—",L" / ",LeaderDistanceValue()};
+    case LapLeaderDistanceMetric: {
+        // The overall leader's current lap beside its projected distance; your own laps are Current / Expected Final Lap.
+        const int leader=Plan().prediction.leader; int lap=-1;
+        if(leader>=0 && leader<MaxCars) { const auto& c=f.cars[leader]; lap=c.completed>=0?c.completed+1:c.lap; }
+        return {L"Leader lap ",lap>0?std::to_wstring(lap):L"—",L" / ",LeaderDistanceValue()};
+    }
     case FinalLapMetric: case LapsRemainingMetric: {
         double distance=Plan().lapsToFinish;
         double progress=f.lapCompleted>=0?f.lapCompleted+f.lapPct:-1;
@@ -118,6 +130,7 @@ MetricText Metric(int metric,const Overlay* o=nullptr) {
         return text;
     }
     case FuelAtFinishMetric: return {L"At finish ",SignedLitres(FuelWindow().fuelAtEnd)};
+    case HumidityMetric: return {L"Humidity ",std::isfinite(f.humidity) && f.humidity>=0?Format(f.humidity*100,0)+L" %":L"—"};
     case DeclaredWetMetric: { MetricText text; if(f.declaredWet) { text.parts[1]=L"DECLARED WET"; text.pill=RGB(140,198,255); } return text; }
     case BrakeBiasMetric: return {L"BB ",reference==f.player && (f.dialsKnown>>BrakeBiasDial&1) && std::isfinite(f.dials[BrakeBiasDial])?Format(f.dials[BrakeBiasDial],1):L"—"};
     }

@@ -71,9 +71,9 @@ FinishScenario Finish(const std::vector<Candidate>& cars,int leader,int player,d
         // A pause exactly on a line can hold progress at an already completed crossing.
         if(car.Arrival(goal)<finish-Epsilon) ++goal;
         finishTimes[car.index]=car.Arrival(goal);
-        if(car.index==leader) { result.leaderTotalDistance=expiry>=0?car.At(std::min(expiry,finish)):goal; result.leaderDistance=goal-car.Progress(); result.leaderFinishIn=car.Arrival(goal); result.leaderCrossings=static_cast<int>(goal)-car.completed; }
+        if(car.index==leader) { result.leaderTotalDistance=expiry>=0?car.At(std::min(expiry,finish)):goal; result.leaderDistance=goal-car.Progress(); result.leaderFinishIn=car.Arrival(goal); result.leaderCrossings=static_cast<int>(goal)-car.completed; result.leaderLaps=static_cast<int>(goal); }
         if(car.index!=player) continue;
-        result.ownCrossings=static_cast<int>(goal)-car.completed;
+        result.ownCrossings=static_cast<int>(goal)-car.completed; result.ownLaps=static_cast<int>(goal);
         result.ownDistance=goal-car.Progress(); result.ownFinishIn=car.Arrival(goal);
     }
     return result;
@@ -167,11 +167,11 @@ RacePrediction RacePredictor::Predict(const Session& s,const Frame& f) const {
     if(f.state>=5) {
         p.status=f.state>=6?PredictionStatus::Finished:PredictionStatus::Checkered;
         auto& scene=p.finish; scene.valid=true; scene.winner=bestPosition==1?p.leader:-1;
-        if(p.leader>=0 && p.leader<MaxCars && Completed(f.cars[p.leader])>=0) scene.leaderTotalDistance=Completed(f.cars[p.leader]);
+        if(p.leader>=0 && p.leader<MaxCars && Completed(f.cars[p.leader])>=0) scene.leaderTotalDistance=scene.leaderLaps=Completed(f.cars[p.leader]);
         scene.leaderDistance=scene.leaderFinishIn=scene.raceFinishIn=0; scene.leaderCrossings=0;
         const bool ownFinished=f.state>=6 || (bestPosition==1 && f.player==p.leader) || (f.player>=0 && f.player<MaxCars && checkeredTime_>=0 && history_[f.player].lastCross>=checkeredTime_-Epsilon);
-        if(ownFinished) { scene.ownDistance=scene.ownFinishIn=0; scene.ownCrossings=0; }
-        else if(own!=cars.end()) { scene.ownDistance=1-own->pct; scene.ownFinishIn=own->Arrival(own->completed+1); scene.ownCrossings=1; }
+        if(ownFinished) { scene.ownDistance=scene.ownFinishIn=0; scene.ownCrossings=0; if(own!=cars.end()) scene.ownLaps=own->completed; }
+        else if(own!=cars.end()) { scene.ownDistance=1-own->pct; scene.ownFinishIn=own->Arrival(own->completed+1); scene.ownCrossings=1; scene.ownLaps=own->completed+1; }
         return p;
     }
     if(leader==cars.end() || bestPosition!=1) { p.status=PredictionStatus::MissingLeader; return p; }

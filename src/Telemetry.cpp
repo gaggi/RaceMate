@@ -41,7 +41,8 @@ constexpr const char* VarNames[] = {
     "WeatherDeclaredWet","Precipitation","RelativeHumidity","FogLevel","Skies","PitSvFlags","PitSvFuel","PitRepairLeft",
     "dcABS","dcTractionControl","dcTractionControl2","dcThrottleShape","dcFuelMixture","dcEngineBraking","IsGarageVisible","Brake","CarLeftRight",
     "dcPeakBrakeBias","dcTractionControl3","dcTractionControl4","dcEnginePower","dcBoostLevel","dcAntiRollFront","dcAntiRollRear",
-    "dcWeightJackerLeft","dcWeightJackerRight","dcDiffEntry","dcDiffMiddle","dcDiffExit","dcMGUKDeployMode","dcMGUKDeployFixed","dcMGUKRegenGain"};
+    "dcWeightJackerLeft","dcWeightJackerRight","dcDiffEntry","dcDiffMiddle","dcDiffExit","dcMGUKDeployMode","dcMGUKDeployFixed","dcMGUKRegenGain",
+    "PlayerCarTeamIncidentCount"};
 static_assert(std::size(VarNames) == Telemetry::VarCount);
 }
 bool Telemetry::BuildVariables(const MemoryHeader& h) {
@@ -116,7 +117,8 @@ bool Telemetry::Read(Frame& f, Session& s) {
     next.lapCompleted=static_cast<int>(Value(LapCompleted,-1)); next.lapPct=Value(LapDistPct,0);
     next.lastLap=Value(LapLastLapTime,-1); next.bestLap=Value(LapBestLapTime,-1);
     next.state=static_cast<int>(Value(SessionState,0)); next.flags=static_cast<unsigned>(Value(SessionFlags,0));
-    const double incidents=Value(PlayerCarMyIncidentCount,-1);
+    // The car's count: in team races it goes on while a teammate drives, and it is what the limits count.
+    const double team=Value(PlayerCarTeamIncidentCount,-1), incidents=team>=0?team:Value(PlayerCarMyIncidentCount,-1);
     next.incidentsKnown=incidents>=0 && incidents<=std::numeric_limits<int>::max() && incidents==std::floor(incidents);
     next.airTemperature=Value(AirTemp,std::numeric_limits<double>::quiet_NaN());
     next.trackTemperature=Value(TrackTempCrew,Value(TrackTemp,std::numeric_limits<double>::quiet_NaN()));
@@ -158,6 +160,11 @@ bool Telemetry::Read(Frame& f, Session& s) {
         QueryPerformanceCounter(&parseEnd); sessionParseTicks+=parseEnd.QuadPart-parseStart.QuadPart; ++sessionParses;
     }
     if(next.player<0) next.player=s.player;
+    // Out of the car, as while a teammate drives, iRacing stops counting the player's laps; the car's own count goes on.
+    if(!next.onTrack && next.player>=0 && next.player<MaxCars && next.cars[next.player].completed>=0) {
+        const auto& own=next.cars[next.player];
+        next.lapCompleted=own.completed; if(own.pct>=0 && own.pct<1) next.lapPct=own.pct;
+    }
     if(!next.replay && next.player>=0 && next.player<MaxCars) {
         auto& player=next.cars[next.player];
         if(!Has(CarIdxSessionFlags)) player.sessionFlags=next.flags & SessionFlag::DriverFlags;

@@ -107,6 +107,7 @@ Relative and Standings use the same set of columns. Each overlay has its own cho
 | Safety and iRating (RATING) | iRating in a badge colored like the license class. | Short view in thousands. |
 | iRating change (iR ±) | Estimated iRating gain or loss if the race ended in the current order. | – |
 | Car brand (CAR) | Manufacturer logo, name, or both; the first letter where no logo exists. | **Show logo**, **Show name**. |
+| Team name (TEAM) | The car's team in team events; iRacing repeats the driver's name in solo events. Off by default. | – |
 | Tires | D for dry, W for wet, or the compound initial such as S/M/H for cars with several compounds. | – |
 | Laps since stop (STINT) | Laps since the last stop or the start, for example `L12`; `L-` until RaceMate has seen one. | – |
 | Pit stops (STOPS) | Stops observed in this race; `?` when RaceMate joined late and may have missed some. | – |
@@ -313,17 +314,17 @@ Each header and footer offers the same list, with four slots. Use **None** to le
 | Purpose | Choices |
 | --- | --- |
 | Identity | Overlay Name, Track, Track and layout, Session Type |
-| Conditions | Track Temperature, Air Temperature, Temperatures, Track Wetness, Wind, Declared Wet |
+| Conditions | Track Temperature, Air Temperature, Temperatures, Humidity, Track Wetness, Wind, Declared Wet |
 | Clocks | Session Time Remaining, Session Time Elapsed, Local Time, Sim Time |
 | Car/session context | Incidents, Class SOF, Position in Class, Current Lap |
 | Reference-car forecasts | Current / Expected Final Lap, Estimated Laps Remaining |
 | Overall-leader forecasts | Leader projected race distance, Time left at leader's final lap |
-| Combined lap context | Current lap / Leader projected distance |
+| Combined lap context | Leader lap / Leader projected distance |
 | Your-car values | Brake Bias (your car), Stops Needed (your car), Pit exit (your car), Fuel at finish (your car) |
 
 Incidents include the race warning/disqualification limits when provided. The leader forecasts always describe the **overall leader**, even when you are watching another class. Fuel and pit metrics explicitly labeled **your car** continue to use player data.
 
-For example, `Lap 8 / ~19.32` combines the reference car's current lap with the leader's fractional projection. It is distinct from the rounded finishing lap in **Current / Expected Final Lap**. A forecast is marked `~`; unavailable values show `—`.
+For example, `Leader lap 8 / ~19.32` combines the overall leader's current lap with its fractional projection. For your own laps choose **Current / Expected Final Lap**, for example `Lap 68 / ~85`. A forecast is marked `~`; unavailable values show `—`.
 
 ## OBS output (Spout2)
 
@@ -333,15 +334,15 @@ replace the desktop renderer.
 
 1. Install the [OBS Spout2 plugin](https://github.com/Off-World-Live/obs-spout2-plugin)
    matching your OBS installation and restart OBS.
-2. In RaceMate's Overlays page, expand an overlay with the arrow and enable
-   **OBS output**. Layout previews are for the screen only; OBS output requires live SIM data.
+2. In RaceMate's Overlays page, expand an overlay with the arrow and set
+   **OBS output** to **On**. The sender name appears beside it. Layout previews are for the screen only; OBS output requires live SIM data.
 3. In OBS, add a **Spout2 Capture** source and select **RaceMate - Default - Relative**
    (or **RaceMate - your layout name - your overlay name**). Every sender includes
    both display names, including the Default layout. Renaming either updates the
-   sender label; select its new name in OBS afterward. In RaceMate, **OBS alpha
-   mode** defaults to **Premultiplied** for each overlay. Select the corresponding
-   premultiplied composite mode in OBS. Choose **Straight** in RaceMate only when
-   using OBS's straight-alpha **Default** mode. **Opaque** ignores transparency.
+   sender label; select its new name in OBS afterward. **On** sends premultiplied
+   alpha; select the corresponding premultiplied composite mode in OBS. Choose
+   **On, straight alpha** in RaceMate only when using OBS's straight-alpha
+   **Default** mode. **Opaque** ignores transparency.
    A mismatch can cause dark edges or incorrect opacity. The selection is saved
    as `SpoutAlphaMode` in that overlay's INI section. The diagnostic environment
    override `RACEMATE_SPOUT_ALPHA` accepts `premultiplied` or `straight`.

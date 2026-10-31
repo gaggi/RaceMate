@@ -55,7 +55,7 @@ Opening an overlay's **Settings**, or expanding its inline placement controls, a
 
 Each layout has its own **Preview** / **Stop preview** button in its title row. Several layouts can be previewed independently, including layouts whose conditions do not currently match. Sample previews use a yellow **Preview** badge; the green **Active** badge is reserved for matching layouts using real SIM data. Previews remain on screen and never publish sample images to OBS. Live telemetry continues throughout. If a previewed layout becomes live, its live data takes priority; stopping its preview does not hide its live overlays.
 
-**Move overlays** lets you arrange the currently displayed overlays. Any layout can be removed, including Default and the last remaining layout. An empty layout list remains empty after restarting; no fallback layout is recreated. The original Default layout initially retains older settings, but its name gives it no special activation behavior.
+**Move overlays** lets you arrange the currently displayed overlays. While you drag one, its edges and centre lines snap to those of the other overlays and of the screen within 8 px, shown by a magenta guide line; otherwise the corner it grows from snaps to a 10 px grid counted from the corner of the screen. Hold **Alt** while dragging to place it freely. **Settings → Snap to grid while moving** (expand it for the grid size, 2–100 px) and **Snap to other overlays** switch these off. Any layout can be removed, including Default and the last remaining layout. An empty layout list remains empty after restarting; no fallback layout is recreated. The original Default layout initially retains older settings, but its name gives it no special activation behavior.
 
 ## Multiple instances
 
@@ -84,6 +84,8 @@ See the [metric reference](overlays.md#header-and-footer-metrics) for which valu
 | Start with Windows | Adds RaceMate to the current user's Windows Run key; administrator rights are not needed |
 | Start minimized | Starts in the tray when the tray icon is available |
 | Headers on all overlays | Changes header visibility across overlays |
+| Snap to grid while moving | On by default; grid size 10 px, adjustable from 2 to 100 px |
+| Snap to other overlays | On by default; edges and centre lines line up with other overlays and the screen |
 | Additional laps with fuel saving | 0–10, default +3; shared opponent SAVE allowance |
 | Pit lane loss | Learned or manually fixed per track |
 | Service times | Four-tire time and refuel rate per car and rule set |

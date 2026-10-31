@@ -19,7 +19,8 @@ private:
         {L"Laps since stop",L"L12; L- until a stop or the start was seen"},{L"Pit stops",L"Observed in this race; ? after joining late"},
         {L"Fuel to finish",L"Own-class estimate: green END at normal range, yellow SAVE with fuel saving. Full tank assumed; extra laps in Settings."},
         {L"Safety and iRating",L"iRating on the license color, in one badge"},
-        {L"Sector times",L"S1, S2, S3 … in seconds, one column each. A new S1 clears the previous lap's later sectors. Green personal best, purple class best, yellow slower; estimated."}};
+        {L"Sector times",L"S1, S2, S3 … in seconds, one column each. A new S1 clears the previous lap's later sectors. Green personal best, purple class best, yellow slower; estimated."},
+        {L"Team name",L"In team events; solo events show the driver's name"}};
     static constexpr const wchar_t* NameFormats[]={L"First name Last name",L"F. Last name",L"F Last name"};
     static constexpr const wchar_t* ClassHeaderNames[]={L"Cars",L"SOF",L"Average iRating",L"Class best lap"};
     static constexpr const wchar_t* FlagNames[]={L"Black flag",L"Slowdown",L"Required repairs"};
