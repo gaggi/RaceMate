@@ -4,7 +4,7 @@ class TablePage : public PageWindow {
 public:
     explicit TablePage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
-    enum class Key { None, Rounded, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, OtherClassRows, ClassHeader, ClassView, OwnClass, LiveGaps, UntimedOrder, ClassColors, LapColors, Progress, PitExit, Column, Header, Footer, ColumnHeadings, CopyColumns };
+    enum class Key { None, Window, Rounded, Rows, GapDecimals, GapSigns, HidePit, StandingsRows, OtherClassRows, ClassHeader, ClassView, OwnClass, LiveGaps, UntimedOrder, ClassColors, LapColors, Progress, PitExit, Column, Header, Footer, ColumnHeadings, CopyColumns };
     static constexpr int ListId=100, RowsEditId=200, LeadersEditId=210, AheadEditId=211, BehindEditId=212, PitAheadEditId=215, PitBehindEditId=216, OtherClassesEditId=217, ClassHeaderEditId=240, NameFormatEditId=201, FlagEditId=202, StatusEditId=218, ShortViewEditId=205, SlotEditId=206, BrandLogoEditId=213, BrandNameEditId=214, PositionEditId=230, SectorPartsEditId=219;
     static constexpr UINT_PTR TypingTimer=1;
     struct ColumnText { const wchar_t* name; const wchar_t* detail; };
@@ -72,6 +72,8 @@ private:
             const bool open=expandedKey_==key && expandedId_==id;
             row.iconButtons.insert(row.iconButtons.begin(),open?Glyph::Collapse:Glyph::Expand); row.expandHeight=open?height:0;
         };
+        header(L"Window");
+        for(auto& [item,row]:WindowRows(o_,expandedKey_==Key::Window)) push(std::move(row),Key::Window,item);
         header(L"Layout");
         push(RoundedRow(o_),Key::Rounded);
         if(o_.kind==RelativeKind) {
@@ -165,7 +167,8 @@ private:
         editors_.Clear();
         const int row=ExpandedRow(); if(row<0) return;
         syncing_=true; editors_.Begin(row);
-        if(expandedKey_==Key::Rows) {
+        if(expandedKey_==Key::Window) WindowNameEditor(editors_,o_);
+        else if(expandedKey_==Key::Rows) {
             editors_.Label(L"Rows",0,10,44);
             const HWND edit=editors_.Edit(RowsEditId,std::to_wstring(o_.table.rows),48,10,70);
             SetWindowLongPtrW(edit,GWL_STYLE,GetWindowLongPtrW(edit,GWL_STYLE)|ES_NUMBER); SendMessageW(edit,EM_SETLIMITTEXT,3,0);
@@ -271,6 +274,7 @@ private:
     void OnTimer(UINT_PTR id) override { if(id==TypingTimer) ApplyRows(); }
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); return true; }
+        if(id==WindowNameEditId) { if(!syncing_ && WindowNameCommand(o_,editors_,code)) Refresh(); return true; }
         if(id==RowsEditId || (id>=LeadersEditId && id<=BehindEditId) || id==PitAheadEditId || id==PitBehindEditId || id==OtherClassesEditId) { if(code==EN_CHANGE && !syncing_) { typing_=true; SetTimer(Handle(),TypingTimer,500,nullptr); } return true; }
         if(id>=ClassHeaderEditId && id<ClassHeaderEditId+4) {
             if(!syncing_ && code==BN_CLICKED) { o_.table.classHeader[id-ClassHeaderEditId]=editors_.Checked(id); Changed(); }
@@ -311,6 +315,10 @@ private:
         const wchar_t glyph=icon>=0 && icon<static_cast<int>(list_.Rows()[row].iconButtons.size())?list_.Rows()[row].iconButtons[icon]:0;
         const bool toggleExpand=glyph==Glyph::Expand || glyph==Glyph::Collapse || code==RowList::kActivated;
         switch(key) {
+        case Key::Window:
+            if(column==WindowName) { if(toggleExpand) Expand(key,WindowName); }
+            else { WindowCommand(o_,column,code,on,[this](const std::vector<std::wstring>& items,int checked){ return ChooseFromMenu(items,checked); }); Refresh(); }
+            break;
         case Key::Rows: if(toggleExpand) Expand(key,-1); break;
         case Key::GapDecimals: if(pressed) ChooseDecimals(); break;
         case Key::GapSigns: if(code==RowList::kToggled) { SetGapSigns(o_,on); Refresh(); } break;

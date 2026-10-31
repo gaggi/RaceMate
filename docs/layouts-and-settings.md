@@ -4,7 +4,7 @@
 
 ## Position and appearance
 
-Open **Overlays** and expand the row for an overlay. Its placement settings belong to that overlay in its own layout.
+Open **Overlays** and click **Settings** on an overlay's row, or double-click the row. The **Window** section at the top of its page holds its name and placement; they belong to that overlay in its own layout. The row in the list summarizes them.
 
 | Setting | Available choices | Effect |
 | --- | --- | --- |
@@ -12,6 +12,7 @@ Open **Overlays** and expand the row for an overlay. Its placement settings belo
 | Opacity | 40–100%, in 10% steps | Controls the overlay's opacity; **Background only** keeps text, badges and foreground at full opacity |
 | Fixed corner | Top left, top right, bottom left, bottom right | Keeps that corner in place when content changes size |
 | Updates | 1, 2, 5, 10, 15 or 20 Hz | Controls that overlay's refresh rate |
+| OBS output | Off, On, On with straight alpha | Sends the overlay to OBS; see [OBS output](overlays.md#obs-output-spout2) |
 
 The fixed corner is useful for standings near the right edge or a panel above the taskbar: adding rows, columns, a header or a footer grows the panel away from that corner. Changing the corner does not itself jump the overlay to a screen corner.
 
@@ -59,7 +60,7 @@ Each layout has its own **Preview** / **Stop preview** button in its title row. 
 
 ## Multiple instances
 
-**Add overlay** creates another **Relative**, **Standings**, **Fuel Calculator**, **Weather** or **Track Map**. Each has independent settings and placement, and an initial numbered name such as **Weather 2**. Expand the overlay row and edit **Name** to rename it. An empty name restores the default. Renaming preserves its settings but updates its Spout sender label; select the new sender name in OBS afterward. Pit Assist, Side Warning, Radar, Traffic and Adjustments are not offered as additional instances.
+**Add overlay** creates another **Relative**, **Standings**, **Fuel Calculator**, **Weather** or **Track Map**. Each has independent settings and placement, and an initial numbered name such as **Weather 2**. Expand **Name** under **Window** on its page to rename it. An empty name restores the default. Renaming preserves its settings but updates its Spout sender label; select the new sender name in OBS afterward. Pit Assist, Side Warning, Radar, Traffic and Adjustments are not offered as additional instances.
 
 Useful arrangements include a second Weather overlay showing only the wind rose, a compact Relative beside a fuller Standings table, or an official Map alongside a wide Line map.
 

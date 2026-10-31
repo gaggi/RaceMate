@@ -805,27 +805,27 @@ int RunDiagnostics() {
         report<<"Layouts: independent settings, simultaneous matches, stream survives editor/situation changes, no fallback or inactive resources: "<<(layoutOk?"PASS":"FAIL")<<"\n"; allOk=layoutOk && allOk;
     }
     {
-        // Rename through the actual row editor; settings identity and layout ownership stay stable.
+        // Rename through the Name row under Window on the overlay's page; settings identity and layout ownership stay stable.
         auto& relative=First(RelativeKind); const auto savedName=relative.customName; const auto section=Section(relative);
-        app.openLayoutGroups={app.layout}; ShowPage(Page::Overlays);
+        OpenOverlay(relative);
         const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr);
         auto* rows=list?reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA)):nullptr;
-        int row=-1; if(rows) for(size_t i=0;i<rows->Rows().size();++i) if(rows->Rows()[i].title==Name(relative) && rows->Rows()[i].toggle>=0) { row=static_cast<int>(i); break; }
+        int row=-1; if(rows) for(size_t i=0;i<rows->Rows().size();++i) if(rows->Rows()[i].title==L"Name") { row=static_cast<int>(i); break; }
         bool renameOk=row>=0;
         if(renameOk) {
             rows->PressIconButton(row,0); rows->ScrollIntoView(row);
-            const HWND edit=GetDlgItem(list,205); renameOk=edit!=nullptr;
+            const HWND edit=GetDlgItem(list,WindowNameEditId); renameOk=edit!=nullptr;
             renameOk=Editing(relative) && FrameStyleOf(relative)==EditingFrame && IsWindowVisible(relative.window) && renameOk;
             SetWindowTextW(edit,L"  Driver relative  ");
-            SendMessageW(list,WM_COMMAND,MAKEWPARAM(205,EN_KILLFOCUS),reinterpret_cast<LPARAM>(edit));
+            SendMessageW(list,WM_COMMAND,MAKEWPARAM(WindowNameEditId,EN_KILLFOCUS),reinterpret_cast<LPARAM>(edit));
             renameOk=relative.customName==L"Driver relative" && Section(relative)==section && renameOk;
             renameOk=Export(app.main,L"build\\qa\\overlay-naming.bmp") && renameOk;
             Load(); renameOk=relative.customName==L"Driver relative" && renameOk;
             SetWindowTextW(edit,savedName.c_str());
-            SendMessageW(list,WM_COMMAND,MAKEWPARAM(205,EN_KILLFOCUS),reinterpret_cast<LPARAM>(edit));
+            SendMessageW(list,WM_COMMAND,MAKEWPARAM(WindowNameEditId,EN_KILLFOCUS),reinterpret_cast<LPARAM>(edit));
         }
         relative.customName=savedName; Save(); ShowPage(Page::Overlays);
-        report<<"Overlay names: row editor, trimming, independent persistence and stable settings identity: "<<(renameOk?"PASS":"FAIL")<<"\n"; allOk=renameOk && allOk;
+        report<<"Overlay names: Window row editor, trimming, independent persistence and stable settings identity: "<<(renameOk?"PASS":"FAIL")<<"\n"; allOk=renameOk && allOk;
     }
     {
         // The Safety and iRating badge beside License and iRating, over drivers of every license class.
@@ -864,9 +864,9 @@ int RunDiagnostics() {
             if(editors!=expected) { fitOk=false; report<<"  "<<Ascii(title)<<": "<<editors<<" editors\n"; }
             rows->PressIconButton(index,0); // And collapsed again.
         };
-        // The overlays, and a layout with its name and condition.
-        app.openLayoutGroups={app.layout}; ShowPage(Page::Overlays); for(auto& o:app.overlays) if(o.number==1) check(Name(o),14);
-        check(ActiveLayout()->name,4);
+        // Each overlay's name under Window, and a layout with its name and condition.
+        for(auto& o:app.overlays) if(o.number==1) { OpenOverlay(o); check(L"Name",2); }
+        app.openLayoutGroups={app.layout}; ShowPage(Page::Overlays); check(ActiveLayout()->name,4);
         for(int kind:{RelativeKind,FuelKind,WeatherKind}) { OpenOverlay(First(kind)); check(L"Header"); check(L"Footer"); }
         SetWindowPlacement(app.main,&saved); ShowPage(Page::Overlays);
         report<<"Expanded editors fit the narrowest window: "<<(fitOk?"PASS":"FAIL")<<"\n"; allOk=fitOk && allOk;

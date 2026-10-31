@@ -334,8 +334,8 @@ replace the desktop renderer.
 
 1. Install the [OBS Spout2 plugin](https://github.com/Off-World-Live/obs-spout2-plugin)
    matching your OBS installation and restart OBS.
-2. In RaceMate's Overlays page, expand an overlay with the arrow and set
-   **OBS output** to **On**. The sender name appears beside it. Layout previews are for the screen only; OBS output requires live SIM data.
+2. In RaceMate's Overlays page, click **Settings** on an overlay and, under
+   **Window**, set **OBS output** to **On**. The sender name appears beside it. Layout previews are for the screen only; OBS output requires live SIM data.
 3. In OBS, add a **Spout2 Capture** source and select **RaceMate - Default - Relative**
    (or **RaceMate - your layout name - your overlay name**). Every sender includes
    both display names, including the Default layout. Renaming either updates the

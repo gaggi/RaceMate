@@ -9,7 +9,6 @@ struct MainUi {
     HFONT text=nullptr, heading=nullptr;
     HWND title=nullptr, hint=nullptr, back=nullptr;
     Page page=Page::Overlays; Overlay* overlay=nullptr; // The overlay whose own page is open.
-    Overlay* expandedOverlay=nullptr; // Inline placement/name editor on the Overlays page.
 } ui;
 HWND CreateOverlaysPage(HWND parent);
 HWND CreateGeneralPage(HWND parent);
@@ -79,7 +78,6 @@ void LayoutMain() {
     place(ui.host.Handle(),left,148,content,height-148-20);
 }
 void ShowPage(Page page,Overlay* overlay=nullptr) {
-    ui.expandedOverlay=nullptr;
     ui.page=page; if(overlay) ui.overlay=overlay;
     const wchar_t* hints[]={L"Choose how many cars it shows, its columns and its header and footer.",
         L"Class leaders and the cars around you: rows, columns, header and footer.",
@@ -110,7 +108,7 @@ void ShowPage(Page page,Overlay* overlay=nullptr) {
 void OpenOverlay(Overlay& o) { if(app.layout!=o.layout) { Save(); app.layout=o.layout; } ShowPage(Page::Overlay,&o); }
 bool Editing(const Overlay& o) {
     return IsWindowVisible(app.main) && !IsIconic(app.main) &&
-        ((ui.page==Page::Overlay && ui.overlay==&o) || (ui.page==Page::Overlays && ui.expandedOverlay==&o));
+        ui.page==Page::Overlay && ui.overlay==&o;
 }
 void ShowRaceControlPage() { ShowSettings(); ShowPage(Page::RaceControl); }
 void CreateMainUi() {

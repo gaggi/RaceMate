@@ -6,9 +6,9 @@ class ElementsPage : public PageWindow {
 public:
     explicit ElementsPage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
-    enum class Key { None, Layout, Rounded, Module, Band, Info, SetupChanges, PitStrip, Countdown, SideCar, SideApart, RadarBackground, RadarRange, RadarShows, RadarDistances, TrafficBackground, TrafficCars, TrafficGapKey, TrafficFaster,
+    enum class Key { None, Window, Layout, Rounded, Module, Band, Info, SetupChanges, PitStrip, Countdown, SideCar, SideApart, RadarBackground, RadarRange, RadarShows, RadarDistances, TrafficBackground, TrafficCars, TrafficGapKey, TrafficFaster,
         AdjustPlace, AdjustTime, AdjustWas, AdjustTimer, AdjustGroup, AdjustSample };
-    static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210, HumidityEditId=212, HistoryPartEditId=213, CautionEditId=220, TargetRefuelEditId=221, SlotEditId=230, HeaderRow=1000, FooterRow=1001;
+    static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210, HumidityEditId=212, HistoryPartEditId=213, CautionEditId=220, TargetRefuelEditId=221, SlotEditId=230, HeaderRow=1000, FooterRow=1001, NameRow=1002;
 
     void OnCreate() override {
         list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont());
@@ -46,6 +46,8 @@ private:
                 push(std::move(row),Key::Band,id);
             }
         };
+        header(L"Window");
+        for(auto& [item,row]:WindowRows(o_,expanded_==NameRow)) push(std::move(row),Key::Window,item);
         if(o_.kind==AdjustmentsKind) {
             const auto& a=o_.adjust;
             header(L"Where it shows");
@@ -129,7 +131,7 @@ private:
             apart.detail=std::to_wstring(o_.sideApart)+(o_.sideApart==100?L" % of the screen width: at its edges":L" % of the screen width, centred on it");
             push(std::move(apart),Key::SideApart);
             push(RoundedRow(o_),Key::Rounded);
-            info(L"Placement",L"Drag either bar up or down, or onto another monitor; they stay centred on the one under the mouse. Size and opacity under Overlays.");
+            info(L"Placement",L"Drag either bar up or down, or onto another monitor; they stay centred on the one under the mouse. Size and opacity under Window.");
             header(L"When it shows");
             info(L"A car beside you",L"While you drive and iRacing's spotter reports a car on that side. Both bars show while overlays are moved.");
             header(L"On the bars");
@@ -204,14 +206,18 @@ private:
         list_.SetRows(std::move(rows));
     }
     int ExpandedRow() const {
-        for(size_t i=0;i<keys_.size();++i) if((keys_[i]==Key::Module || keys_[i]==Key::Band) && ids_[i]==expanded_) return static_cast<int>(i);
+        for(size_t i=0;i<keys_.size();++i) {
+            if((keys_[i]==Key::Module || keys_[i]==Key::Band) && ids_[i]==expanded_) return static_cast<int>(i);
+            if(keys_[i]==Key::Window && ids_[i]==WindowName && expanded_==NameRow) return static_cast<int>(i);
+        }
         return -1;
     }
     void BuildEditors() {
         editors_.Clear();
         const int row=ExpandedRow(); if(row<0) return;
         syncing_=true; editors_.Begin(row);
-        if(expanded_==HeaderRow || expanded_==FooterRow) BandEditors(editors_,o_,expanded_==FooterRow,SlotEditId);
+        if(expanded_==NameRow) WindowNameEditor(editors_,o_);
+        else if(expanded_==HeaderRow || expanded_==FooterRow) BandEditors(editors_,o_,expanded_==FooterRow,SlotEditId);
         else if(Fuel() && expanded_==HistoryModule) editors_.Check(CautionEditId,FuelModules[CautionMarks].title,o_.fuel.display[CautionMarks],0,10,360);
         else if(Fuel() && expanded_==TargetRow) editors_.Check(TargetRefuelEditId,FuelModules[TargetRefuel].title,o_.fuel.display[TargetRefuel],0,10,360);
         else if(Fuel()) for(int i=0;i<FuelMetricCount;++i) editors_.Check(FuelRowEditId+i,FuelFigures[i].title,o_.fuel.figures[i],(i%2)*260,4+(i/2)*28,250);
@@ -228,6 +234,7 @@ private:
     void Changed() { SettingChanged(); Refresh(); }
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); return true; }
+        if(id==WindowNameEditId) { if(!syncing_ && WindowNameCommand(o_,editors_,code)) Refresh(); return true; }
         if(id>=SlotEditId && id<SlotEditId+SlotCount) {
             if(!syncing_ && code==CBN_SELCHANGE) { ApplyBandEditor(editors_,o_,expanded_==FooterRow,id,SlotEditId); Changed(); }
             return true;
@@ -257,6 +264,10 @@ private:
         const wchar_t glyph=icon>=0 && icon<static_cast<int>(list_.Rows()[row].iconButtons.size())?list_.Rows()[row].iconButtons[icon]:0;
         const int element=ids_[row];
         switch(keys_[row]) {
+        case Key::Window:
+            if(element==WindowName) { if(glyph==Glyph::Expand || glyph==Glyph::Collapse || code==RowList::kActivated) Expand(NameRow); }
+            else { WindowCommand(o_,element,code,on,[this](const std::vector<std::wstring>& items,int checked){ return ChooseFromMenu(items,checked); }); Refresh(); }
+            break;
         case Key::Module:
             if(code==RowList::kMoved) { if(MoveToPlace(Order(),element,ids_[list_.DropRow()])) { Refresh(); BuildEditors(); } }
             else if(code==RowList::kToggled) { Shown(element)=on; Changed(); }

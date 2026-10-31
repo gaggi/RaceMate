@@ -4,8 +4,7 @@ public:
     OverlaysPage() : PageWindow(ui.heading,ui.text) {}
 private:
     enum class Key { None, Instance, Add, Move, Hide, Reset, Layout, AddLayout };
-    static constexpr int ListId=100, ScaleId=200, OpacityId=201, CornerId=202, RateId=203, SpoutId=204, OverlayNameId=205, BackgroundOpacityId=206, LayoutNameId=220, LayoutConditionId=221;
-    static constexpr const wchar_t* Corners[]={L"Top left",L"Top right",L"Bottom left",L"Bottom right"};
+    static constexpr int ListId=100, LayoutNameId=220, LayoutConditionId=221;
 
     void OnCreate() override {
         list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont());
@@ -15,9 +14,8 @@ private:
     }
     void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
 
-    static int Corner(const Placement& place) { return (place.growLeft?1:0)+(place.growUp?2:0); }
     static std::wstring Summary(const Overlay& o) {
-        std::wstring text=std::to_wstring(o.place.scale)+L" %  ·  opacity "+std::to_wstring(o.place.opacity)+L" %  ·  "+Corners[Corner(o.place)]+L"  ·  "+std::to_wstring(o.place.rate)+L" Hz";
+        std::wstring text=std::to_wstring(o.place.scale)+L" %  ·  opacity "+std::to_wstring(o.place.opacity)+L" %  ·  "+OverlayCorners[CornerIndex(o.place)]+L"  ·  "+std::to_wstring(o.place.rate)+L" Hz";
         if(o.place.rounded) text+=L"  ·  rounded corners";
         if(o.place.spout) text+=L"  ·  OBS (Spout2)";
         if(o.place.backgroundOnly) text+=L"  ·  background opacity only";
@@ -25,8 +23,6 @@ private:
     }
     Layout* FindLayout(int id) { for(auto& l:app.layouts) if(l.id==id) return &l; return nullptr; }
     void Refresh() {
-        // After a layout switch an expanded overlay may be gone.
-        if(expanded_ && std::none_of(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return &o==expanded_;})) { expanded_=nullptr; ui.expandedOverlay=nullptr; editors_.Clear(); }
         if(expandedLayout_ && !FindLayout(expandedLayout_)) { expandedLayout_=0; editors_.Clear(); }
         std::vector<RowList::Row> rows; keys_.clear(); overlays_.clear(); layouts_.clear();
         auto push=[&](RowList::Row row,Key key,Overlay* o=nullptr,int layout=0) { rows.push_back(std::move(row)); keys_.push_back(key); overlays_.push_back(o); layouts_.push_back(layout); };
@@ -55,8 +51,8 @@ private:
                 RowList::Row child; child.title=Name(o); child.detail=Summary(o); child.indent=40;
                 if(!o.customName.empty()) child.detail=std::wstring(Titles[o.kind])+L"  ·  "+child.detail;
                 child.toggle=o.place.enabled?1:0; child.button=L"Settings";
-                child.iconButtons={&o==expanded_?Glyph::Collapse:Glyph::Expand,o.number>1?Glyph::Remove:wchar_t{0}};
-                child.expandHeight=&o==expanded_?150:0;
+                // Size, opacity, OBS and the rest are on its page, under Window.
+                child.iconButtons={o.number>1?Glyph::Remove:wchar_t{0}};
                 push(std::move(child),Key::Instance,&o,l.id);
             }
             RowList::Row add; add.title=L"Add overlay"; add.indent=40;
@@ -73,7 +69,6 @@ private:
     }
     int ExpandedRow() const {
         for(size_t i=0;i<keys_.size();++i) {
-            if(keys_[i]==Key::Instance && expanded_ && overlays_[i]==expanded_) return static_cast<int>(i);
             if(keys_[i]==Key::Layout && expandedLayout_ && layouts_[i]==expandedLayout_) return static_cast<int>(i);
         }
         return -1;
@@ -89,53 +84,14 @@ private:
             editors_.Combo(LayoutConditionId,std::vector<std::wstring>(std::begin(ConditionNames),std::end(ConditionNames)),layout->condition,88,46,230);
             syncing_=false; editors_.Position(); return;
         }
-        const auto& place=expanded_->place;
-        std::vector<std::wstring> scales,opacities,corners(std::begin(Corners),std::end(Corners)),rates;
-        for(int n=50;n<=150;n+=10) scales.push_back(std::to_wstring(n)+L" %");
-        for(int n=40;n<=100;n+=10) opacities.push_back(std::to_wstring(n)+L" %");
-        for(int n:OverlayRates) rates.push_back(std::to_wstring(n)+L" Hz");
-        const int rate=static_cast<int>(std::find(std::begin(OverlayRates),std::end(OverlayRates),place.rate)-std::begin(OverlayRates));
-        editors_.Label(L"Name",0,10,84); SendMessageW(editors_.Edit(OverlayNameId,Name(*expanded_),88,10,410),EM_SETLIMITTEXT,127,0);
-        // Two per line, so they fit the narrowest window.
-        editors_.Label(L"Size",0,46,84); editors_.Combo(ScaleId,scales,(place.scale-50)/10,88,46,130);
-        editors_.Label(L"Opacity",280,46,60); editors_.Combo(OpacityId,opacities,(place.opacity-40)/10,348,46,100);
-        editors_.Check(BackgroundOpacityId,L"Background only",place.backgroundOnly,458,46,140);
-        editors_.Label(L"Fixed corner",0,82,84); editors_.Combo(CornerId,corners,Corner(place),88,82,130);
-        editors_.Label(L"Updates",280,82,84); editors_.Combo(RateId,rates,rate,368,82,130);
-        // Output and alpha mode in one choice: premultiplied is the usual case, straight only for OBS's Default mode.
-        editors_.Label(L"OBS output",0,118,84);
-        const HWND obs=editors_.Combo(SpoutId,{L"Off",L"On",L"On, straight alpha"},!place.spout?0:(place.spoutPremultiplied?1:2),88,118,130);
-        SendMessageW(obs,CB_SETDROPPEDWIDTH,MulDiv(170,GetDpiForWindow(obs),96),0);
-        if(place.spout) editors_.Label((L"Sender: "+Wide(SpoutSenderName(*expanded_))).c_str(),280,118,0);
         syncing_=false; editors_.Position();
-    }
-    void Expand(Overlay* o) {
-        expanded_=expanded_==o?nullptr:o; expandedLayout_=0;
-        ui.expandedOverlay=expanded_; UpdateOverlays(); Timer();
-        Refresh(); BuildEditors();
-        if(const int row=ExpandedRow(); row>=0) list_.ScrollIntoView(row);
     }
     void ExpandLayout(int id) {
         const bool open=std::find(app.openLayoutGroups.begin(),app.openLayoutGroups.end(),id)!=app.openLayoutGroups.end();
-        if(open) { std::erase(app.openLayoutGroups,id); expandedLayout_=0; if(expanded_ && expanded_->layout==id) expanded_=nullptr; }
-        else { app.openLayoutGroups.push_back(id); expandedLayout_=id; expanded_=nullptr; Save(); app.layout=id; UpdateOverlays(); }
-        ui.expandedOverlay=expanded_; UpdateOverlays(); Timer();
+        if(open) { std::erase(app.openLayoutGroups,id); expandedLayout_=0; }
+        else { app.openLayoutGroups.push_back(id); expandedLayout_=id; Save(); app.layout=id; UpdateOverlays(); }
         Refresh(); BuildEditors();
         if(const int row=ExpandedRow(); row>=0) list_.ScrollIntoView(row);
-    }
-    void ApplyEditor(int id) {
-        if(!expanded_) return;
-        auto& o=*expanded_; const int choice=editors_.Selection(id);
-        if(choice<0) return;
-        if(id==CornerId) SetOverlayCorner(o,choice);
-        else if(id==RateId) { o.place.rate=OverlayRates[choice]; o.due=0; Timer(); SettingChanged(); UpdateStatus(); }
-        else if(id==ScaleId) { o.place.scale=50+10*choice; Fit(o); SettingChanged(); }
-        else {
-            o.place.opacity=40+10*choice;
-            if(o.place.backgroundOnly) { Fit(o); SettingChanged(); }
-            else { ApplyOpacity(o); Save(); }
-        }
-        Refresh();
     }
     void Add(int layout) {
         static constexpr int kinds[]={RelativeKind,StandingsKind,FuelKind,WeatherKind,TrackMapKind};
@@ -146,7 +102,6 @@ private:
     void Remove(Overlay& o) {
         const auto question=L"Remove "+Name(o)+L" and its settings?";
         if(MessageBoxW(app.main,question.c_str(),L"RaceMate",MB_OKCANCEL|MB_ICONQUESTION)!=IDOK) return;
-        if(expanded_==&o) { expanded_=nullptr; ui.expandedOverlay=nullptr; editors_.Clear(); }
         RemoveInstance(o); UpdateOverlays(); Refresh();
     }
     void AddLayoutChoice() {
@@ -173,31 +128,7 @@ private:
         ReconsiderLayout(); Save(); Refresh(); BuildEditors();
     }
     bool OnCommand(int id,int code,HWND) override {
-        if(id==BackgroundOpacityId && code==BN_CLICKED && expanded_ && !syncing_) {
-            expanded_->place.backgroundOnly=SendMessageW(editors_.Get(BackgroundOpacityId),BM_GETCHECK,0,0)==BST_CHECKED;
-            Fit(*expanded_); SettingChanged(); Refresh(); BuildEditors(); return true;
-        }
-        if(id==OverlayNameId && expanded_ && !syncing_) {
-            if(code==EN_CHANGE) { expanded_->customName=editors_.Text(id).substr(0,127); Save(); }
-            if(code==EN_KILLFOCUS) {
-                auto& text=expanded_->customName;
-                const auto first=text.find_first_not_of(L" \t\r\n");
-                text=first==std::wstring::npos?std::wstring():text.substr(first,text.find_last_not_of(L" \t\r\n")-first+1);
-                const auto title=Name(*expanded_);
-                if(expanded_->window) SetWindowTextW(expanded_->window,title.c_str());
-                if(expanded_->mirror) SetWindowTextW(expanded_->mirror,title.c_str());
-                Save(); InvalidateModel(); Refresh();
-            }
-            return true;
-        }
-        if(id==SpoutId && code==CBN_SELCHANGE && expanded_ && !syncing_) {
-            // Off keeps the alpha mode for the next time it is switched on.
-            const auto choice=SendMessageW(editors_.Get(SpoutId),CB_GETCURSEL,0,0);
-            expanded_->place.spout=choice>0; if(choice>0) expanded_->place.spoutPremultiplied=choice==1;
-            SettingChanged(); Refresh(); BuildEditors(); return true;
-        }
         if(id==PageRefreshId) { Refresh(); return true; }
-        if(id==ScaleId || id==OpacityId || id==CornerId || id==RateId) { if(!syncing_ && code==CBN_SELCHANGE) ApplyEditor(id); return true; }
         if(id==LayoutNameId) {
             // The name is saved as typed; the list shows it once the field is left.
             if(Layout* layout=FindLayout(expandedLayout_); layout && !syncing_) {
@@ -223,9 +154,8 @@ private:
         switch(key) {
         case Key::Instance:
             if(code==RowList::kToggled) { o->place.enabled=on; SettingChanged(); Refresh(); }
-            else if(code==RowList::kButton) OpenOverlay(*o);
+            else if(code==RowList::kButton || code==RowList::kActivated) OpenOverlay(*o);
             else if(glyph==Glyph::Remove) Remove(*o);
-            else if(glyph==Glyph::Expand || glyph==Glyph::Collapse || code==RowList::kActivated) Expand(o);
             break;
         case Key::Layout:
             if(code==RowList::kMoved) DropLayout(layout,layouts_[list_.DropRow()]);
@@ -245,6 +175,6 @@ private:
 
     RowList list_; RowEditors editors_;
     std::vector<Key> keys_; std::vector<Overlay*> overlays_; std::vector<int> layouts_;
-    Overlay* expanded_=nullptr; int expandedLayout_=0; bool syncing_=false;
+    int expandedLayout_=0; bool syncing_=false;
 };
 HWND CreateOverlaysPage(HWND parent) { return PageWindow::Show(std::make_unique<OverlaysPage>(),app.instance,parent,560,360); }
