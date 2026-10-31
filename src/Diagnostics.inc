@@ -44,17 +44,67 @@ bool MainDpiDiagnostics(std::ostream& report) {
 }
 
 #include "SectorDiagnostics.inc"
+// Messages for a while, timers included, as the running app handles them.
+void PumpFor(int ms) { const ULONGLONG end=GetTickCount64()+ms; MSG m{}; while(GetTickCount64()<end) { while(PeekMessageW(&m,nullptr,0,0,PM_REMOVE)) { TranslateMessage(&m); DispatchMessageW(&m); } Sleep(5); } }
+// The desktop's pixels in a rectangle, layered windows included.
+std::vector<std::uint32_t> GrabScreen(const RECT& r) {
+    const int w=r.right-r.left,h=r.bottom-r.top; std::vector<std::uint32_t> pixels(static_cast<size_t>(std::max(0,w))*std::max(0,h));
+    if(pixels.empty()) return pixels;
+    HDC screen=GetDC(nullptr),dc=CreateCompatibleDC(screen); BITMAPINFO info{}; info.bmiHeader={sizeof(BITMAPINFOHEADER),w,-h,1,32,BI_RGB}; void* bits=nullptr;
+    HBITMAP bitmap=CreateDIBSection(screen,&info,DIB_RGB_COLORS,&bits,nullptr,0); const auto old=SelectObject(dc,bitmap);
+    BitBlt(dc,0,0,w,h,screen,r.left,r.top,SRCCOPY|CAPTUREBLT); GdiFlush(); std::memcpy(pixels.data(),bits,pixels.size()*4);
+    SelectObject(dc,old); DeleteObject(bitmap); DeleteDC(dc); ReleaseDC(nullptr,screen); return pixels;
+}
+// With its page open, the overlay is seen on the desktop: at least a tenth of its pixels differ from the same place
+// once the page is closed again. Closes the page.
+bool SeenOnScreen(const Overlay& o,std::ostream& report,const char* how) {
+    RECT r{}; if(o.window) GetWindowRect(o.window,&r);
+    InflateRect(&r,-4,-4); const auto with=GrabScreen(r);
+    ShowPage(Page::Overlays); PumpFor(150);
+    const auto without=GrabScreen(r); size_t changed=0;
+    for(size_t i=0;i<with.size() && i<without.size();++i) changed+=((with[i]^without[i])&0xffffffu)!=0;
+    const bool seen=!with.empty() && changed*10>=with.size();
+    report<<"  "<<how<<", "<<o.kind<<" "<<o.number<<" (layout "<<o.layout<<"): "<<changed<<" of "<<with.size()<<" pixels changed: "<<(seen?"seen":"NOT SEEN")<<"\n";
+    return seen;
+}
+// --verify-editor: the same with a copy of real settings in build/qa/editor-settings.ini, nothing live and no preview:
+// each overlay's Settings button pressed once, as after starting RaceMate. Writes build/qa/editor-check.txt.
+int RunEditorCheck() {
+    std::ofstream report("build/qa/editor-check.txt"); bool ok=true;
+    app.preview=false; ShowWindow(app.main,SW_SHOWNORMAL); Tick(); PumpFor(500);
+    for(const auto& l:app.layouts) {
+        app.openLayoutGroups={l.id}; ShowPage(Page::Overlays); PumpFor(300);
+        for(auto& o:app.overlays) if(o.layout==l.id && o.kind!=SideWarningKind) {
+            bool pressed=false;
+            if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) {
+                auto* rows=reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA));
+                for(int i=0;i<static_cast<int>(rows->Rows().size()) && !pressed;++i) if(rows->Rows()[i].button==L"Settings" && rows->Rows()[i].title==Name(o)) { rows->ScrollIntoView(i); rows->PressButton(i); pressed=true; }
+            }
+            if(!pressed) { report<<"  no Settings button for "<<o.kind<<" "<<o.number<<"\n"; ok=false; continue; }
+            PumpFor(1200); ok=SeenOnScreen(o,report,"first opening") && ok;
+        }
+    }
+    report<<"Each overlay's page shows it on the screen: "<<(ok?"PASS":"FAIL")<<"\n";
+    return ok?0:2;
+}
 int RunDiagnostics() {
     // ok: the checks since the last one that reported it; allOk: every check. Each report line is its own verdict.
     bool allOk=true;
     MONITORINFO monitor{sizeof(monitor)};
     GetMonitorInfoW(MonitorFromPoint({0,0},MONITOR_DEFAULTTOPRIMARY),&monitor);
     std::ofstream report("build/qa/controls.txt");
-    // The page as built at startup, before anything refreshes it: one row per overlay, each with its own title.
+    // The page as built at startup: its layouts closed; opening one lists one row per overlay, each with its own title.
     bool startupOk=false;
     if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) {
-        std::vector<std::wstring> titles; for(const auto& row:reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA))->Rows()) if(row.button==L"Settings" && row.toggle>=0) titles.push_back(row.title);
-        startupOk=titles.size()>=OverlayCount; for(int kind=0;kind<OverlayCount && startupOk;++kind) startupOk=titles[kind]==Titles[kind];
+        auto* rows=reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA));
+        auto titles=[&]{ std::vector<std::wstring> found; for(const auto& row:rows->Rows()) if(row.button==L"Settings" && row.toggle>=0) found.push_back(row.title); return found; };
+        int layout=-1; for(int i=0;i<static_cast<int>(rows->Rows().size()) && layout<0;++i) if(ActiveLayout() && rows->Rows()[i].title==ActiveLayout()->name && rows->Rows()[i].button==L"Preview") layout=i;
+        startupOk=layout>=0 && titles().empty();
+        if(startupOk) {
+            rows->PressIconButton(layout,0); const auto shown=titles();
+            startupOk=shown.size()>=OverlayCount; for(int kind=0;kind<OverlayCount && startupOk;++kind) startupOk=shown[kind]==Titles[kind];
+            rows->PressIconButton(layout,0);
+        }
     }
     report<<"Overlays page at startup lists every overlay by its own name: "<<(startupOk?"PASS":"FAIL")<<"\n"; allOk=(startupOk) && allOk;
     app.preview=true; app.edit=false; PreviewData(0); UpdateStatus(); RefreshPage();
@@ -287,6 +337,11 @@ int RunDiagnostics() {
         auto& finish=app.fuelPlan.prediction.finish;
         finish.leaderTotalDistance=19.08; finish.finalLapTimeLeft=13;
         forecastOk=LeaderDistanceValue()==L"~19.08" && WhiteFlagTimeValue()==L"~13 s" && forecastOk;
+        // The leader of your class instead of overall: its own projection, and laps fewer than it; unknown stays unknown.
+        finish.valid=true; finish.classLeaderTotalDistance=17.5; finish.ownLaps=15; finish.leaderLaps=19; finish.classLeaderLaps=16;
+        forecastOk=LeaderDistanceValue(true)==L"~17.50" && OwnLapsFewer()==4 && OwnLapsFewer(true)==1 && forecastOk;
+        finish.classLeaderLaps=15; forecastOk=OwnLapsFewer(true)==0 && forecastOk;
+        finish.classLeaderLaps=-1; finish.classLeaderTotalDistance=-1; forecastOk=OwnLapsFewer(true)==-1 && LeaderDistanceValue(true)==L"—" && forecastOk;
         forecastOk=FooterValue(LapLeaderDistanceMetric)==L"Leader lap 8 / ~19.08" && forecastOk;
         const Frame savedFrame=app.frame;
         // The leader's lap whichever car you watch, and not your own.
@@ -336,6 +391,10 @@ int RunDiagnostics() {
         // Your laps and the laps fewer than the leader take a labelled cell each.
         fuel.fuel.display[OwnLapsModule]=true; UpdateOverlays();
         forecastOk=FuelStripCount(fuel)==4 && Export(fuel.window,L"build\\qa\\fuel-own-laps-strip.bmp") && forecastOk;
+        // Counted from the leader of your class: the same cells under their own labels, stored with the module switches.
+        fuel.fuel.display[ClassLeaderOption]=true; Save(); fuel.fuel.display[ClassLeaderOption]=false; Load(); UpdateOverlays();
+        forecastOk=fuel.fuel.display[ClassLeaderOption] && FuelStripCount(fuel)==4 && Export(fuel.window,L"build\\qa\\fuel-class-leader-strip.bmp") && forecastOk;
+        forecastOk=std::any_of(fuel.scene.begin(),fuel.scene.end(),[](const DrawCommand& c){ return c.text==L"CLASS P1"; }) && std::any_of(fuel.scene.begin(),fuel.scene.end(),[](const DrawCommand& c){ return c.text==L"VS CLASS P1"; }) && forecastOk;
         fuel.fuel=settings; Save(); UpdateOverlays();
         report<<"Leader forecast precision, final-lap clock, independent Fuel modules and universal header/footer choices: "<<(forecastOk?"PASS":"FAIL")<<"\n"; allOk=forecastOk && allOk;
     }
@@ -494,6 +553,10 @@ int RunDiagnostics() {
         bool signsOk=!First(RelativeKind).table.gapSigns && !First(StandingsKind).table.gapSigns;
         signsOk=Gap(ahead,First(RelativeKind))==Format(7.5,First(RelativeKind).table.gapDecimals) && Gap(behind,First(RelativeKind))==Format(2.5,First(RelativeKind).table.gapDecimals) && signsOk;
         signsOk=Gap(standing,First(StandingsKind))==L"2.6" && Interval(standing,First(StandingsKind).table)==L"1.2" && Gap(lapped,First(StandingsKind))==L"1 L" && Interval(lapped,First(StandingsKind).table)==L"1 L" && signsOk;
+        // The Standings' own gap decimals cover gap and interval, stored with the table.
+        First(StandingsKind).table.gapDecimals=3; Save(); First(StandingsKind).table.gapDecimals=1; Load();
+        signsOk=First(StandingsKind).table.gapDecimals==3 && Gap(standing,First(StandingsKind))==L"2.600" && Interval(standing,First(StandingsKind).table)==L"1.200" && signsOk;
+        First(StandingsKind).table.gapDecimals=1;
         SetGapSigns(First(RelativeKind),true);
         signsOk=Gap(ahead,First(RelativeKind))==L"−"+Format(7.5,First(RelativeKind).table.gapDecimals) && Gap(behind,First(RelativeKind))==L"+"+Format(2.5,First(RelativeKind).table.gapDecimals) && Gap(standing,First(StandingsKind))==L"2.6" && signsOk;
         SetGapSigns(First(StandingsKind),true);
@@ -501,6 +564,53 @@ int RunDiagnostics() {
         Load(); signsOk=First(RelativeKind).table.gapSigns && First(StandingsKind).table.gapSigns && signsOk;
         RestoreTables(savedTables); Save();
         report<<"Gap signs switch per table, off by default: "<<(signsOk?"PASS":"FAIL")<<"\n"; allOk=signsOk && allOk;
+    }
+    {
+        // The session as a layout's second condition: iRacing's session types sorted into practice, qualifying and race.
+        bool sessionOk=SessionKind("Race")==RaceSession && SessionKind("Lone Qualify")==QualifySession && SessionKind("Open Qualify")==QualifySession
+            && SessionKind("Time Trial")==QualifySession && SessionKind("Practice")==PracticeSession && SessionKind("Warmup")==PracticeSession
+            && SessionKind("Offline Testing")==PracticeSession && SessionKind("")==-1;
+        const Layout race{1,L"Race",InCarCondition,RaceSession}, any{1,L"Any",AlwaysCondition,AnySession}, qualifying{1,L"Qualifying",AlwaysCondition,QualifySession};
+        sessionOk=LayoutApplies(race,InCarSituation,RaceSession) && !LayoutApplies(race,InCarSituation,QualifySession) && !LayoutApplies(race,GarageSituation,RaceSession) && sessionOk;
+        sessionOk=LayoutApplies(any,-1,-1) && !LayoutApplies(qualifying,-1,-1) && LayoutApplies(qualifying,GarageSituation,QualifySession) && sessionOk;
+        // Stored with the layout, read back on the next start.
+        const auto savedLayouts=app.layouts;
+        app.layouts.front().session=QualifySession; Save(); app.layouts.front().session=AnySession; LoadLayouts();
+        sessionOk=app.layouts.front().session==QualifySession && sessionOk;
+        app.layouts=savedLayouts; Save();
+        report<<"Session condition for layouts: kinds, matching and storage: "<<(sessionOk?"PASS":"FAIL")<<"\n"; allOk=sessionOk && allOk;
+    }
+    {
+        // A reserve at the finish: stored, and kept in the fuel at the finish the window counts.
+        bool reserveOk=true; const int savedTenths=app.reserveTenths; const bool savedLaps=app.reserveInLaps;
+        app.reserveTenths=0; InvalidateModel(); const auto plain=FuelWindow();
+        app.reserveTenths=20; app.reserveInLaps=false; Save(); app.reserveTenths=0; Load();
+        reserveOk=app.reserveTenths==20 && !app.reserveInLaps && ReserveText()==L"2.0 L" && reserveOk;
+        InvalidateModel(); const auto kept=FuelWindow();
+        reserveOk=(!std::isfinite(plain.fuelAtEnd) || std::abs(kept.fuelAtEnd-(plain.fuelAtEnd-2))<1e-6) && reserveOk;
+        app.reserveInLaps=true; app.reserveTenths=10; reserveOk=ReserveLaps(3)==1 && ReserveLitres(3)==3 && ReserveText()==L"1.0 lap" && reserveOk;
+        app.reserveInLaps=false; app.reserveTenths=30; reserveOk=ReserveLaps(3)==1 && ReserveLitres(-1)==3 && ReserveLaps(-1)==0 && reserveOk;
+        app.reserveTenths=savedTenths; app.reserveInLaps=savedLaps; InvalidateModel(); Save();
+        report<<"Fuel reserve: stored, in litres or laps, kept at the finish: "<<(reserveOk?"PASS":"FAIL")<<"\n"; allOk=reserveOk && allOk;
+    }
+    {
+        // A layout to a file and back as a new layout, with or without its places; general settings in the file stay out.
+        bool fileOk=true; const auto savedLayouts=app.layouts; const int savedActive=app.layout; const int savedExtra=app.opponentFuelExtraLaps;
+        const auto path=std::filesystem::absolute(L"build\\qa\\layout-export.racemate-layout").wstring();
+        auto& relative=First(RelativeKind); const int source=relative.layout; const Placement savedPlace=relative.place;
+        relative.place.x=123; relative.place.y=234; relative.customName=L"Quali Relative"; Save();
+        fileOk=ExportLayout(source,path) && fileOk;
+        WritePrivateProfileStringW(L"General",L"OpponentFuelExtraLaps",L"9",path.c_str());
+        auto imported=[&](int id)->Overlay* { for(auto& o:app.overlays) if(o.layout==id && o.kind==RelativeKind && o.number==1) return &o; return nullptr; };
+        const int placed=ImportLayout(path,true), loose=ImportLayout(path,false);
+        fileOk=placed>0 && loose>placed && fileOk;
+        if(const Overlay* o=placed?imported(placed):nullptr) fileOk=o->place.x==123 && o->place.y==234 && o->customName==L"Quali Relative" && fileOk; else fileOk=false;
+        if(const Overlay* o=loose?imported(loose):nullptr) fileOk=o->place.x!=123 && o->customName==L"Quali Relative" && fileOk; else fileOk=false;
+        fileOk=ReadInt(L"General",L"OpponentFuelExtraLaps",-1)==savedExtra && fileOk;
+        fileOk=ImportLayout(std::filesystem::absolute(L"build\\qa\\controls.txt").wstring(),true)==0 && fileOk;
+        for(int id:{loose,placed}) if(id>0) RemoveLayout(id);
+        relative.customName.clear(); relative.place=savedPlace; app.layouts=savedLayouts; app.layout=savedActive; Save(); LoadOverlays(); UpdateOverlays();
+        report<<"Layout export and import: as a new layout, with or without positions, general settings refused: "<<(fileOk?"PASS":"FAIL")<<"\n"; allOk=fileOk && allOk;
     }
     {
         // The Relative counts places within each car's class by default, overall when chosen, and keeps the choice.
@@ -853,7 +963,7 @@ int RunDiagnostics() {
             auto* rows=list?reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA)):nullptr; int index=-1;
             if(rows) for(size_t i=0;i<rows->Rows().size() && index<0;++i) if(rows->Rows()[i].title==title) index=static_cast<int>(i);
             if(index<0) { fitOk=false; report<<"  no row "<<Ascii(title)<<"\n"; return; }
-            if(expected==4 && title==ActiveLayout()->name) {
+            if(expected==6 && title==ActiveLayout()->name) {
                 if(std::find(app.openLayoutGroups.begin(),app.openLayoutGroups.end(),app.layout)!=app.openLayoutGroups.end()) rows->PressIconButton(index,0);
                 rows->PressIconButton(index,0);
             } else rows->PressIconButton(index,0);
@@ -867,12 +977,44 @@ int RunDiagnostics() {
             if(editors!=expected) { fitOk=false; report<<"  "<<Ascii(title)<<": "<<editors<<" editors\n"; }
             rows->PressIconButton(index,0); // And collapsed again.
         };
-        // Each overlay's name under Window, and a layout with its name and condition.
+        // Each overlay's name under Window, and a layout with its name and both conditions.
         for(auto& o:app.overlays) if(o.number==1) { OpenOverlay(o); check(L"Name",2); }
-        app.openLayoutGroups={app.layout}; ShowPage(Page::Overlays); check(ActiveLayout()->name,4);
+        app.openLayoutGroups={app.layout}; ShowPage(Page::Overlays); check(ActiveLayout()->name,6);
         for(int kind:{RelativeKind,FuelKind,WeatherKind}) { OpenOverlay(First(kind)); check(L"Header"); check(L"Footer"); }
         SetWindowPlacement(app.main,&saved); ShowPage(Page::Overlays);
         report<<"Expanded editors fit the narrowest window: "<<(fitOk?"PASS":"FAIL")<<"\n"; allOk=fitOk && allOk;
+    }
+    {
+        // Opening an overlay's page shows it on the screen at once, the first time too: its pixels on the desktop change.
+        bool shownOk=true; const auto savedLayouts=app.layouts; const Frame savedFrame=app.frame; const bool savedPreview=app.preview;
+        const auto savedGroups=app.openLayoutGroups; app.openLayoutGroups={app.layout};
+        app.preview=false; app.frame.connected=false; for(auto& l:app.layouts) l.condition=InCarCondition; AutoLayout(); ShowPage(Page::Overlays);
+        auto pump=PumpFor;
+        auto seen=[&](const Overlay& o,const char* how) { if(!SeenOnScreen(o,report,how)) shownOk=false; };
+        // Its layout off, so the window is made on opening, twice; its layout on with nothing live, so a hidden window
+        // waits; and straight from one overlay's page to the next.
+        for(const bool composed:{false,true}) for(int pass=0;pass<4;++pass) {
+            if(!pass) { for(auto& l:app.layouts) l.condition=InCarCondition; for(auto& o:app.overlays) o.place.backgroundOnly=composed; AutoLayout(); ShowPage(Page::Overlays); pump(50); }
+            if(pass==2) { for(auto& l:app.layouts) l.condition=AlwaysCondition; AutoLayout(); ShowPage(Page::Overlays); pump(50); }
+            const char* how=pass<2?(composed?"background only, layout off":"layout off"):(pass==2?(composed?"background only, layout on":"layout on"):(composed?"background only, one to the next":"one to the next"));
+            Overlay* previous=nullptr;
+            for(auto& o:app.overlays) if(o.number==1 && o.layout==app.layout && o.kind!=SideWarningKind) {
+                pump(50);
+                if(pass<2 && o.window) { shownOk=false; report<<"  "<<o.kind<<": window kept while its layout is off\n"; continue; }
+                if(pass==3 && previous) { OpenOverlay(*previous); pump(150); }
+                // The first pass presses the row's Settings button, as a click does; the others open the page directly.
+                bool pressed=false;
+                if(!pass) if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) {
+                    auto* rows=reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA));
+                    for(int i=0;i<static_cast<int>(rows->Rows().size()) && !pressed;++i) if(rows->Rows()[i].button==L"Settings" && rows->Rows()[i].title==Name(o)) { rows->PressButton(i); pressed=true; }
+                }
+                if(!pressed) OpenOverlay(o);
+                pump(150); seen(o,how); previous=&o;
+            }
+        }
+        for(auto& o:app.overlays) o.place.backgroundOnly=false;
+        app.openLayoutGroups=savedGroups; app.layouts=savedLayouts; app.frame=savedFrame; app.preview=savedPreview; AutoLayout(); UpdateOverlays();
+        report<<"Opening an overlay's page shows it on the screen, the first time too: "<<(shownOk?"PASS":"FAIL")<<"\n"; allOk=shownOk && allOk;
     }
     {
         // Shortcuts change in their row: click, press a combination; Esc cancels, Backspace turns it off, the reset arrow
@@ -894,6 +1036,9 @@ int RunDiagnostics() {
             keysOk=app.hotkeys[0]==chosen && GetFocus()!=field && rows->Rows()[move].button==HotkeyText(chosen) && rows->Rows()[move].iconButtons[0]==Glyph::Reset && keysOk;
             rows->PressButton(move); SendMessageW(field,WM_KEYDOWN,VK_ESCAPE,0); keysOk=app.hotkeys[0]==chosen && GetFocus()!=field && keysOk;
             rows->PressButton(move); SendMessageW(field,WM_KEYDOWN,VK_BACK,0); keysOk=app.hotkeys[0]==0 && rows->Rows()[move].button==L"Off" && keysOk;
+            // An F key alone, which the field itself would turn into Ctrl+Alt+F6; the row says iRacing loses it.
+            rows->PressButton(move); SendMessageW(field,WM_KEYDOWN,VK_F6,0);
+            keysOk=app.hotkeys[0]==VK_F6 && rows->Rows()[move].button==L"F6" && rows->Rows()[move].detail.find(L"iRacing no longer gets F6")!=std::wstring::npos && keysOk;
             rows->PressIconButton(move,0); keysOk=app.hotkeys[0]==DefaultHotkeys[0] && rows->Rows()[move].iconButtons[0]==0 && keysOk;
         }
         app.hotkeys=savedKeys; RegisterHotkeys(); Save(); ShowPage(Page::Overlays);
@@ -1151,7 +1296,7 @@ int RunDiagnostics() {
             ok=std::none_of(First(FuelKind).fuel.display.begin(),First(FuelKind).fuel.display.end(),[](bool value){return value;}) && ok;
             ok=Export(First(2).window,L"build\\qa\\fuel-compact.bmp") && ok;
             First(FuelKind).fuel.display.fill(true); SettingChanged();
-            ok=HeightWithTitle(First(2))==32+112+52+104+104+46+16+4*24+3*32 && BaseHeight(First(2))==HeightWithTitle(First(2)) && ok; // The three cards share one row.
+            ok=HeightWithTitle(First(2))==32+112+52+104+104+46+16+4*24+4*32 && BaseHeight(First(2))==HeightWithTitle(First(2)) && ok; // The three cards share one row; four one-line modules.
             ok=Export(First(2).window,L"build\\qa\\fuel-all.bmp") && ok;
             First(FuelKind).fuel.strip=true; SettingChanged(); ok=Export(First(2).window,L"build\\qa\\fuel-strip.bmp") && ok;
             First(FuelKind).fuel.strip=false; SettingChanged();
@@ -1289,10 +1434,9 @@ int RunDiagnostics() {
     OpenRaceControl(); ok=IsWindowVisible(raceControl.window) && ok;
     NMITEMACTIVATE click{}; click.hdr.hwndFrom=raceControl.standings; click.hdr.code=NM_DBLCLK; click.iItem=0;
     ListView_SetItemState(raceControl.standings,0,LVIS_SELECTED,LVIS_SELECTED);
-    // 5 s (default): replay that car from the moment on screen; Live: camera only.
+    // A driver is always watched live, whatever Replay from says: camera only, no replay pending.
     SendMessageW(raceControl.window,WM_NOTIFY,RaceStandingsId,reinterpret_cast<LPARAM>(&click));
-    ok=raceControl.pendingNumber==raceControl.rows[0].driver.number && raceControl.message.find(L"replay action simulated")!=std::wstring::npos && ok;
-    KillTimer(raceControl.window,1); raceControl.pendingNumber.clear();
+    ok=raceControl.pendingNumber.empty() && raceControl.message.find(L"camera action simulated")!=std::wstring::npos && ok;
     SetRaceReplayMode(0); SendMessageW(raceControl.window,WM_NOTIFY,RaceStandingsId,reinterpret_cast<LPARAM>(&click));
     ok=raceControl.pendingNumber.empty() && raceControl.message.find(L"camera action simulated")!=std::wstring::npos && ok;
     SetRaceReplayMode(1);

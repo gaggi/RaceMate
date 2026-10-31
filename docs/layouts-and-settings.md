@@ -24,7 +24,7 @@ Choose **Settings** in the row for content options. **Rounded corners** is a sep
 
 *Each layout is an expandable group with its own overlays and activation condition.*
 
-A layout owns its overlays, their names, placement, size, opacity, refresh rates and content settings. Two Relatives in different layouts can look completely different. Click its header or arrow to open or close its settings and overlay group. The header settings contain its name and **Active when** controls. The layout you edit does not determine which layouts run.
+A layout owns its overlays, their names, placement, size, opacity, refresh rates and content settings. Two Relatives in different layouts can look completely different. Click its header or arrow to open or close its settings and overlay group. The header settings contain its name, **Active when** and **Session**. The layout you edit does not determine which layouts run.
 
 ### Creating a layout
 
@@ -38,6 +38,8 @@ A layout owns its overlays, their names, placement, size, opacity, refresh rates
 | Out of car | While you spot other cars or watch a replay |
 | Garage | While the garage screen is open |
 | Always | Alongside every other matching layout |
+
+**Session** is a second condition: **Any session** (the default), **Practice**, **Qualifying** or **Race**. Warmup and test drives count as practice, time trials as qualifying. A layout runs only when both conditions match, for example **In car · Race**. Settings that should differ between qualifying and the race, such as gap decimals, the columns or the Fuel Calculator's layout, belong in a layout for each session; make one with **Add layout → Copy of …** and change what differs.
 
 ### Matching layouts
 
@@ -57,6 +59,10 @@ Opening an overlay's **Settings**, or expanding its inline placement controls, a
 Each layout has its own **Preview** / **Stop preview** button in its title row. Several layouts can be previewed independently, including layouts whose conditions do not currently match. Sample previews use a yellow **Preview** badge; the green **Active** badge is reserved for matching layouts using real SIM data. Previews remain on screen and never publish sample images to OBS. Live telemetry continues throughout. If a previewed layout becomes live, its live data takes priority; stopping its preview does not hide its live overlays.
 
 **Move overlays** lets you arrange the currently displayed overlays. While you drag one, its edges and centre lines snap to those of the other overlays and of the screen within 8 px, shown by a magenta guide line; otherwise the corner it grows from snaps to a 10 px grid counted from the corner of the screen. Hold **Alt** while dragging to place it freely. **Settings → Snap to grid while moving** (expand it for the grid size, 2–100 px) and **Snap to other overlays** switch these off. Any layout can be removed, including Default and the last remaining layout. An empty layout list remains empty after restarting; no fallback layout is recreated. The original Default layout initially retains older settings, but its name gives it no special activation behavior.
+
+## Sharing layouts
+
+**Export layout** in a layout's group saves it to a `.racemate-layout` file: its name, both conditions and every overlay with its settings. **Import layout** below **Add layout** adds such a file as a new layout; your own layouts stay unchanged. RaceMate asks whether to place the overlays where they were when the layout was exported. On another monitor arrangement, choose **No** to start them at their default places. Only overlay settings are imported, never general settings such as shortcuts or pit stop times. OBS sources follow the overlays' names; select them again in OBS if needed.
 
 ## Multiple instances
 
@@ -87,6 +93,7 @@ See the [metric reference](overlays.md#header-and-footer-metrics) for which valu
 | Headers on all overlays | Changes header visibility across overlays |
 | Snap to grid while moving | On by default; grid size 10 px, adjustable from 2 to 100 px |
 | Snap to other overlays | On by default; edges and centre lines line up with other overlays and the screen |
+| Reserve at the finish | None by default; litres or laps kept in the tank at the flag, see [Fuel reserve](fuel-and-pit-strategy.md#fuel-reserve) |
 | Additional laps with fuel saving | 0–10, default +3; shared opponent SAVE allowance |
 | Pit lane loss | Learned or manually fixed per track |
 | Service times | Four-tire time and refuel rate per car and rule set |
@@ -105,7 +112,7 @@ RaceMate reads every frame iRacing publishes, 60 a second, so event recording, p
 | Ctrl + Alt + Shift + Right | Next Race Control event |
 | Ctrl + Alt + Shift + O | Pause/resume OBS output |
 
-To change a shortcut, click its button and press a combination containing **Ctrl or Alt**. **Esc** cancels; **Backspace** disables it. The reset arrow restores a changed shortcut's default. A conflict appears as **In use**, and the main banner identifies unavailable shortcuts.
+To change a shortcut, click its button and press a combination containing **Ctrl or Alt**, or an **F key** on its own (F12 excepted), such as F6 for Hide. Shortcuts work in every program, so iRacing no longer receives an F key you assign; the shortcut's row says so. **Esc** cancels; **Backspace** disables it. The reset arrow restores a changed shortcut's default. A conflict appears as **In use**, and the main banner identifies unavailable shortcuts.
 
 These shortcuts work while another application has focus. Race Control's own **F**, **Enter** and divider keys are local to that window; see [Race Control](race-control.md).
 

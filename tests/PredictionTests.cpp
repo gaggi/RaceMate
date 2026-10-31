@@ -126,6 +126,14 @@ void PitWindowTests() {
     Require(window.status==PitWindowStatus::Open && window.currentLap==8 && window.firstLap==11 && window.lastLap==17 && window.finishLap==20,"one final tank opens when remaining consumption fits capacity and closes before empty");
     const auto later=f; f.lapCompleted=9; f.fuel-=2*3.12; window=CalculatePitWindow(s,f,10.55,3.12);
     Require(window.firstLap==11 && window.lastLap==17,"window stays stable as laps and fuel advance together");
+    {
+        // A reserve kept at the finish: needed like a lap more, so the window opens a lap later; its end and the finish stay.
+        const auto plain=CalculatePitWindow(s,later,12.55,3.12), kept=CalculatePitWindow(s,later,12.55,3.12,-1,1);
+        Require(kept.firstLap==plain.firstLap+1 && kept.lastLap==plain.lastLap && kept.finishLap==plain.finishLap,"reserve moves the window's start only");
+        Near(kept.fuelAtEnd,plain.fuelAtEnd-3.12,"fuel at the finish counts above the reserve");
+        auto close=later; close.fuel=40;
+        Require(CalculatePitWindow(s,close,12.55,3.12).status==PitWindowStatus::NoStopNeeded && CalculatePitWindow(s,close,12.55,3.12,-1,1/3.12).status!=PitWindowStatus::NoStopNeeded,"a litre of reserve turns a narrow finish into a stop");
+    }
     f=later; f.fuel=50; Require(CalculatePitWindow(s,f,12.55,3.12).status==PitWindowStatus::NoStopNeeded,"no green window when current fuel already reaches finish");
     f.fuel=2; Require(CalculatePitWindow(s,f,30,3.12).stops==4,"multi-stop race provides next-stop window instead of suppressing it");
     f.lapCompleted=10; f.lapPct=0; f.fuel=9; s.fuelCapacity=30;
@@ -382,6 +390,17 @@ void OpponentFuelTests() {
     Near(prediction.carFinishIn[0],prediction.finish.leaderFinishIn,"leader per-car finish matches leader forecast");
     Near(prediction.carFinishIn[1],prediction.finish.ownFinishIn,"player per-car finish matches own forecast");
     Near(prediction.carFinishIn[2],1275,"lapped opponent runs to its first crossing after the overall flag");
+    Require(prediction.classLeader==prediction.leader,"without class positions the class leader is the overall leader");
+    Require(prediction.finish.classLeaderLaps==prediction.finish.leaderLaps,"and its laps are the leader's");
+    {
+        // P1 of your class, ahead of you and behind the overall leader: its own laps at the flag.
+        f=RacingFrame(); s=Race(); s.drivers.push_back({2,2}); Progress(f.cars[2],9.9); f.cars[2].position=2; f.cars[1].position=3;
+        f.cars[0].classPosition=1; f.cars[2].classPosition=1; f.cars[1].classPosition=2;
+        RacePredictor classes; classes.Update(s,f); const auto forecast=classes.Predict(s,f);
+        Require(forecast.classLeader==2 && forecast.leader==0,"class leader is P1 of the player's class");
+        Require(forecast.finish.classLeaderLaps>=forecast.finish.ownLaps && forecast.finish.classLeaderLaps<forecast.finish.leaderLaps,"class leader laps lie between own and overall leader laps");
+        Require(forecast.finish.classLeaderTotalDistance>0,"class leader projected distance");
+    }
 
     PitHistory history; f=RacingFrame(); auto& car=f.cars[0]; history.Update(s,f);
     Require(car.fuelStintStart<0,"joining mid-race has no fuel anchor");

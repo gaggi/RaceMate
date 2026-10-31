@@ -24,7 +24,7 @@ If consumption stays empty, finish complete green laps without visiting the pits
 | --- | --- |
 | Tank and range | Compare current fuel with the range calculated from learned consumption |
 | Tank bar | The hatched portion represents fuel missing to the finish; the finish mark shows the requirement |
-| Refuel to finish | Required additional fuel, **without a safety margin** |
+| Refuel to finish | Required additional fuel, including the [reserve](#fuel-reserve) if you set one |
 | Orange refuel value | The required fuel can fit in the tank |
 | Red refuel value | The requirement exceeds one tank's capacity |
 | Pit window | Earliest and latest stop lap under the current plan |
@@ -45,7 +45,18 @@ When no stop is needed, **Refuel to finish** changes to fuel expected **at the f
 
 ![Fuel Calculator showing a predicted fuel surplus at the finish](images/fuel-surplus.png)
 
-Refuel numbers have no built-in safety margin. They change with learned consumption, pace, race distance and the observed field; allow for that uncertainty when deciding a real fuel load.
+Refuel numbers contain no margin beyond the reserve you set. They change with learned consumption, pace, race distance and the observed field; allow for that uncertainty when deciding a real fuel load.
+
+## Fuel reserve
+
+**Settings → Fuel strategy → Reserve at the finish** keeps fuel in the tank when you take the flag: none (the default), 0.5 to 5 L, or 0.5 to 2 laps at the 10-lap average. The reserve is fuel you still need, like extra distance after the finish:
+
+- **Refuel to finish** and **Needed** include it. The card says `incl. 2.0 L reserve`, and the tank bar's legend shows `Needed 44.3 L · reserve 2.0 L`.
+- The pit window, the stops needed and the fuel to add at a stop count with it, so a narrow finish can need a stop that it would not need without a reserve.
+- The targets to the finish leave it in the tank; targets to a stop do not, because you arrive at the box with the tank empty.
+- **At finish** and **NO STOP · +x L** count what is spare **above** the reserve.
+
+Outside races, the laps on fuel ignore the reserve.
 
 ## Finish forecasts
 
@@ -60,6 +71,8 @@ Where each car is within its lap comes from iRacing's estimate (`CarIdxEstTime`)
 | Leader lap / Leader projected distance | The overall leader's current lap alongside its fractional projection, for example `Leader lap 70 / ~86.70` |
 
 The Fuel Calculator module **Your laps at finish** (off by default) shows the lap your car finishes on. When that is fewer laps than the leader, as when you are lapped, it adds in orange how many fewer, for example `2 laps fewer than leader`; in the strip layout it takes two cells, **YOUR LAPS 85** and **VS LEADER −2 laps**, or **lead lap** in green on the leader's lap. Refuel, Needed and the pit window are calculated from your own laps, not the leader's.
+
+In a multiclass race the leader is the overall leader, usually in the fastest class. Expand **Leader projected race distance** or **Your laps at finish** and turn on **Leader of your class** to count from P1 of your own class instead. The setting applies to both modules. The strip then shows **CLASS P1** and **VS CLASS P1**, and the panel shows **Class leader laps at finish** and `laps fewer than class leader`. The race still ends when the overall leader takes the flag; only the comparison changes. Header and footer metrics and Race Control keep the overall leader.
 
 The current lap keeps counting with your car while a teammate drives it.
 

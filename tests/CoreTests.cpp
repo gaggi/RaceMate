@@ -526,6 +526,10 @@ void FuelMetricsTests() {
  RacePrediction forecast; forecast.finish.valid=true; forecast.finish.ownDistance=5;
  f.fuel=10; plan=calculator.Plan(f,&forecast);
  for(const auto& estimate:plan.estimates) Near(estimate.add,std::max(0.0,estimate.consumption*5-10),"fuel to add per strategy");
+ plan=calculator.Plan(f,&forecast,2);
+ for(const auto& estimate:plan.estimates) Near(estimate.add,std::max(0.0,estimate.consumption*5+2-10),"a reserve in litres adds to the fuel to add");
+ plan=calculator.Plan(f,&forecast,0,1);
+ for(const auto& estimate:plan.estimates) Near(estimate.add,std::max(0.0,estimate.consumption*6-10),"a reserve in laps adds a lap at each estimate");
  plan=calculator.Plan(f);
  Require(plan.estimates[0].consumption>0 && plan.estimates[0].add<0,"unknown finish keeps consumption but no fabricated refuel amount");
  f.replay=true; plan=calculator.Plan(f);

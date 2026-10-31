@@ -879,14 +879,16 @@ void FuelCalculator::Update(const Session& s, const Frame& f, bool excludeYellow
     }
     previousFuel_ = f.fuel;
 }
-PitWindow CalculatePitWindow(const Session& s,const Frame& f,double distance,double burn,double pace) {
+PitWindow CalculatePitWindow(const Session& s,const Frame& f,double distance,double burn,double pace,double reserveLaps) {
     PitWindow window;
     if(f.lapCompleted>=0 && f.lapCompleted<1000000) window.currentLap=f.lapCompleted+1;
     const bool consumptionKnown=f.connected && f.fuelKnown && !f.replay && std::isfinite(burn) && burn>0 && std::isfinite(f.fuel) && f.fuel>=0;
     if(consumptionKnown && std::isfinite(pace) && pace>0) window.timeEmpty=f.fuel/burn*pace;
-    if(consumptionKnown && std::isfinite(distance) && distance>=0) window.fuelAtEnd=f.fuel-distance*burn;
+    reserveLaps=std::isfinite(reserveLaps)?std::max(0.0,reserveLaps):0;
+    if(consumptionKnown && std::isfinite(distance) && distance>=0) window.fuelAtEnd=f.fuel-(distance+reserveLaps)*burn;
     if(s.type!="Race" || !consumptionKnown || f.pit || f.inStall || f.lapCompleted<0 || f.lapCompleted>=1000000 || !std::isfinite(f.lapPct) || f.lapPct<0 || f.lapPct>=1 || !std::isfinite(distance) || distance<=0 || !std::isfinite(s.fuelCapacity) || s.fuelCapacity<=0) return window;
-    const double progress=f.lapCompleted+f.lapPct, finish=progress+distance, stint=s.fuelCapacity/burn;
+    // The fuel lasts to need: the finish and the reserve after it. Stops stay before the finish.
+    const double progress=f.lapCompleted+f.lapPct, finish=progress+distance, need=finish+reserveLaps, stint=s.fuelCapacity/burn;
     if(finish>1000000 || !std::isfinite(stint) || stint<=0) return window;
     window.finishLap=static_cast<int>(std::ceil(finish-1e-6));
     if(window.fuelAtEnd>=0) { window.status=PitWindowStatus::NoStopNeeded; window.stops=0; return window; }
@@ -895,24 +897,24 @@ PitWindow CalculatePitWindow(const Session& s,const Frame& f,double distance,dou
     const double fullStint=std::max(0.0,std::ceil(stint-1e-6)-1);
     const double nextAnchor=std::floor(latest+stint-1e-6);
     double visits=1;
-    if(finish>latest+stint+1e-6) {
-        const double extra=std::max(0.0,finish-nextAnchor-stint);
+    if(need>latest+stint+1e-6) {
+        const double extra=std::max(0.0,need-nextAnchor-stint);
         if(extra>1e-6 && fullStint<1) { window.status=PitWindowStatus::ExtraStopNeeded; return window; }
         visits=2+(extra>1e-6?std::ceil((extra-1e-6)/fullStint):0);
     }
     if(visits>10000) return window;
     window.stops=static_cast<int>(visits);
-    const double earliest=window.stops==1?finish-stint:std::ceil(finish-stint-1e-6)-(window.stops-2)*fullStint-stint+1e-6;
+    const double earliest=window.stops==1?need-stint:std::ceil(need-stint-1e-6)-(window.stops-2)*fullStint-stint+1e-6;
     window.firstLap=std::max(window.currentLap,static_cast<int>(std::floor(std::max(0.0,earliest)))+1);
     window.lastLap=static_cast<int>(std::floor(std::max(0.0,latest)))+1;
     window.status=window.firstLap<=window.lastLap?PitWindowStatus::Open:PitWindowStatus::ExtraStopNeeded;
     // A driver entering now must still be able to reach the remaining scheduled stops.
     double reachable=progress;
     for(int i=1;i<window.stops;++i) reachable=std::floor(reachable+stint-1e-6);
-    window.openNow=window.status==PitWindowStatus::Open && finish<=reachable+stint+1e-6 && progress<=latest;
+    window.openNow=window.status==PitWindowStatus::Open && need<=reachable+stint+1e-6 && progress<=latest;
     return window;
 }
-FuelPlan FuelCalculator::Plan(const Frame& f, const RacePrediction* prediction) const {
+FuelPlan FuelCalculator::Plan(const Frame& f, const RacePrediction* prediction, double reserveLitres, double reserveLaps) const {
     FuelPlan p; p.samples = samples_; p.stintStartLap=stintStartLap_;
     p.historyCount = f.replay ? 0 : historyCount_;
     for (int i = 0; i < p.historyCount; ++i) p.history[i] = history_[(historyCursor_ + 10 - historyCount_ + i) % 10];
@@ -921,7 +923,7 @@ FuelPlan FuelCalculator::Plan(const Frame& f, const RacePrediction* prediction) 
     // Shown from the first qualifying lap on, also before this session has laps of its own.
     auto& qualifying=p.estimates[static_cast<int>(FuelMetric::QualifyMaximum)];
     if(qualifySamples_) qualifying={qualifyMaximum_,-1,qualifySamples_};
-    if(p.lapsToFinish>=0 && qualifySamples_ && f.fuelKnown) qualifying.add=std::max(0.0,p.lapsToFinish*qualifyMaximum_-f.fuel);
+    if(p.lapsToFinish>=0 && qualifySamples_ && f.fuelKnown) qualifying.add=std::max(0.0,(p.lapsToFinish+reserveLaps)*qualifyMaximum_+reserveLitres-f.fuel);
     if (!used_ || !f.fuelKnown) return p;
     double average=0, recent5=0, recent3=0;
     for (int i = 0; i < used_; ++i) average += burns_[i];
@@ -935,7 +937,7 @@ FuelPlan FuelCalculator::Plan(const Frame& f, const RacePrediction* prediction) 
     p.estimates[4]={minimum_,-1,samples_};
     p.estimates[5]={samples_?totalBurn_/samples_:0,-1,samples_};
     p.estimates[6]={recent3/count3,-1,count3};
-    if(p.lapsToFinish>=0) for(auto& estimate:p.estimates) estimate.add=std::max(0.0,p.lapsToFinish*estimate.consumption-f.fuel);
+    if(p.lapsToFinish>=0) for(auto& estimate:p.estimates) estimate.add=std::max(0.0,(p.lapsToFinish+reserveLaps)*estimate.consumption+reserveLitres-f.fuel);
     return p;
 }
 Session DemoSession() {

@@ -307,6 +307,7 @@ struct FinishScenario {
     bool valid = false;
     int winner = -1, leaderCrossings = -1, ownCrossings = -1;
     int leaderLaps = -1, ownLaps = -1; // Laps each will have completed at the finish; fewer own laps when lapped.
+    int classLeaderLaps = -1; double classLeaderTotalDistance = -1; // The same for the leader of your class.
     double leaderTotalDistance = -1; // Total leader progress at timer expiry; at the finish for lap-limited races.
     double leaderDistance = -1, leaderFinishIn = -1, raceFinishIn = -1, ownDistance = -1, ownFinishIn = -1;
     double finalLapTimeLeft = -1; // Race clock at the start of the leader's projected final lap.
@@ -316,7 +317,7 @@ enum class PredictionStatus { Waiting, NotRace, Replay, Gridding, MissingLeader,
 struct RacePrediction {
     PredictionStatus status = PredictionStatus::Waiting;
     FinishScenario finish;
-    int leader = -1;
+    int leader = -1, classLeader = -1; // Overall P1; P1 of your class, the overall leader without a class.
     double leaderPace = -1, ownPace = -1;
     std::array<double,MaxCars> carFinishIn = [] { std::array<double,MaxCars> values; values.fill(-1); return values; }();
 };
@@ -341,7 +342,8 @@ private:
 };
 enum class PitWindowStatus { Unavailable, NoStopNeeded, ExtraStopNeeded, Open };
 struct PitWindow { PitWindowStatus status=PitWindowStatus::Unavailable; int currentLap=-1, firstLap=-1, lastLap=-1, finishLap=-1, stops=-1; bool openNow=false; double fuelAtEnd=std::numeric_limits<double>::quiet_NaN(), timeEmpty=-1; };
-PitWindow CalculatePitWindow(const Session&, const Frame&, double remainingDistance, double consumption, double lapTime=-1);
+// reserveLaps: fuel to keep at the finish, in laps at this consumption; it is needed like more distance, without moving the finish.
+PitWindow CalculatePitWindow(const Session&, const Frame&, double remainingDistance, double consumption, double lapTime=-1, double reserveLaps=0);
 struct FuelEstimate { double consumption = 0, add = -1; int samples = 0; };
 // A completed whole lap's fuel; counted laps feed the estimates, the others ran under caution or through the pits.
 struct FuelLap { int lap = -1; double burn = 0; bool counted = false, caution = false; };
@@ -360,7 +362,8 @@ public:
     void Reset();
     void Update(const Session&, const Frame&, bool excludeYellowLaps = false);
     // Without a prediction the consumption estimates are still filled, but no finish distance or fuel to add.
-    FuelPlan Plan(const Frame&, const RacePrediction* prediction = nullptr) const;
+    // The fuel to add includes a reserve kept at the finish: litres, or laps at each estimate's consumption.
+    FuelPlan Plan(const Frame&, const RacePrediction* prediction = nullptr, double reserveLitres = 0, double reserveLaps = 0) const;
 private:
     // The most a counted qualifying lap of this event and car took, and how many there were; kept across its sessions.
     double qualifyMaximum_ = 0; int qualifySamples_ = 0;

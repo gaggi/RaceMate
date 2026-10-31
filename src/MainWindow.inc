@@ -207,6 +207,65 @@ void AddLayout(bool copy) {
     app.layouts.push_back({id,L"Layout "+std::to_wstring(app.layouts.size()+1),AlwaysCondition});
     LoadOverlays(); SwitchLayout(id);
 }
+// A layout as a file of its own, to share or to take to another computer: a header with its name and conditions,
+// then its overlays' sections under their plain names, as layout 1 keeps them.
+constexpr const wchar_t* LayoutFileHeader=L"RaceMate layout";
+// The double-zero-ended "key=value" list of a section, as the profile functions read and write it.
+std::vector<wchar_t> ReadSection(const std::wstring& section,const std::wstring& file) {
+    std::vector<wchar_t> contents(32768);
+    const DWORD length=GetPrivateProfileSectionW(section.c_str(),contents.data(),static_cast<DWORD>(contents.size()),file.c_str());
+    contents.resize(length+2,0); return contents;
+}
+bool ExportLayout(int id,const std::wstring& path) {
+    const auto layout=std::find_if(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){ return l.id==id; });
+    if(layout==app.layouts.end()) return false;
+    Save();
+    // Started as UTF-16, so names in any script come back as they were.
+    { std::ofstream file(path,std::ios::binary|std::ios::trunc); if(!file) return false; file.write("\xFF\xFE",2); if(!file) return false; }
+    bool ok=WritePrivateProfileStringW(LayoutFileHeader,L"Version",L"1",path.c_str()) && WritePrivateProfileStringW(LayoutFileHeader,L"Name",layout->name.c_str(),path.c_str())
+        && WritePrivateProfileStringW(LayoutFileHeader,L"Condition",std::to_wstring(layout->condition).c_str(),path.c_str())
+        && WritePrivateProfileStringW(LayoutFileHeader,L"Session",std::to_wstring(layout->session).c_str(),path.c_str());
+    for(const auto& o:app.overlays) if(o.layout==id) ok=WritePrivateProfileSectionW(Numbered(Sections[o.kind],o.number).c_str(),ReadSection(Section(o),app.config).data(),path.c_str()) && ok;
+    return ok;
+}
+// An overlay's section name in a layout file: a kind's name, numbered from 2 for the kinds that have instances.
+bool OverlaySectionName(const std::wstring& name) {
+    for(int kind=0;kind<OverlayCount;++kind) {
+        const std::wstring base=Sections[kind];
+        if(name==base) return true;
+        if(SingleInstance(kind) || name.size()<=base.size()+1 || name.compare(0,base.size()+1,base+L" ")) continue;
+        const auto number=name.substr(base.size()+1);
+        if(number.size()<=2 && std::all_of(number.begin(),number.end(),iswdigit) && std::stoi(number)>=2) return true;
+    }
+    return false;
+}
+// A new layout from a file, at the end of the list; 0 if the file holds none. Only overlay sections are taken, never
+// general settings. Without positions the overlays start where new ones do.
+int ImportLayout(const std::wstring& path,bool positions) {
+    if(GetPrivateProfileIntW(LayoutFileHeader,L"Version",0,path.c_str())!=1) return 0;
+    Save();
+    int id=1; for(const auto& l:app.layouts) id=std::max(id,l.id+1);
+    DeleteLayoutSections(id);
+    std::vector<wchar_t> names(65536);
+    GetPrivateProfileSectionNamesW(names.data(),static_cast<DWORD>(names.size()),path.c_str());
+    for(const wchar_t* name=names.data();*name;name+=wcslen(name)+1) {
+        if(!OverlaySectionName(name)) continue;
+        std::vector<wchar_t> kept;
+        const auto contents=ReadSection(name,path);
+        for(const wchar_t* line=contents.data();*line;line+=wcslen(line)+1) {
+            if(!positions && (!wcsncmp(line,L"X=",2) || !wcsncmp(line,L"Y=",2))) continue;
+            kept.insert(kept.end(),line,line+wcslen(line)+1);
+        }
+        kept.push_back(0); if(kept.size()<2) kept.push_back(0);
+        const auto target=LayoutPrefix(id)+name;
+        if(WritePrivateProfileSectionW(target.c_str(),kept.data(),app.config.c_str())) RememberSection(target,kept.data(),kept.size()-1);
+    }
+    wchar_t name[128]{}; GetPrivateProfileStringW(LayoutFileHeader,L"Name",L"Imported layout",name,128,path.c_str());
+    app.layouts.push_back({id,name[0]?name:L"Imported layout",std::clamp(static_cast<int>(GetPrivateProfileIntW(LayoutFileHeader,L"Condition",AlwaysCondition,path.c_str())),0,ConditionCount-1),
+        std::clamp(static_cast<int>(GetPrivateProfileIntW(LayoutFileHeader,L"Session",AnySession,path.c_str())),0,SessionConditionCount-1)});
+    LoadOverlays(); SwitchLayout(id); Save();
+    return id;
+}
 // Every layout can be removed, including the original and the last remaining one.
 void RemoveLayout(int id) {
     const auto at=std::find_if(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==id;}); if(at==app.layouts.end()) return;
@@ -229,8 +288,10 @@ void RemoveLayout(int id) {
     std::erase(app.openLayoutGroups,id);
     Save(); UpdateOverlays();
 }
-bool LayoutApplies(int condition,int situation) {
-    switch(condition) {
+// Both conditions must hold: where you are, and the kind of session (any, or the one running).
+bool LayoutApplies(const Layout& layout,int situation,int session) {
+    if(layout.session!=AnySession && layout.session!=session) return false;
+    switch(layout.condition) {
     case InCarCondition: return situation==InCarSituation;
     case OutOfCarCondition: return situation==SpottingSituation || situation==ReplaySituation;
     case GarageCondition: return situation==GarageSituation;
@@ -239,9 +300,9 @@ bool LayoutApplies(int condition,int situation) {
 }
 // Activate all matching layouts. Selecting a layout in the editor never overrides conditions.
 void AutoLayout() {
-    const int situation=app.frame.connected?CurrentSituation(app.frame):-1;
+    const int situation=app.frame.connected?CurrentSituation(app.frame):-1, session=app.frame.connected?SessionKind(app.session.type):-1;
     std::vector<int> matches;
-    for(const auto& l:app.layouts) if(LayoutApplies(l.condition,situation)) matches.push_back(l.id);
+    for(const auto& l:app.layouts) if(LayoutApplies(l,situation,session)) matches.push_back(l.id);
     const bool live=app.frame.connected && !app.preview;
     if(matches==app.activeLayouts && live==app.layoutsLive) return;
     app.layoutsLive=live;

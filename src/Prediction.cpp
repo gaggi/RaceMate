@@ -44,7 +44,7 @@ struct Candidate {
         return completed+1+(driving-First())/pace;
     }
 };
-FinishScenario Finish(const std::vector<Candidate>& cars,int leader,int player,double expiry,int lapLimit,std::array<double,MaxCars>& finishTimes) {
+FinishScenario Finish(const std::vector<Candidate>& cars,int leader,int classLeader,int player,double expiry,int lapLimit,std::array<double,MaxCars>& finishTimes) {
     FinishScenario result;
     if(cars.empty()) return result;
     double target=-1;
@@ -72,6 +72,7 @@ FinishScenario Finish(const std::vector<Candidate>& cars,int leader,int player,d
         if(car.Arrival(goal)<finish-Epsilon) ++goal;
         finishTimes[car.index]=car.Arrival(goal);
         if(car.index==leader) { result.leaderTotalDistance=expiry>=0?car.At(std::min(expiry,finish)):goal; result.leaderDistance=goal-car.Progress(); result.leaderFinishIn=car.Arrival(goal); result.leaderCrossings=static_cast<int>(goal)-car.completed; result.leaderLaps=static_cast<int>(goal); }
+        if(car.index==classLeader) { result.classLeaderTotalDistance=expiry>=0?car.At(std::min(expiry,finish)):goal; result.classLeaderLaps=static_cast<int>(goal); }
         if(car.index!=player) continue;
         result.ownCrossings=static_cast<int>(goal)-car.completed; result.ownLaps=static_cast<int>(goal);
         result.ownDistance=goal-car.Progress(); result.ownFinishIn=car.Arrival(goal);
@@ -138,11 +139,13 @@ RacePrediction RacePredictor::Predict(const Session& s,const Frame& f) const {
     if(s.type!="Race") { p.status=PredictionStatus::NotRace; return p; }
     if(f.state>0 && f.state<4) { p.status=PredictionStatus::Gridding; return p; }
     std::vector<Candidate> cars;
-    int bestPosition=MaxCars+1;
+    int bestPosition=MaxCars+1, bestClassPosition=MaxCars+1, ownClass=-1;
+    for(const auto& driver:s.drivers) if(driver.index==f.player) ownClass=driver.classId;
     for(const auto& driver:s.drivers) {
         const int index=driver.index; if(index<0 || index>=MaxCars) continue;
         const auto& car=f.cars[index]; const auto& h=history_[index];
         if(car.position>0 && car.position<bestPosition) { bestPosition=car.position; p.leader=index; }
+        if(ownClass>0 && driver.classId==ownClass && car.classPosition>0 && car.classPosition<bestClassPosition) { bestClassPosition=car.classPosition; p.classLeader=index; }
         int completed=Completed(car);
         if(completed<0 && index==f.player) completed=f.lapCompleted;
         if(completed<0 || car.pct<0 || car.pct>=1 || car.surface<0) continue;
@@ -161,6 +164,7 @@ RacePrediction RacePredictor::Predict(const Session& s,const Frame& f) const {
         }
         cars.push_back(model);
     }
+    if(p.classLeader<0) p.classLeader=p.leader;
     const auto leader=std::find_if(cars.begin(),cars.end(),[&](const auto& car){return car.index==p.leader;});
     const auto own=std::find_if(cars.begin(),cars.end(),[&](const auto& car){return car.index==f.player;});
     if(own!=cars.end()) p.ownPace=own->pace;
@@ -168,6 +172,7 @@ RacePrediction RacePredictor::Predict(const Session& s,const Frame& f) const {
         p.status=f.state>=6?PredictionStatus::Finished:PredictionStatus::Checkered;
         auto& scene=p.finish; scene.valid=true; scene.winner=bestPosition==1?p.leader:-1;
         if(p.leader>=0 && p.leader<MaxCars && Completed(f.cars[p.leader])>=0) scene.leaderTotalDistance=scene.leaderLaps=Completed(f.cars[p.leader]);
+        if(p.classLeader>=0 && p.classLeader<MaxCars && Completed(f.cars[p.classLeader])>=0) scene.classLeaderTotalDistance=scene.classLeaderLaps=Completed(f.cars[p.classLeader]);
         scene.leaderDistance=scene.leaderFinishIn=scene.raceFinishIn=0; scene.leaderCrossings=0;
         const bool ownFinished=f.state>=6 || (bestPosition==1 && f.player==p.leader) || (f.player>=0 && f.player<MaxCars && checkeredTime_>=0 && history_[f.player].lastCross>=checkeredTime_-Epsilon);
         if(ownFinished) { scene.ownDistance=scene.ownFinishIn=0; scene.ownCrossings=0; if(own!=cars.end()) scene.ownLaps=own->completed; }
@@ -178,7 +183,7 @@ RacePrediction RacePredictor::Predict(const Session& s,const Frame& f) const {
     p.leaderPace=leader->pace;
     const bool timed=(f.timeLeftKnown || f.timeLeft>=0) && std::isfinite(f.timeLeft) && f.timeLeft<604800;
     const double expiry=timed?std::max(0.0,f.timeLeft):-1;
-    p.finish=Finish(cars,p.leader,f.player,expiry,s.totalLaps,p.carFinishIn);
+    p.finish=Finish(cars,p.leader,p.classLeader,f.player,expiry,s.totalLaps,p.carFinishIn);
     if(!p.finish.valid) { p.status=PredictionStatus::Waiting; return p; }
     if(timed && p.finish.leaderDistance>=0) p.finish.finalLapTimeLeft=f.timeLeft-(p.finish.leaderFinishIn-leader->pace);
     p.status=own==cars.end()?PredictionStatus::MissingPace:PredictionStatus::Racing;

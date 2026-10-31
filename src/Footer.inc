@@ -33,18 +33,18 @@ struct MetricText {
     MetricText(std::wstring label,std::wstring value,std::wstring label2={},std::wstring value2={}) : parts{std::move(label),std::move(value),std::move(label2),std::move(value2)} {}
     std::wstring Text() const { return parts[0]+parts[1]+parts[2]+parts[3]; }
 };
-// Overall-leader values do not follow the watched car and need no fuel samples.
-std::wstring LeaderDistanceValue() {
-    const auto& p=Plan().prediction;
-    return p.finish.valid && std::isfinite(p.finish.leaderTotalDistance) && p.finish.leaderTotalDistance>=0
-        ?L"~"+Format(p.finish.leaderTotalDistance,2):L"—";
+// Overall-leader values do not follow the watched car and need no fuel samples. ownClass: the leader of your class.
+std::wstring LeaderDistanceValue(bool ownClass=false) {
+    const auto& finish=Plan().prediction.finish; const double distance=ownClass?finish.classLeaderTotalDistance:finish.leaderTotalDistance;
+    return finish.valid && std::isfinite(distance) && distance>=0?L"~"+Format(distance,2):L"—";
 }
 // The lap your car finishes on, the one the fuel plan counts; -1 without a forecast.
 int OwnFinishLaps() { const auto& finish=Plan().prediction.finish; return finish.valid?finish.ownLaps:-1; }
-// How many laps fewer than the leader you finish, as when lapped; 0 on the leader's lap.
-int OwnLapsFewer() {
-    const auto& finish=Plan().prediction.finish;
-    return finish.valid && finish.ownLaps>=0 && finish.leaderLaps>finish.ownLaps?finish.leaderLaps-finish.ownLaps:0;
+// How many laps fewer than the leader you finish, as when lapped; 0 on the leader's lap, -1 without the leader's.
+int OwnLapsFewer(bool ownClass=false) {
+    const auto& finish=Plan().prediction.finish; const int leader=ownClass?finish.classLeaderLaps:finish.leaderLaps;
+    if(!finish.valid || finish.ownLaps<0 || leader<0) return -1;
+    return std::max(0,leader-finish.ownLaps);
 }
 std::wstring WhiteFlagTimeValue() {
     const auto& p=Plan().prediction; const double seconds=p.finish.finalLapTimeLeft;

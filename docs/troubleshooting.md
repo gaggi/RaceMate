@@ -48,7 +48,7 @@ Each layout owns its content settings. If a column or module seems to revert, co
 
 ## A shortcut is marked In use
 
-Another application or Windows already owns that global key combination. Click the shortcut under **Settings** and choose another combination containing Ctrl or Alt. Esc cancels, Backspace disables the binding, and the reset arrow restores its default.
+Another application or Windows already owns that global key combination. Click the shortcut under **Settings** and choose another combination containing Ctrl or Alt, or an F key on its own. Esc cancels, Backspace disables the binding, and the reset arrow restores its default.
 
 Check the status banner for the conflicting shortcut names. Local Race Control keys apply only in that window.
 

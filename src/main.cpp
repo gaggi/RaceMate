@@ -6,6 +6,7 @@
 #include "TrackMapLoader.h"
 #include <windowsx.h>
 #include <commctrl.h>
+#include <commdlg.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <objidl.h>
@@ -97,9 +98,9 @@ constexpr Slots DefaultHeader{OverlayNameMetric,SofMetric,IncidentsMetric,TimeRe
 enum FuelModule {
     TankModule, FiguresModule, HistoryModule, CautionMarks, RefuelCard, WindowCard, TimelineModule,
     OneShorterRow, TargetRow, OneLongerRow, TwoLongerRow, LeaderDistanceModule, WhiteFlagTimeModule, PitExitModule, TargetRefuel, ShorterCard,
-    OwnLapsModule
+    OwnLapsModule, ClassLeaderOption
 };
-constexpr int FuelModuleCount=OwnLapsModule+1;
+constexpr int FuelModuleCount=ClassLeaderOption+1;
 struct ModuleInfo { const wchar_t* key; const wchar_t* title; const wchar_t* detail; bool on; };
 constexpr ModuleInfo FuelModules[]={
     {L"ShowTank",L"Tank",L"Fuel, range in laps and a bar of the fuel to the finish",true},
@@ -107,7 +108,7 @@ constexpr ModuleInfo FuelModules[]={
     {L"ShowHistory",L"Last 10 laps",L"Fuel of each lap against the 10-lap average",true},
     // Switched in the expanded "Last 10 laps" row. A new key, so it starts off for earlier installs too.
     {L"MarkCautionLaps",L"Mark caution laps",L"In yellow; they never count toward consumption",false},
-    {L"ShowRefuel",L"Refuel to finish",L"Without a safety margin; orange when it fits in the tank, red beyond it",true},
+    {L"ShowRefuel",L"Refuel to finish",L"With your reserve from Settings; orange when it fits in the tank, red beyond it",true},
     {L"ShowPitWindow",L"Pit window",L"Earliest and latest lap to stop",true},
     {L"ShowTimeline",L"Pit window timeline",L"One block per lap of a full tank: window green, current lap yellow",true},
     {L"ShowOneShorter",L"One lap shorter",L"Most fuel per lap for one lap less",true},
@@ -121,7 +122,9 @@ constexpr ModuleInfo FuelModules[]={
     {L"ShowTargetRefuel",L"Fuel to add at the stop",L"For each target: stopping a lap later leaves a lap less to fuel for",true},
     // The forecast counts no stops still to come: before the leader's, the race may run a lap shorter.
     {L"ShowOneLapShorter",L"One lap shorter",L"Fuel to add if the race runs a lap shorter than forecast, as when the leader still has to stop",true},
-    {L"ShowOwnLaps",L"Your laps at finish",L"The lap you finish on, and in orange how many fewer than the leader when you are lapped; refuel counts these laps",false}};
+    {L"ShowOwnLaps",L"Your laps at finish",L"The lap you finish on, and in orange how many fewer than the leader when you are lapped; refuel counts these laps",false},
+    // Switched in the expanded leader-laps and own-laps rows, for both: P1 of your class instead of overall.
+    {L"LeaderOfYourClass",L"Leader of your class",L"Leader laps and laps fewer than the leader count from P1 of your class",false}};
 static_assert(std::size(FuelModules)==FuelModuleCount);
 // Consumption figures in display order; app.fuelRows follows this order.
 struct FigureInfo { int metric; const wchar_t* heading; const wchar_t* title; const wchar_t* key; bool on; };
@@ -167,8 +170,19 @@ struct Placement { int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=tru
 enum LayoutCondition { AlwaysCondition, InCarCondition, OutOfCarCondition, GarageCondition, ConditionCount };
 const wchar_t* ConditionNames[]={L"Always",L"In car",L"Out of car",L"Garage"};
 const wchar_t* ConditionDetails[]={L"Alongside every other matching layout",L"While you drive",L"Spotting and replays",L"With the garage screen open"};
-struct Layout { int id=1; std::wstring name=L"Default"; int condition=AlwaysCondition; };
-bool LayoutApplies(int condition,int situation);
+// The second condition: the kind of session. Warmup and testing count as practice, time trials as qualifying.
+enum SessionCondition { AnySession, PracticeSession, QualifySession, RaceSession, SessionConditionCount };
+const wchar_t* SessionNames[]={L"Any session",L"Practice",L"Qualifying",L"Race"};
+const wchar_t* SessionPhrases[]={L"",L"in practice",L"in qualifying",L"in races"};
+struct Layout { int id=1; std::wstring name=L"Default"; int condition=AlwaysCondition, session=AnySession; };
+bool LayoutApplies(const Layout& layout,int situation,int session);
+// iRacing's SessionType as a session condition; -1 without one.
+int SessionKind(const std::string& type) {
+    if(type.empty()) return -1;
+    if(type.find("Race")!=std::string::npos) return RaceSession;
+    if(type.find("Qualify")!=std::string::npos || type.find("Time Trial")!=std::string::npos) return QualifySession;
+    return PracticeSession;
+}
 // DialTitle, DialValue and DialValueNarrow follow the overlay's size: the Adjustments' name and value, as big as fits.
 enum FontId : unsigned char { Regular, Bold, Large, Small, Hero, SmallBold, DialTitle, DialValue, DialValueNarrow, FontCount };
 struct DrawCommand {
@@ -193,7 +207,8 @@ struct TableSettings {
     bool showDriver=true, showStatus=true, columnHeaders=false, classColors=true, brandLogo=true, brandName=true;
     bool gapSigns=false; // + / - before gaps (and intervals in the Standings); off by default: the row order already tells.
     int nameFormat=0;
-    int rows=7, gapDecimals=1; bool hidePit=false, best=false, last=false, lapColors=true, classPositions=true; // Relative.
+    int gapDecimals=1; // Gaps, and in the Standings intervals: per layout, so a qualifying layout can show thousandths.
+    int rows=7; bool hidePit=false, best=false, last=false, lapColors=true, classPositions=true; // Relative.
     // classPositions: the Position column counts within each car's class instead of overall (the Standings follow their class view).
     StandingsOptions standings; bool interval=false, laps=false, gained=false, progress=true, pitExit=false; // Standings.
     int pitExitAhead=2, pitExitBehind=2; // Cars shown around the pit exit row.
@@ -399,6 +414,8 @@ struct App {
     // For the live benchmark: ticks, telemetry frames processed, and a call after each overlay refresh.
     unsigned long long ticks=0, framesProcessed=0; double lastFrameTime=-1; void(*refreshHook)(const Overlay&)=nullptr;
     int opponentFuelExtraLaps=3;
+    // Fuel to keep at the finish, in tenths of a litre or of a lap: in refuel, needed, the pit window and the targets.
+    int reserveTenths=0; bool reserveInLaps=false;
     // Pit stop estimate: lane loss learned per track or fixed by the user, service times per car (CarPath).
     PitLaneLoss pitLane; RefuelRate refuel; PitLaneEnds pitEnds; BrakingRate braking;
     // Whether Pit Assist shows, and where its strip starts while it does, so it stays put on the way in.
@@ -569,7 +586,7 @@ bool IsTarget(int id) { return id>=OneShorterRow && id<=TwoLongerRow; }
 int FuelHeight(const Overlay& o) {
     if(o.fuel.strip) return 50;
     // A row of cards is 104 high: 12 above and below an 80 high card. Up to three cards next to each other share it.
-    constexpr int heights[]={112,52,104,0,104,104,46,24,24,24,24,32,32,32,0,104,32};
+    constexpr int heights[]={112,52,104,0,104,104,46,24,24,24,24,32,32,32,0,104,32,0};
     static_assert(std::size(heights)==FuelModuleCount);
     const auto shown=FuelShown(o); int h=0;
     for(size_t k=0;k<shown.size();++k) {
@@ -710,9 +727,9 @@ void ReadTable(const wchar_t* section,int kind,TableSettings& t) {
     t.nameFormat=std::clamp(ReadInt(section,L"DriverNameFormat",0),0,2);
     t.columnHeaders=ReadBool(section,L"ShowColumnHeaders",false);
     t.interval=ReadBool(section,L"ShowInterval",false);
+    t.gapDecimals=std::clamp(ReadInt(section,L"GapDecimals",1),0,3);
     if(kind==RelativeKind) {
         t.rows=RelativeRowCount(ReadInt(section,L"Rows",7));
-        t.gapDecimals=std::clamp(ReadInt(section,L"GapDecimals",1),0,3);
         t.hidePit=ReadBool(section,L"HideDriversInPit",false);
         t.lapColors=ReadBool(section,L"ShowLapColors",true);
         t.best=ReadBool(section,L"ShowBestLap",false); t.last=ReadBool(section,L"ShowLastLap",false);
@@ -816,7 +833,8 @@ void LoadLayouts() {
         if(id>=1 && id<=999 && std::none_of(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==id;})) {
             const auto section=L"Layout "+std::to_wstring(id); wchar_t name[128]{};
             GetPrivateProfileStringW(section.c_str(),L"Name",id==1?L"Default":section.c_str(),name,128,app.config.c_str());
-            app.layouts.push_back({static_cast<int>(id),name,std::clamp(ReadInt(section.c_str(),L"Condition",AlwaysCondition),0,ConditionCount-1)});
+            app.layouts.push_back({static_cast<int>(id),name,std::clamp(ReadInt(section.c_str(),L"Condition",AlwaysCondition),0,ConditionCount-1),
+                std::clamp(ReadInt(section.c_str(),L"Session",AnySession),0,SessionConditionCount-1)});
         }
         token=end; if(*token==L',') ++token; else if(*token) break;
     }
@@ -824,7 +842,8 @@ void LoadLayouts() {
     if(!ActiveLayout()) app.layout=app.layouts.empty()?0:app.layouts.front().id;
     app.activeLayouts.clear();
     const int situation=app.frame.connected?CurrentSituation(app.frame):-1;
-    for(const auto& layout:app.layouts) if(LayoutApplies(layout.condition,situation)) app.activeLayouts.push_back(layout.id);
+    const int session=app.frame.connected?SessionKind(app.session.type):-1;
+    for(const auto& layout:app.layouts) if(LayoutApplies(layout,situation,session)) app.activeLayouts.push_back(layout.id);
 }
 // The active layout's overlays: instances added or dropped to its counts, then its settings.
 void LoadOverlays() {
@@ -886,6 +905,7 @@ void Load() {
     app.snapToGrid=ReadBool(L"General",L"SnapToGrid",true); app.snapToOverlays=ReadBool(L"General",L"SnapToOverlays",true);
     app.gridSize=std::clamp(ReadInt(L"General",L"GridSize",10),2,100);
     app.opponentFuelExtraLaps=std::clamp(ReadInt(L"General",L"OpponentFuelExtraLaps",3),0,10);
+    app.reserveTenths=std::clamp(ReadInt(L"General",L"FuelReserveTenths",0),0,200); app.reserveInLaps=ReadBool(L"General",L"FuelReserveInLaps",false);
     app.startWithWindows=ReadBool(L"General",L"StartWithWindows",false);
     app.startMinimized=ReadBool(L"General",L"StartMinimized",false);
     app.windowRect={ReadInt(L"General",L"WindowLeft",0),ReadInt(L"General",L"WindowTop",0),ReadInt(L"General",L"WindowRight",0),ReadInt(L"General",L"WindowBottom",0)};
@@ -905,7 +925,7 @@ void Save() {
     {
         std::wstring ids; for(const auto& l:app.layouts) ids+=(ids.empty()?L"":L",")+std::to_wstring(l.id);
         write(L"Layouts",L"Order",ids); number(L"Layouts",L"Count",static_cast<int>(app.layouts.size())); number(L"Layouts",L"Active",app.layout);
-        for(const auto& l:app.layouts) { const auto section=L"Layout "+std::to_wstring(l.id); write(section.c_str(),L"Name",l.name); number(section.c_str(),L"Condition",l.condition); }
+        for(const auto& l:app.layouts) { const auto section=L"Layout "+std::to_wstring(l.id); write(section.c_str(),L"Name",l.name); number(section.c_str(),L"Condition",l.condition); number(section.c_str(),L"Session",l.session); }
     }
     for(const auto& layout:app.layouts) for(int kind=0;kind<OverlayCount;++kind) if(!SingleInstance(kind)) number(KindSection(kind,layout.id).c_str(),L"Instances",InstanceCount(kind,layout.id));
     for(const auto& o:app.overlays) {
@@ -929,9 +949,9 @@ void Save() {
             number(section,L"ShowBlackFlag",t.driverFlags[0]); number(section,L"ShowSlowdown",t.driverFlags[1]); number(section,L"ShowRequiredRepairs",t.driverFlags[2]);
             number(section,L"ShowDriver",t.showDriver); number(section,L"ShowStatus",t.showStatus); number(section,L"DriverNameFormat",t.nameFormat);
             number(section,L"ShowColumnHeaders",t.columnHeaders); number(section,L"ShowGapSigns",t.gapSigns); number(section,L"SectorParts",t.sectorParts);
-            number(section,L"ShowInterval",t.interval);
+            number(section,L"ShowInterval",t.interval); number(section,L"GapDecimals",t.gapDecimals);
             if(o.kind==RelativeKind) {
-                number(section,L"Rows",t.rows); number(section,L"GapDecimals",t.gapDecimals); number(section,L"HideDriversInPit",t.hidePit);
+                number(section,L"Rows",t.rows); number(section,L"HideDriversInPit",t.hidePit);
                 number(section,L"ShowLapColors",t.lapColors); number(section,L"ShowBestLap",t.best); number(section,L"ShowLastLap",t.last);
                 number(section,L"ClassPositions",t.classPositions);
             } else {
@@ -976,6 +996,7 @@ void Save() {
     }
     number(L"General",L"ShowTitleBar",app.showTitleBar);
     number(L"General",L"OpponentFuelExtraLaps",app.opponentFuelExtraLaps);
+    number(L"General",L"FuelReserveTenths",app.reserveTenths); number(L"General",L"FuelReserveInLaps",app.reserveInLaps);
     number(L"General",L"StartWithWindows",app.startWithWindows); number(L"General",L"StartMinimized",app.startMinimized); number(L"General",L"CheckForUpdates",app.checkUpdates);
     number(L"General",L"SnapToGrid",app.snapToGrid); number(L"General",L"SnapToOverlays",app.snapToOverlays); number(L"General",L"GridSize",app.gridSize);
     if(app.windowRect.right>app.windowRect.left) {
@@ -1044,10 +1065,17 @@ FuelPlan PreviewPlan() {
     for(int i=0;i<p.historyCount;++i) { const bool caution=i==p.historyCount-3; p.history[i]={app.frame.lapCompleted-p.historyCount+1+i,laps[10-p.historyCount+i]-(caution?.7:0),!caution,caution}; }
     return p;
 }
+// The reserve in litres, or in laps at a consumption; the other unit needs a consumption, without one nothing.
+double ReserveLitres(double burn) { const double amount=app.reserveTenths/10.0; return app.reserveInLaps?(burn>0?amount*burn:0):amount; }
+double ReserveLaps(double burn) { const double amount=app.reserveTenths/10.0; return app.reserveInLaps?amount:(burn>0?amount/burn:0); }
+std::wstring ReserveText() { return app.reserveTenths?Format(app.reserveTenths/10.0,1)+(app.reserveInLaps?(app.reserveTenths==10?L" lap":L" laps"):L" L"):std::wstring(L"None"); }
 const FuelPlan& Plan() {
     if(app.planVersion!=app.modelVersion) {
         if(app.preview) app.fuelPlan=PreviewPlan();
-        else { const auto prediction=app.predictor.Predict(app.session,app.frame); app.fuelPlan=app.fuel.Plan(app.frame,&prediction); }
+        else {
+            const auto prediction=app.predictor.Predict(app.session,app.frame); const double amount=app.reserveTenths/10.0;
+            app.fuelPlan=app.fuel.Plan(app.frame,&prediction,app.reserveInLaps?0:amount,app.reserveInLaps?amount:0);
+        }
         app.planVersion=app.modelVersion;
     }
     return app.fuelPlan;
@@ -1215,7 +1243,8 @@ std::wstring PitExitAhead() {
 PitWindow FuelWindow() {
     const auto& p=Plan(); const auto& f=app.frame; const auto& basis=p.estimates[FuelBasis];
     double pace=p.prediction.ownPace; if(pace<=0) pace=f.lastLap>0?f.lastLap:f.bestLap;
-    return CalculatePitWindow(app.session,f,p.lapsToFinish,basis.samples?basis.consumption:-1,pace);
+    const double burn=basis.samples?basis.consumption:-1;
+    return CalculatePitWindow(app.session,f,p.lapsToFinish,burn,pace,ReserveLaps(burn));
 }
 #include "Footer.inc"
 #include "BrandLogos.inc"
@@ -1346,13 +1375,13 @@ std::wstring Gap(const Row& r,const Overlay& o) {
     const std::wstring plus=t.gapSigns?L"+":L"";
     if((t.standings.separateClasses?r.car.classPosition:r.car.position)==1) return app.session.type!="Race" && !(r.car.best>0)?L"—":L"LEADER";
     if(r.lapDifference>0) return plus+std::to_wstring(r.lapDifference)+L" L";
-    return std::isfinite(r.gap)?plus+Format(r.gap):L"—";
+    return std::isfinite(r.gap)?plus+Format(r.gap,t.gapDecimals):L"—";
 }
 std::wstring Interval(const Row& row,const TableSettings& t) {
     const std::wstring plus=t.gapSigns?L"+":L"";
     if((t.standings.separateClasses?row.car.classPosition:row.car.position)==1) return L"—";
     if(row.intervalLaps>0) return plus+std::to_wstring(row.intervalLaps)+L" L";
-    return std::isfinite(row.interval)?plus+Format(row.interval):L"—";
+    return std::isfinite(row.interval)?plus+Format(row.interval,t.gapDecimals):L"—";
 }
 // Fuel to add at the next stop: a final stop covers the shortfall, an intermediate stop fills the tank.
 double PlannedStopFuel(const PitWindow& window,const FuelPlan& p) {
@@ -1882,7 +1911,9 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         const bool open=window.status==PitWindowStatus::Open, noStop=window.status==PitWindowStatus::NoStopNeeded, extraStop=window.status==PitWindowStatus::ExtraStopNeeded;
         const bool tankKnown=f.fuelKnown && std::isfinite(f.fuel) && f.fuel>=0;
         const double capacity=app.session.fuelCapacity; const bool capacityKnown=std::isfinite(capacity) && capacity>0;
-        const double range=tankKnown && burn>0?f.fuel/burn:-1, refuel=burn>0?basis.add:-1, needed=burn>0 && p.lapsToFinish>=0?burn*p.lapsToFinish:-1;
+        // Needed and refuel keep the reserve at the finish; so do the targets to the finish, not those to a stop.
+        const double reserve=ReserveLitres(burn);
+        const double range=tankKnown && burn>0?f.fuel/burn:-1, refuel=burn>0?basis.add:-1, needed=burn>0 && p.lapsToFinish>=0?burn*p.lapsToFinish+reserve:-1;
         const bool refuelFits=refuel>=0 && (!capacityKnown || refuel<=capacity);
         // Fuel still to add is a stop to make: orange while it fits in the tank, red beyond it, green with nothing to add.
         const COLORREF refuelInk=refuel<0?Ink::Muted:(refuel==0?Ink::Green:(refuelFits?Ink::Orange:Ink::Red));
@@ -1901,7 +1932,8 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         const int fuelLaps=onFuel && range>=0?static_cast<int>(std::floor(range+f.lapPct+1e-9)):-1;
         const int targetLap=onFuel?(fuelLaps>0 && current>0?current+fuelLaps-1:-1):(open?window.lastLap:(noStop?finishLap:-1));
         const double targetDistance=onFuel?(fuelLaps>=0?fuelLaps-f.lapPct:-1):(open?window.lastLap-(f.lapCompleted+f.lapPct):(noStop?p.lapsToFinish:-1));
-        auto target=[&](int extra){ const double distance=targetDistance+extra; return tankKnown && (onFuel?fuelLaps>=0:targetDistance>0) && distance>.05?f.fuel/distance:-1.0; };
+        const double kept=!onFuel && !open && noStop?reserve:0;
+        auto target=[&](int extra){ const double distance=targetDistance+extra; return tankKnown && (onFuel?fuelLaps>=0:targetDistance>0) && distance>.05 && f.fuel>kept?(f.fuel-kept)/distance:-1.0; };
         auto lapsOnFuel=[&](int extra,bool main) {
             const int laps=std::max(0,fuelLaps+extra);
             return std::to_wstring(laps)+(laps==1?L" lap":L" laps")+(main?L" on fuel":L"");
@@ -1909,6 +1941,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         auto targetInk=[&](double value){ return value<0 || burn<=0?Ink::Muted:(value>=burn?Ink::Green:(value>=.9*burn?Ink::Yellow:Ink::Red)); };
         auto litres=[](double value,bool plus=false){ return value<0?std::wstring(L"—"):(plus?L"+":L"")+Format(value,1)+L" L"; };
         const int W=OverlayWidth(o); int y=32;
+        const bool classLeader=on[ClassLeaderOption];
         if(o.fuel.strip) {
             int n=0;
             auto item=[&](const wchar_t* head,std::wstring value,COLORREF ink) {
@@ -1928,12 +1961,12 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                 else item(L"TARGET",target(0)>=0?Format(target(0),2):L"—",targetInk(target(0)));
                 break;
             case OneLongerRow: item(L"+1 LAP",target(1)>=0?Format(target(1),2):L"—",targetInk(target(1))); break;
-            case LeaderDistanceModule: item(L"LEADER LAPS",LeaderDistanceValue(),Ink::Accent); break;
+            case LeaderDistanceModule: item(classLeader?L"CLASS P1":L"LEADER LAPS",LeaderDistanceValue(classLeader),Ink::Accent); break;
             case OwnLapsModule: {
-                // Your own finishing lap first; how many laps fewer than the overall leader in its own labelled cell.
-                const int laps=OwnFinishLaps(), fewer=OwnLapsFewer();
+                // Your own finishing lap first; how many laps fewer than the leader in its own labelled cell.
+                const int laps=OwnFinishLaps(), fewer=OwnLapsFewer(classLeader);
                 item(L"YOUR LAPS",laps<0?L"—":std::to_wstring(laps),Ink::Accent);
-                item(L"VS LEADER",laps<0?L"—":(fewer>0?L"−"+std::to_wstring(fewer)+(fewer==1?L" lap":L" laps"):L"lead lap"),laps<0?Ink::Muted:(fewer>0?Ink::Orange:Ink::Green));
+                item(classLeader?L"VS CLASS P1":L"VS LEADER",fewer<0?L"—":(fewer>0?L"−"+std::to_wstring(fewer)+(fewer==1?L" lap":L" laps"):L"lead lap"),fewer<0?Ink::Muted:(fewer>0?Ink::Orange:Ink::Green));
                 break;
             }
             case WhiteFlagTimeModule: item(L"FINAL LAP",WhiteFlagTimeValue(),white); break;
@@ -1961,18 +1994,18 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                 if(id==LeaderDistanceModule || id==WhiteFlagTimeModule) {
                     // One value row each, like Weather's precipitation.
                     separator();
-                    label(id==LeaderDistanceModule?L"LEADER LAPS AT FINISH":L"TIME LEFT AT LEADER'S FINAL LAP",rect(16,y,W-150,32),Ink::Label,Small);
-                    label(id==LeaderDistanceModule?LeaderDistanceValue()+L" laps":WhiteFlagTimeValue(),rect(W-142,y,126,32),id==LeaderDistanceModule?Ink::Accent:white,Bold,DT_RIGHT);
+                    label(id==LeaderDistanceModule?(classLeader?L"CLASS LEADER LAPS AT FINISH":L"LEADER LAPS AT FINISH"):L"TIME LEFT AT LEADER'S FINAL LAP",rect(16,y,W-150,32),Ink::Label,Small);
+                    label(id==LeaderDistanceModule?LeaderDistanceValue(classLeader)+L" laps":WhiteFlagTimeValue(),rect(W-142,y,126,32),id==LeaderDistanceModule?Ink::Accent:white,Bold,DT_RIGHT);
                     y+=32;
                 }
                 if(id==OwnLapsModule) {
                     // Lapped: how many laps fewer than the leader, so the fuel needed is not read off the leader's laps.
                     separator();
-                    const int laps=OwnFinishLaps(), fewer=OwnLapsFewer();
+                    const int laps=OwnFinishLaps(), fewer=OwnLapsFewer(classLeader);
                     const std::wstring value=laps>=0?std::to_wstring(laps)+L" laps":L"—";
                     label(L"YOUR LAPS AT FINISH",rect(16,y,W-150,32),Ink::Label,Small);
                     label(value,rect(W-142,y,126,32),Ink::Accent,Bold,DT_RIGHT);
-                    if(fewer>0) label(std::to_wstring(fewer)+(fewer==1?L" lap":L" laps")+L" fewer than leader",
+                    if(fewer>0) label(std::to_wstring(fewer)+(fewer==1?L" lap":L" laps")+(classLeader?L" fewer than class leader":L" fewer than leader"),
                         {px(16)+measure(L"YOUR LAPS AT FINISH",Small)+px(12),px(y),px(W-16)-measure(value,Bold)-px(10),px(y+32)},Ink::Orange,Small,DT_RIGHT);
                     y+=32;
                 }
@@ -2004,7 +2037,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                     if(spare) { middle=L"Spare "+litres(atFinish); middleInk=Ink::Green; }
                     if(!middle.empty()) { const int size=measure(middle,Small); key((px(W)-size-px(13))/2,middleInk,false,std::move(middle),size); }
                     if(needed>=0) {
-                        std::wstring text=L"Needed "+litres(needed)+L" · "+Format(p.lapsToFinish,1)+L" laps"; const int size=measure(text,Small);
+                        std::wstring text=L"Needed "+litres(needed)+L" · "+(reserve>0?L"reserve "+litres(reserve):Format(p.lapsToFinish,1)+L" laps"); const int size=measure(text,Small);
                         key(px(W-16)-size-px(7),RGB(255,255,255),true,std::move(text),size);
                     }
                     y+=112;
@@ -2066,7 +2099,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                     const double shorter=std::isfinite(atFinish)?atFinish+burn:std::numeric_limits<double>::quiet_NaN();
                     for(int which:cards) if(which==RefuelCard && spare) card(L"AT FINISH",SignedLitres(atFinish),Ink::Green,L"\u2248"+Format(atFinish/burn,1)+L" laps spare");
                     else if(which==RefuelCard) card(L"REFUEL TO FINISH",litres(refuel,true),refuelInk,
-                        refuel<0?L"waiting for laps":(saveable?L"or save "+Format(save,2)+L" L/lap":(refuel==0?L"enough fuel to finish":(refuelFits?L"fits in the tank":L"more than one tank"))));
+                        refuel<0?L"waiting for laps":(saveable?L"or save "+Format(save,2)+L" L/lap":(refuel==0?L"enough fuel to finish":(!refuelFits?L"more than one tank":(reserve>0?L"incl. "+litres(reserve)+L" reserve":L"fits in the tank")))));
                     else if(which==ShorterCard) {
                         if(!std::isfinite(shorter) || p.lapsToFinish<1) card(L"ONE LAP SHORTER",L"\u2014",Ink::Muted,L"waiting for laps");
                         else if(shorter>=0) card(L"ONE LAP SHORTER",SignedLitres(shorter),Ink::Green,L"spare at the finish");
@@ -3667,7 +3700,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
 #else
     constexpr bool diagnostics=false;
 #endif
-    const bool benchmark=wcsstr(args,L"--benchmark")!=nullptr || wcsstr(args,L"--verify-alpha")!=nullptr;
+    const bool benchmark=wcsstr(args,L"--benchmark")!=nullptr || wcsstr(args,L"--verify-alpha")!=nullptr || wcsstr(args,L"--verify-editor")!=nullptr;
     app.instance=instance; app.diagnostics=diagnostics || benchmark;
     profiler.on=wcsstr(args,L"--profile")!=nullptr; profiler.start=GetTickCount64(); profiler.cpuStart=ProcessCpuMicroseconds();
     HANDLE mutex=nullptr;
@@ -3688,6 +3721,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
         app.config=std::wstring(current)+L"\\build\\qa\\settings.ini"; CreateDirectoryW(L"build\\qa",nullptr);
         if(wcsstr(args,L"--benchmark-spout")) app.config=std::wstring(current)+L"\\build\\qa\\spout-benchmark-defaults.ini";
         if(wcsstr(args,L"--benchmark-renderers")) { app.config=std::wstring(current)+L"\\build\\qa\\renderer-benchmark.ini"; DeleteFileW(app.config.c_str()); }
+        if(wcsstr(args,L"--verify-editor")) app.config=std::wstring(current)+L"\\build\\qa\\editor-settings.ini";
         // Every run starts from the defaults: no check may depend on what an earlier run left behind.
         if(diagnostics) DeleteFileW(app.config.c_str());
     }
@@ -3721,6 +3755,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
     for(auto& o:app.overlays) if(LayoutRunning(o.layout)) CreateOverlayWindow(o);
 #ifdef RACEMATE_DIAGNOSTICS
     if(wcsstr(args,L"--verify-alpha")) return RunAlphaRegression();
+    if(wcsstr(args,L"--verify-editor")) return RunEditorCheck();
     if(wcsstr(args,L"--benchmark-renderers")) return RunRendererBenchmark();
     if(wcsstr(args,L"--benchmark-spout")) return RunSpoutBenchmark(wcsstr(args,L"--benchmark-spout-on")!=nullptr);
     if(diagnostics) return RunDiagnostics();

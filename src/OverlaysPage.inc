@@ -3,8 +3,8 @@ class OverlaysPage : public PageWindow {
 public:
     OverlaysPage() : PageWindow(ui.heading,ui.text) {}
 private:
-    enum class Key { None, Instance, Add, Move, Hide, PauseObs, Reset, Layout, AddLayout };
-    static constexpr int ListId=100, LayoutNameId=220, LayoutConditionId=221;
+    enum class Key { None, Instance, Add, Move, Hide, PauseObs, Reset, Export, Layout, AddLayout, ImportLayout };
+    static constexpr int ListId=100, LayoutNameId=220, LayoutConditionId=221, LayoutSessionId=222;
 
     void OnCreate() override {
         list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont());
@@ -38,13 +38,13 @@ private:
         for(const auto& l:app.layouts) {
             const bool open=std::find(app.openLayoutGroups.begin(),app.openLayoutGroups.end(),l.id)!=app.openLayoutGroups.end();
             RowList::Row row; row.title=l.name;
-            row.detail=std::wstring(ConditionNames[l.condition])+L": "+ConditionDetails[l.condition];
+            row.detail=std::wstring(ConditionNames[l.condition])+(l.session?L" · "+std::wstring(SessionNames[l.session]):L"")+L": "+ConditionDetails[l.condition]+(l.session?L", "+std::wstring(SessionPhrases[l.session]):L"");
             if(LayoutPreviewing(l.id)) { row.pill=L"Preview"; row.pillTone=RowList::Tone::Warning; }
             else if(LayoutLive(l.id)) { row.pill=L"Active"; row.pillTone=RowList::Tone::Active; }
             row.button=LayoutPreviewRequested(l.id)?L"Stop preview":L"Preview";
             row.buttonEnabled=!LayoutLive(l.id) || LayoutPreviewRequested(l.id);
             row.iconButtons={open?Glyph::Collapse:Glyph::Expand,Glyph::Remove};
-            row.expandHeight=l.id==expandedLayout_?84:0; row.dragGroup=1;
+            row.expandHeight=l.id==expandedLayout_?120:0; row.dragGroup=1;
             push(std::move(row),Key::Layout,nullptr,l.id);
             if(!open) continue;
             for(auto& o:app.overlays) if(o.layout==l.id) {
@@ -63,10 +63,16 @@ private:
             RowList::Row reset; reset.title=L"Reset positions"; reset.indent=40;
             reset.detail=L"Restore overlay positions in "+l.name+L"."; reset.button=L"Reset";
             push(std::move(reset),Key::Reset,nullptr,l.id);
+            RowList::Row share; share.title=L"Export layout"; share.indent=40;
+            share.detail=L"Save "+l.name+L" to a file, to share it or take it to another computer."; share.button=L"Export...";
+            push(std::move(share),Key::Export,nullptr,l.id);
         }
         RowList::Row addLayout; addLayout.title=L"Add layout";
         addLayout.detail=L"An independent layout, copied or starting with defaults."; addLayout.button=L"Add...";
         push(std::move(addLayout),Key::AddLayout);
+        RowList::Row load; load.title=L"Import layout";
+        load.detail=L"A layout exported from RaceMate, added as a new layout; your other layouts stay as they are."; load.button=L"Import...";
+        push(std::move(load),Key::ImportLayout);
         list_.SetRows(std::move(rows));
     }
     int ExpandedRow() const {
@@ -84,6 +90,8 @@ private:
             editors_.Label(L"Name",0,10,84); editors_.Edit(LayoutNameId,layout->name,88,10,230);
             editors_.Label(L"Active when",0,46,84);
             editors_.Combo(LayoutConditionId,std::vector<std::wstring>(std::begin(ConditionNames),std::end(ConditionNames)),layout->condition,88,46,230);
+            editors_.Label(L"Session",0,82,84);
+            editors_.Combo(LayoutSessionId,std::vector<std::wstring>(std::begin(SessionNames),std::end(SessionNames)),layout->session,88,82,230);
             syncing_=false; editors_.Position(); return;
         }
         syncing_=false; editors_.Position();
@@ -105,6 +113,30 @@ private:
         const auto question=L"Remove "+Name(o)+L" and its settings?";
         if(MessageBoxW(app.main,question.c_str(),L"RaceMate",MB_OKCANCEL|MB_ICONQUESTION)!=IDOK) return;
         RemoveInstance(o); UpdateOverlays(); Refresh();
+    }
+    // A layout file to write or read; empty when cancelled.
+    static std::wstring LayoutFile(bool save,std::wstring name) {
+        for(wchar_t& c:name) if(wcschr(L"\\/:*?\"<>|",c)) c=L'-';
+        wchar_t file[MAX_PATH]{}; if(save) wcsncpy_s(file,name.c_str(),_TRUNCATE);
+        OPENFILENAMEW dialog{sizeof(dialog)}; dialog.hwndOwner=app.main; dialog.lpstrFile=file; dialog.nMaxFile=MAX_PATH;
+        dialog.lpstrFilter=L"RaceMate layouts (*.racemate-layout)\0*.racemate-layout\0All files\0*.*\0"; dialog.lpstrDefExt=L"racemate-layout";
+        dialog.Flags=OFN_NOCHANGEDIR|OFN_PATHMUSTEXIST|(save?OFN_OVERWRITEPROMPT:OFN_FILEMUSTEXIST);
+        return (save?GetSaveFileNameW(&dialog):GetOpenFileNameW(&dialog))?std::wstring(file):std::wstring();
+    }
+    void Export(int id) {
+        const Layout* layout=FindLayout(id); if(!layout) return;
+        const auto path=LayoutFile(true,layout->name); if(path.empty()) return;
+        if(!ExportLayout(id,path)) MessageBoxW(app.main,(L"The layout could not be written to "+path+L".").c_str(),L"RaceMate",MB_OK|MB_ICONWARNING);
+    }
+    void Import() {
+        const auto path=LayoutFile(false,L""); if(path.empty()) return;
+        // Another monitor can make the old places wrong; the overlays can also start where new ones do.
+        const int answer=MessageBoxW(app.main,L"Place the overlays where they were when the layout was exported?\n\nNo puts them at their default places, as for new overlays.",L"RaceMate",MB_YESNOCANCEL|MB_ICONQUESTION);
+        if(answer==IDCANCEL) return;
+        const int id=ImportLayout(path,answer==IDYES);
+        if(!id) { MessageBoxW(app.main,L"This file is not a layout exported from RaceMate.",L"RaceMate",MB_OK|MB_ICONWARNING); return; }
+        if(std::find(app.openLayoutGroups.begin(),app.openLayoutGroups.end(),id)==app.openLayoutGroups.end()) app.openLayoutGroups.push_back(id);
+        Refresh();
     }
     void AddLayoutChoice() {
         const Layout* active=ActiveLayout();
@@ -141,8 +173,10 @@ private:
             }
             return true;
         }
-        if(id==LayoutConditionId) {
-            if(Layout* layout=FindLayout(expandedLayout_); layout && !syncing_ && code==CBN_SELCHANGE && editors_.Selection(id)>=0) { layout->condition=editors_.Selection(id); ReconsiderLayout(); Save(); Refresh(); }
+        if(id==LayoutConditionId || id==LayoutSessionId) {
+            if(Layout* layout=FindLayout(expandedLayout_); layout && !syncing_ && code==CBN_SELCHANGE && editors_.Selection(id)>=0) {
+                (id==LayoutSessionId?layout->session:layout->condition)=editors_.Selection(id); ReconsiderLayout(); Save(); Refresh();
+            }
             return true;
         }
         if(id!=ListId) return false;
@@ -171,6 +205,8 @@ private:
         case Key::Hide: if(code==RowList::kToggled && on!=app.hidden) ToggleHidden(); break;
         case Key::PauseObs: if(code==RowList::kToggled && on!=app.obsPaused) ToggleObsPaused(); break;
         case Key::Reset: if(pressed) { Save(); app.layout=layout; ResetPositions(); } break;
+        case Key::Export: if(pressed) Export(layout); break;
+        case Key::ImportLayout: if(pressed) Import(); break;
         default: break;
         }
         return true;

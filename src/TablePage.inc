@@ -110,6 +110,9 @@ private:
             push(std::move(own),Key::OwnClass);
             RowList::Row live; live.title=L"Live positions and gaps"; live.detail=L"Estimated from track position between start/finish crossings."; live.toggle=standings.liveGaps?1:0;
             push(std::move(live),Key::LiveGaps);
+            // As in the Relative; a layout for qualifying can show thousandths and one for races tenths.
+            RowList::Row decimals; decimals.title=L"Gap decimals"; decimals.detail=std::to_wstring(o_.table.gapDecimals)+L"  \u00B7  "+Format(0,o_.table.gapDecimals)+L" s  \u00B7  gap and interval"; decimals.button=L"Choose...";
+            push(std::move(decimals),Key::GapDecimals);
             RowList::Row signs; signs.title=L"Show + before gaps and intervals"; signs.detail=L"Both always count behind the leader or the car ahead."; signs.toggle=o_.table.gapSigns?1:0;
             push(std::move(signs),Key::GapSigns);
             RowList::Row untimed; untimed.title=L"Drivers without a lap time"; untimed.button=L"Choose...";

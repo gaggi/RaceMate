@@ -3,7 +3,7 @@ class GeneralPage : public PageWindow {
 public:
     GeneralPage() : PageWindow(ui.heading,ui.text) {}
 private:
-    enum class Key { None, StartWithWindows, StartMinimized, TitleBar, OpponentFuel, PitLane, PitService, Hotkey, CheckUpdates, Version, SnapToGrid, SnapToOverlays };
+    enum class Key { None, StartWithWindows, StartMinimized, TitleBar, FuelReserve, OpponentFuel, PitLane, PitService, Hotkey, CheckUpdates, Version, SnapToGrid, SnapToOverlays };
     static constexpr int ListId=100, HotkeyId=200, LaneEditId=202, TiresEditId=203, RateEditId=204, GridEditId=205;
     static constexpr int LaneRow=10, ServiceRow=11, GridRow=12;
     // Below 5 Hz short offtracks and pit timing get lost.
@@ -12,7 +12,7 @@ private:
         list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont());
         editors_.Attach(list_,Instance(),TextFont());
         // Records a new shortcut while a shortcut's button waits for one: a hotkey field out of sight that takes the
-        // keys. A shortcut always needs Ctrl or Alt so plain typing is never captured.
+        // keys. A shortcut needs Ctrl or Alt so plain typing is never captured; an F key may stand alone (CaptureProc).
         capture_=CreateWindowExW(0,HOTKEY_CLASSW,L"",WS_CHILD|WS_VISIBLE,-50,-50,1,1,Handle(),reinterpret_cast<HMENU>(static_cast<INT_PTR>(HotkeyId)),Instance(),nullptr);
         SendMessageW(capture_,HKM_SETRULES,HKCOMB_NONE|HKCOMB_S,MAKELPARAM(HOTKEYF_CONTROL|HOTKEYF_ALT,0));
         SetWindowSubclass(capture_,CaptureProc,1,reinterpret_cast<DWORD_PTR>(this));
@@ -24,6 +24,12 @@ private:
         const bool modified=GetKeyState(VK_CONTROL)<0 || GetKeyState(VK_MENU)<0;
         if((m==WM_KEYDOWN || m==WM_SYSKEYDOWN) && !modified && (wp==VK_ESCAPE || wp==VK_BACK || wp==VK_DELETE)) {
             if(wp!=VK_ESCAPE && page->capturing_>=0) { app.hotkeys[page->capturing_]=0; Save(); }
+            page->EndCapture(); return 0;
+        }
+        // F1 to F24 alone or with Shift, which the field's rules would turn into Ctrl+Alt+F: no text is typed with them.
+        // F12 stays the debugger's; Windows refuses it as a shortcut.
+        if((m==WM_KEYDOWN || m==WM_SYSKEYDOWN) && !modified && wp>=VK_F1 && wp<=VK_F24 && wp!=VK_F12 && page->capturing_>=0) {
+            app.hotkeys[page->capturing_]=static_cast<WORD>(wp|(GetKeyState(VK_SHIFT)<0?HOTKEYF_SHIFT<<8:0)); Save();
             page->EndCapture(); return 0;
         }
         if(m==WM_GETDLGCODE) return DLGC_WANTALLKEYS;
@@ -58,6 +64,10 @@ private:
         toggle(Key::SnapToGrid,L"Snap to grid while moving",L"Every "+std::to_wstring(app.gridSize)+L" px from the corner of the screen. Hold Alt while dragging to place freely.",app.snapToGrid);
         rows.back().iconButtons={expanded_==GridRow?Glyph::Collapse:Glyph::Expand}; rows.back().expandHeight=expanded_==GridRow?48:0;
         toggle(Key::SnapToOverlays,L"Snap to other overlays",L"Edges and centre lines line up with other overlays and the screen; a magenta line shows where.",app.snapToOverlays);
+        header(L"Fuel strategy");
+        RowList::Row reserve; reserve.title=L"Reserve at the finish"; reserve.button=L"Choose...";
+        reserve.detail=ReserveText()+L"  \u00B7  Kept in refuel, needed fuel, the pit window and the targets to the finish; spare fuel counts above it.";
+        push(std::move(reserve),Key::FuelReserve);
         header(L"Opponent fuel estimate");
         RowList::Row fuel; fuel.title=L"Additional laps with fuel saving";
         fuel.detail=L"+"+std::to_wstring(app.opponentFuelExtraLaps)+(app.opponentFuelExtraLaps==1?L" lap":L" laps")+L" for yellow SAVE. Green END uses your normal full-tank range. Shared by Relative and Standings."; fuel.button=L"Choose...";
@@ -95,7 +105,9 @@ private:
         for(int i=0;i<HotkeyCount;++i) {
             RowList::Row row; row.title=names[i]; row.detail=details[i];
             row.button=i==capturing_?L"Press a shortcut \u2026":HotkeyText(app.hotkeys[i]);
-            if(i==capturing_) row.detail=L"With Ctrl or Alt  \u00B7  Esc cancels  \u00B7  Backspace turns it off";
+            // A shortcut takes its keys from every program: an F key alone no longer reaches iRacing.
+            if(LOBYTE(app.hotkeys[i]) && !(HIBYTE(app.hotkeys[i])&(HOTKEYF_CONTROL|HOTKEYF_ALT))) row.detail+=L"  \u00B7  iRacing no longer gets "+HotkeyText(app.hotkeys[i]);
+            if(i==capturing_) row.detail=L"With Ctrl or Alt, or an F key alone  \u00B7  Esc cancels  \u00B7  Backspace turns it off";
             if(app.hotkeyError.find(HotkeyKeys[i])!=std::wstring::npos) { row.pill=L"In use"; row.pillTone=RowList::Tone::Warning; }
             row.iconButtons={app.hotkeys[i]!=DefaultHotkeys[i]?Glyph::Reset:wchar_t{0}};
             push(std::move(row),Key::Hotkey,i);
@@ -178,6 +190,20 @@ private:
             break;
         case Key::StartMinimized: if(code==RowList::kToggled) { SetStartMinimized(on); Refresh(); } break;
         case Key::TitleBar: if(code==RowList::kToggled) { SetShowTitleBar(on); Refresh(); } break;
+        case Key::FuelReserve:
+            if(pressed) {
+                // In litres or in laps; a choice stores the amount in tenths and its unit.
+                static constexpr struct { int tenths; bool laps; } choices[]={{0,false},{5,false},{10,false},{20,false},{30,false},{50,false},{5,true},{10,true},{20,true}};
+                std::vector<std::wstring> items; int checked=-1;
+                for(size_t i=0;i<std::size(choices);++i) {
+                    const auto& c=choices[i];
+                    items.push_back(!c.tenths?std::wstring(L"None"):Format(c.tenths/10.0,1)+(c.laps?(c.tenths==10?L" lap":L" laps"):L" L"));
+                    if(c.tenths==app.reserveTenths && (c.laps==app.reserveInLaps || !c.tenths)) checked=static_cast<int>(i);
+                }
+                const int choice=ChooseFromMenu(items,checked);
+                if(choice>=0) { app.reserveTenths=choices[choice].tenths; app.reserveInLaps=choices[choice].laps; InvalidateModel(); SettingChanged(); Refresh(); }
+            }
+            break;
         case Key::OpponentFuel:
             if(pressed) {
                 std::vector<std::wstring> items; for(int i=0;i<=10;++i) items.push_back(L"+"+std::to_wstring(i)+(i==1?L" lap":L" laps"));

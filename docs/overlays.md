@@ -76,6 +76,7 @@ The Standings show the race order. In races, cars are ranked by their progress; 
 | Rows in other classes | With separate classes: how many cars every other class shows from its leader, at least; default 3. With 0 a class shows only its header, so you still see how many cars it has. |
 | Classes | **Separate classes**: one section per class with its own leader, positions counted within the class, and a header with the number of cars and the class strength of field (**SOF**). **Combined overall standings**: one list for the whole field with overall positions. |
 | Only my class | Shows only the class of your car, or of the car you watch. |
+| Gap decimals | Decimal places of the gap and the interval, 0 to 3; default 1. For thousandths in qualifying and tenths in races, use a layout for each [session](layouts-and-settings.md#automatic-layouts). |
 | Live positions and gaps | Updates positions, gaps and intervals continuously from track position, with measured gaps: how long ago the car ahead was where the car behind is now, as on Formula 1 timing screens; a lapped car adds whole laps at the leader's pace. Off: they change only when cars cross the start/finish line, as iRacing reports them. |
 | Show + before gaps and intervals | Off by default; both always count behind the leader or the car ahead. |
 | Drivers without a lap time | Ordered by car number (default) or by iRating, highest first. |
@@ -99,8 +100,8 @@ Relative and Standings use the same set of columns. Each overlay has its own cho
 | Position (P) | Race position. | Relative: **In class** (default) or **Overall**, see [Position in the Relative](#position-in-the-relative). Standings: follows the **Classes** view. |
 | Car number (#) | Car number in a box in the class color. | – |
 | Driver | Driver name, with the status badge after it, see [Status badges](#status-badges). The badge belongs to the name and moves with it. | Name format: **First name Last name**, **F. Last name** or **F Last name**. **Status badge after the name** on or off, and which flags it shows: **Black flag**, **Slowdown**, **Required repairs**. |
-| Gap (GAP) | Relative: time to the reference car. Standings: time behind the class leader, or laps (`1 L`) when lapped. | – |
-| Interval (INT) | Time to the car directly ahead, also when that car is not listed. Standings only. | – |
+| Gap (GAP) | Relative: time to the reference car. Standings: time behind the class leader, or laps (`1 L`) when lapped. Decimals under **Gap decimals** on each table's page. | – |
+| Interval (INT) | Time to the car directly ahead, also when that car is not listed. Standings only; decimals as for the gap. | – |
 | Best lap / Last lap | Fastest lap of this session and the most recent lap. | – |
 | License | License class and safety rating, for example `A 3.45`. | Short view: safety rating only (`3,45`). |
 | iRating | The driver's iRating. | Short view in thousands (`2,4K`). |
@@ -140,7 +141,7 @@ The Fuel Calculator groups information into switchable, reorderable modules: dra
 | Tank | Current fuel, range in laps and a finish requirement/spare marker |
 | Consumption | Last lap; averages of 3, 10 and 5 laps; race average; minimum and maximum; the qualifying maximum |
 | Last 10 laps | Whole-lap consumption history against the 10-lap average |
-| Refuel to finish | Additional fuel required without a safety margin, or fuel left at the finish |
+| Refuel to finish | Additional fuel required, including your reserve, or fuel left at the finish above it |
 | One lap shorter | The same if the race runs a lap shorter than forecast, as when the leader still has to stop |
 | Pit window | Earliest and latest stop lap |
 | Pit window timeline | Full-tank stint blocks, window in green and current lap in yellow |
