@@ -4,7 +4,7 @@
 
 ## Position and appearance
 
-Open **Overlays** and click **Settings** on an overlay's row, or double-click the row. The **Window** section at the top of its page holds its name and placement; they belong to that overlay in its own layout. The row in the list summarizes them.
+Open **Overlays** and click **Settings** on an overlay's row, or double-click the row. The row's switch puts the overlay on your screen; a pill says where it appears: **Screen**, **OBS** or **Screen + OBS**. The **Window** section at the top of its page holds its name and placement; they belong to that overlay in its own layout. The row in the list summarizes them.
 
 | Setting | Available choices | Effect |
 | --- | --- | --- |
@@ -99,10 +99,11 @@ RaceMate reads every frame iRacing publishes, 60 a second, so event recording, p
 | Default | Action |
 | --- | --- |
 | Ctrl + Alt + Shift + E | Move overlays |
-| Ctrl + Alt + Shift + H | Hide/show overlays |
+| Ctrl + Alt + Shift + H | Hide/show overlays on your screen |
 | Ctrl + Alt + Shift + S | Open settings |
 | Ctrl + Alt + Shift + Left | Previous Race Control event |
 | Ctrl + Alt + Shift + Right | Next Race Control event |
+| Ctrl + Alt + Shift + O | Pause/resume OBS output |
 
 To change a shortcut, click its button and press a combination containing **Ctrl or Alt**. **Esc** cancels; **Backspace** disables it. The reset arrow restores a changed shortcut's default. A conflict appears as **In use**, and the main banner identifies unavailable shortcuts.
 

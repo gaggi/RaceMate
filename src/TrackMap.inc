@@ -322,6 +322,7 @@ template<class Road,class Blocked> void DrawStartFinish(Gdiplus::Graphics& graph
     }
 }
 #include "TrackMapSectors.inc"
+void BlendMatte(Overlay& o,const RECT& r,const std::uint32_t* source,int width,int height);
 void PaintMap(Overlay& o,const DrawCommand& c,HRGN dirty) {
     if(o.map.layout==MapLayout && !trackMap.ready) return;
     const int width=c.r.right-c.r.left,height=c.r.bottom-c.r.top;
@@ -396,20 +397,22 @@ void PaintMap(Overlay& o,const DrawCommand& c,HRGN dirty) {
             std::memcpy(o.pixels+(c.r.top+y)*o.width+c.r.left+left,mapPixels+y*width+left,(right-left)*sizeof(std::uint32_t));
         return;
     }
+    if(o.matteAreas && mapPixels) { BlendMatte(o,c.r,mapPixels,width,height); return; }
     HDC source=CreateCompatibleDC(o.dc); const auto old=SelectObject(source,mapBitmap);
     if(o.foregroundMatte) AlphaBlend(o.dc,c.r.left,c.r.top,width,height,source,0,0,width,height,BLENDFUNCTION{AC_SRC_OVER,0,255,AC_SRC_ALPHA});
     else BitBlt(o.dc,c.r.left,c.r.top,width,height,source,0,0,SRCCOPY);
     SelectObject(source,old); DeleteDC(source);
 }
-// Premultiplied source over the buffer pixels: a few hundred pixels per car instead of an AlphaBlend call each.
-void Blend(Overlay& o,const RECT& r,const std::uint32_t* source,int width,int height) {
+// Premultiplied source at r over the target pixels, within clip (inside the target): a few hundred pixels per car
+// instead of an AlphaBlend call each.
+void BlendInto(std::uint32_t* target,int stride,const RECT& clip,const RECT& r,const std::uint32_t* source,int width,int height) {
     const int left=r.left,top=r.top;
-    const int first=std::max(0,-left),last=std::min(width,o.width-left);
+    const int first=std::max(0,static_cast<int>(clip.left)-left),last=std::min(width,static_cast<int>(clip.right)-left);
     const __m128i zero=_mm_setzero_si128(),opaque=_mm_set1_epi32(255),full=_mm_set1_epi16(255),half=_mm_set1_epi16(128);
     // Each 16-bit channel times the pixel's 255 - alpha, divided by 255 the same way as below.
     auto scale=[&](__m128i channels,__m128i alpha){ __m128i v=_mm_add_epi16(_mm_mullo_epi16(channels,_mm_sub_epi16(full,alpha)),half); return _mm_srli_epi16(_mm_add_epi16(v,_mm_srli_epi16(v,8)),8); };
-    for(int y=std::max(0,-top);y<height && top+y<o.height;++y) {
-        const std::uint32_t* from=source+y*width; std::uint32_t* to=o.pixels+(top+y)*o.width+left;
+    for(int y=std::max(0,static_cast<int>(clip.top)-top);y<height && top+y<clip.bottom;++y) {
+        const std::uint32_t* from=source+y*width; std::uint32_t* to=target+static_cast<size_t>(top+y)*stride+left;
         int x=first;
         // Four pixels at a time (SSE2, on every x64 processor): the same results as one at a time.
         for(;x+4<=last;x+=4) {
@@ -433,9 +436,21 @@ void Blend(Overlay& o,const RECT& r,const std::uint32_t* source,int width,int he
         }
     }
 }
-// Into the pixels in a whole-map pass, else through GDI with the pass's clipping.
+void Blend(Overlay& o,const RECT& r,const std::uint32_t* source,int width,int height) { BlendInto(o.pixels,o.width,{0,0,o.width,o.height},r,source,width,height); }
+// Background only: into a matte's pixels, within each of the pass's areas, the same as AlphaBlend would.
+void BlendMatte(Overlay& o,const RECT& r,const std::uint32_t* source,int width,int height) {
+    GdiFlush(); // GDI may still be drawing what lies under it.
+    const RECT box{r.left,r.top,r.left+width,r.top+height};
+    // A region's rectangles run top to bottom: from the first that reaches the box until one starts below it.
+    const auto& areas=*o.matteAreas;
+    for(auto area=std::partition_point(areas.begin(),areas.end(),[&](const RECT& a){ return a.bottom<=box.top; });area!=areas.end() && area->top<box.bottom;++area) {
+        RECT clip{}; if(IntersectRect(&clip,&*area,&box)) BlendInto(o.dibPixels,o.width,clip,r,source,width,height);
+    }
+}
+// Into the pixels in a whole-map pass or a matte, else through GDI with the pass's clipping.
 void PutMapBitmap(Overlay& o,const RECT& r,HBITMAP bitmap,const std::uint32_t* pixels,int width,int height) {
     if(o.direct) { Blend(o,r,pixels,width,height); return; }
+    if(o.matteAreas) { BlendMatte(o,r,pixels,width,height); return; }
     HDC source=CreateCompatibleDC(o.dc); const auto old=SelectObject(source,bitmap);
     AlphaBlend(o.dc,r.left,r.top,width,height,source,0,0,width,height,{AC_SRC_OVER,0,255,AC_SRC_ALPHA});
     SelectObject(source,old); DeleteDC(source);

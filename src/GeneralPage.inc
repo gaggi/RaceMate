@@ -88,9 +88,9 @@ private:
         }
         header(L"Shortcuts  \u00B7  work in every program, iRacing too");
         // Click the shortcut, then press the new one; the reset arrow appears where it differs from the default.
-        const wchar_t* names[]={L"Move overlays",L"Hide all overlays",L"Open settings",L"Previous event in Race Control",L"Next event in Race Control"};
-        const wchar_t* details[]={L"Drag the overlays with the mouse; press it again when done.",L"Hides every overlay, and shows them again.",
-            L"Brings this window to the front.",L"Replays the event before the selected one; opens Race Control if it is closed.",L"Replays the event after the selected one."};
+        const wchar_t* names[]={L"Move overlays",L"Hide all overlays",L"Open settings",L"Previous event in Race Control",L"Next event in Race Control",L"Pause OBS output"};
+        const wchar_t* details[]={L"Drag the overlays with the mouse; press it again when done.",L"Hides every overlay on your screen, and shows them again; OBS keeps its output.",
+            L"Brings this window to the front.",L"Replays the event before the selected one; opens Race Control if it is closed.",L"Replays the event after the selected one.",L"Stops sending to OBS, and starts again; your screen is unchanged."};
         static_assert(std::size(names)==HotkeyCount && std::size(details)==HotkeyCount);
         for(int i=0;i<HotkeyCount;++i) {
             RowList::Row row; row.title=names[i]; row.detail=details[i];

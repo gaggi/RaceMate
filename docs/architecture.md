@@ -81,7 +81,7 @@ The normal configuration is `%LOCALAPPDATA%\RaceMate\settings.ini`. Saving updat
 
 The original layout uses the original plain section names. Additional layouts use prefixes such as `Layout 3:`, and extra instances use numbered names such as `Weather 2`. Keeping the original layout compatible allows earlier settings to migrate without a separate import wizard.
 
-Automatic selection waits until a new situation holds for one second, then uses the first matching layout condition; with none matching, the overlays hide until one does or a layout is chosen by hand. A manual choice lasts until another situation change. GUI diagnostics and benchmarks redirect their configuration to `build/qa/settings.ini`.
+Every layout whose condition matches the current situation runs at the same time; there is no first-match priority. With none matching, no overlays show. Choosing a layout in the editor only selects what is edited and never overrides the conditions. GUI diagnostics and benchmarks redirect their configuration to `build/qa/settings.ini`.
 
 ## Local files and external access
 

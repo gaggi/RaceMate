@@ -333,6 +333,8 @@ struct Overlay {
     // The track map's buffer and static map are DIBs: when a pass repaints the whole map, map, cars and numbers
     // go straight into the pixels, without a device conversion or an extra copy.
     std::uint32_t* pixels=nullptr; const std::uint32_t* mapPixels=nullptr; bool direct=false;
+    // Background only, while a matte is painted: its areas, where the map and its cars are blended in software.
+    const std::vector<RECT>* matteAreas=nullptr;
     // A map without background has per-pixel alpha (UpdateLayeredWindow): edges blend smoothly with any background.
     mutable bool layeredAlpha=false;
     // Rows for the current model version.
@@ -356,11 +358,11 @@ struct Overlay {
     }
 };
 // Global shortcuts, packed like the hotkey control: low byte virtual key, high byte HOTKEYF_* modifiers; 0 disables.
-constexpr int HotkeyCount=5;
-const wchar_t* HotkeyKeys[]={L"Move",L"Hide",L"Settings",L"PreviousEvent",L"NextEvent"};
+constexpr int HotkeyCount=6;
+const wchar_t* HotkeyKeys[]={L"Move",L"Hide",L"Settings",L"PreviousEvent",L"NextEvent",L"PauseObs"};
 constexpr WORD HotkeyAllModifiers=(HOTKEYF_CONTROL|HOTKEYF_ALT|HOTKEYF_SHIFT)<<8;
 // The arrows are extended keys; the hotkey control shows them only with that flag.
-constexpr WORD DefaultHotkeys[]={HotkeyAllModifiers|'E',HotkeyAllModifiers|'H',HotkeyAllModifiers|'S',HotkeyAllModifiers|(HOTKEYF_EXT<<8)|VK_LEFT,HotkeyAllModifiers|(HOTKEYF_EXT<<8)|VK_RIGHT};
+constexpr WORD DefaultHotkeys[]={HotkeyAllModifiers|'E',HotkeyAllModifiers|'H',HotkeyAllModifiers|'S',HotkeyAllModifiers|(HOTKEYF_EXT<<8)|VK_LEFT,HotkeyAllModifiers|(HOTKEYF_EXT<<8)|VK_RIGHT,HotkeyAllModifiers|'O'};
 static_assert(std::size(HotkeyKeys)==HotkeyCount && std::size(DefaultHotkeys)==HotkeyCount);
 struct App {
     HINSTANCE instance=nullptr; HWND main=nullptr; HBRUSH brush=nullptr;
@@ -384,7 +386,8 @@ struct App {
     std::wstring config;
     unsigned classBestVersion=~0u; std::vector<std::pair<int,double>> classBest;
     WeatherHistory weatherHistory;
-    bool preview=false, edit=false, hidden=false, diagnostics=false;
+    // hidden clears your screen only; obsPaused stops the OBS output only.
+    bool preview=false, edit=false, hidden=false, obsPaused=false, diagnostics=false;
     bool startWithWindows=false, startMinimized=false, showTitleBar=false, checkUpdates=true;
     // While overlays are dragged: snap to the grid (gridSize DIPs) and to the edges and centre lines of the others.
     bool snapToGrid=true, snapToOverlays=true; int gridSize=10;
@@ -547,7 +550,7 @@ int WeatherHeight(const Overlay& o) {
     return std::max(h,40);
 }
 // Values in the strip layout, including the two independent overall-leader forecasts.
-int FuelStripCount(const Overlay& o) { const auto& d=o.fuel.display; return 2*d[TankModule]+d[FiguresModule]+d[RefuelCard]+d[WindowCard]+d[TargetRow]+d[OneLongerRow]+d[LeaderDistanceModule]+d[OwnLapsModule]+d[WhiteFlagTimeModule]+d[PitExitModule]; }
+int FuelStripCount(const Overlay& o) { const auto& d=o.fuel.display; return 2*d[TankModule]+d[FiguresModule]+d[RefuelCard]+d[WindowCard]+d[TargetRow]+d[OneLongerRow]+d[LeaderDistanceModule]+2*d[OwnLapsModule]+d[WhiteFlagTimeModule]+d[PitExitModule]; }
 constexpr int FuelPanelWidth=440, FuelStripCell=86;
 // Whether the strip layout shows a module or uses an option; the page marks the others "Panel only".
 bool InStrip(int kind,int id) {
@@ -1927,8 +1930,10 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             case OneLongerRow: item(L"+1 LAP",target(1)>=0?Format(target(1),2):L"—",targetInk(target(1))); break;
             case LeaderDistanceModule: item(L"LEADER LAPS",LeaderDistanceValue(),Ink::Accent); break;
             case OwnLapsModule: {
+                // Your own finishing lap first; how many laps fewer than the overall leader in its own labelled cell.
                 const int laps=OwnFinishLaps(), fewer=OwnLapsFewer();
-                item(L"YOUR LAPS",laps<0?L"—":std::to_wstring(laps)+(fewer>0?L" −"+std::to_wstring(fewer):L""),fewer>0?Ink::Orange:Ink::Accent);
+                item(L"YOUR LAPS",laps<0?L"—":std::to_wstring(laps),Ink::Accent);
+                item(L"VS LEADER",laps<0?L"—":(fewer>0?L"−"+std::to_wstring(fewer)+(fewer==1?L" lap":L" laps"):L"lead lap"),laps<0?Ink::Muted:(fewer>0?Ink::Orange:Ink::Green));
                 break;
             }
             case WhiteFlagTimeModule: item(L"FINAL LAP",WhiteFlagTimeValue(),white); break;
@@ -2666,12 +2671,15 @@ void PresentLayered(const Overlay& o,HRGN dirty=nullptr) {
 // The caller's region is replaced, so presenting and the Spout export cover the same pixels.
 void GrowForOutline(const Overlay& o,HRGN& dirty) {
     if(!dirty || o.place.opacity>=100) return;
-    std::vector<BYTE> data(GetRegionData(dirty,0,nullptr));
-    if(data.empty() || !GetRegionData(dirty,static_cast<DWORD>(data.size()),reinterpret_cast<RGNDATA*>(data.data()))) return;
-    const auto* region=reinterpret_cast<const RGNDATA*>(data.data()); const auto* rects=reinterpret_cast<const RECT*>(region->Buffer);
     HRGN grown=CreateRectRgn(0,0,0,0), part=CreateRectRgn(0,0,0,0), rest=CreateRectRgn(0,0,0,0);
     auto add=[&](RECT r) { InflateRect(&r,1,1); SetRectRgn(part,r.left,r.top,r.right,r.bottom); const bool fresh=CombineRgn(rest,part,grown,RGN_DIFF)!=NULLREGION; if(fresh) CombineRgn(grown,grown,part,RGN_OR); return fresh; };
-    for(DWORD i=0;i<region->rdh.nCount;++i) add(rects[i]);
+    // Every rectangle a pixel wider all round: the region with itself a pixel to either side, then that with
+    // itself a pixel above and below. A few region operations, however many rectangles the cars leave.
+    CombineRgn(grown,dirty,nullptr,RGN_COPY);
+    for(const bool across:{true,false}) {
+        CombineRgn(part,grown,nullptr,RGN_COPY);
+        for(const int step:{-1,2}) { OffsetRgn(part,across?step:0,across?0:step); CombineRgn(grown,grown,part,RGN_OR); }
+    }
     for(bool joined=true;joined;) {
         joined=false;
         for(const auto& c:o.scene) if(c.type==DrawCommand::Text && !c.background) {
@@ -2681,6 +2689,25 @@ void GrowForOutline(const Overlay& o,HRGN& dirty) {
     }
     DeleteObject(part); DeleteObject(rest); DeleteObject(dirty); dirty=grown;
 }
+// The union of rectangles, overlapping or not, in one call: a region object and a combination per rectangle cost
+// about a microsecond each. Null without any.
+HRGN UnionOf(const std::vector<RECT>& rects) {
+    if(rects.empty()) return nullptr;
+    std::vector<BYTE> data(sizeof(RGNDATAHEADER)+rects.size()*sizeof(RECT));
+    auto* region=reinterpret_cast<RGNDATA*>(data.data());
+    region->rdh={sizeof(RGNDATAHEADER),RDH_RECTANGLES,static_cast<DWORD>(rects.size()),static_cast<DWORD>(rects.size()*sizeof(RECT)),{}};
+    RECT bounds{}; for(const RECT& r:rects) UnionRect(&bounds,&bounds,&r);
+    region->rdh.rcBound=bounds; std::memcpy(region->Buffer,rects.data(),rects.size()*sizeof(RECT));
+    return ExtCreateRegion(nullptr,static_cast<DWORD>(data.size()),region);
+}
+// A region's rectangles; without a region, the whole buffer.
+std::vector<RECT> RegionRects(HRGN region,int width,int height) {
+    if(!region) return {{0,0,width,height}};
+    std::vector<BYTE> data(GetRegionData(region,0,nullptr));
+    if(data.empty() || !GetRegionData(region,static_cast<DWORD>(data.size()),reinterpret_cast<RGNDATA*>(data.data()))) return {};
+    const auto* header=reinterpret_cast<const RGNDATA*>(data.data()); const auto* rects=reinterpret_cast<const RECT*>(header->Buffer);
+    return {rects,rects+header->rdh.nCount};
+}
 bool PaintBackgroundOpacity(Overlay& o,HRGN& dirty) {
     if(!o.dibPixels || !o.blackMatte.Ensure(o.width,o.height) || !o.whiteMatte.Ensure(o.width,o.height)) return false;
     GrowForOutline(o,dirty);
@@ -2689,42 +2716,81 @@ bool PaintBackgroundOpacity(Overlay& o,HRGN& dirty) {
     o.scene.clear();
     for(const auto& c:full) if(c.background) o.scene.push_back(c);
     const size_t count=static_cast<size_t>(o.width)*o.height;
-    std::vector<RECT> rectangles;
-    if(dirty) {
-        std::vector<BYTE> data(GetRegionData(dirty,0,nullptr));
-        if(!data.empty() && GetRegionData(dirty,static_cast<DWORD>(data.size()),reinterpret_cast<RGNDATA*>(data.data()))) {
-            const auto* region=reinterpret_cast<const RGNDATA*>(data.data()); const auto* rects=reinterpret_cast<const RECT*>(region->Buffer);
-            rectangles.assign(rects,rects+region->rdh.nCount);
+    const std::vector<RECT> rectangles=RegionRects(dirty,o.width,o.height);
+    // Each row of each rectangle within the buffer: its first pixel and its length.
+    auto spans=[&](const std::vector<RECT>& list,auto action) {
+        for(const auto& r:list) {
+            const LONG left=std::max(0L,r.left),right=std::min(static_cast<LONG>(o.width),r.right);
+            if(right>left) for(LONG y=std::max(0L,r.top);y<std::min(static_cast<LONG>(o.height),r.bottom);++y) action(static_cast<size_t>(y)*o.width+left,static_cast<size_t>(right-left));
         }
-    } else rectangles.push_back({0,0,o.width,o.height});
-    auto eachPixel=[&](auto action) {
-        if(!dirty) { for(size_t i=0;i<count;++i) action(i); return; }
-        for(const auto& r:rectangles) for(int y=std::max(0L,r.top);y<std::min(static_cast<LONG>(o.height),r.bottom);++y) for(int x=std::max(0L,r.left);x<std::min(static_cast<LONG>(o.width),r.right);++x) action(static_cast<size_t>(y)*o.width+x);
     };
-    if(dirty) eachPixel([&](size_t i){o.dibPixels[i]=0;}); else std::fill(o.dibPixels,o.dibPixels+count,0);
+    auto* dib=o.dibPixels;
+    ProfileScope backgroundPass(true,[&]{ return ProfileName(o,"  alpha background"); });
+    spans(rectangles,[&](size_t at,size_t n){ std::fill(dib+at,dib+at+n,0u); });
     PaintScene(o,dirty); GdiFlush();
-    // Text is left to its own ClearType pass below; the mattes take the other foreground.
+    backgroundPass.Stop();
+    // Text is left to its own ClearType pass below; the mattes take the other foreground. Only inkedRects it can they be
+    // other than plain black and white: elsewhere the pixel is the background's alone, and the mattes are left out.
+    // The margin takes in what reaches past its box, such as a rounded fill's extra pixel or a sparkline's dot.
     o.scene.clear(); for(const auto& c:full) if(!c.background && c.type!=DrawCommand::Text) o.scene.push_back(c);
-    const auto dc=o.dc; auto* pixels=o.pixels; auto* dib=o.dibPixels;
-    o.foregroundMatte=true; o.pixels=nullptr;
-    for(auto* matte:{&o.blackMatte,&o.whiteMatte}) {
-        const bool white=matte==&o.whiteMatte;
-        if(dirty) eachPixel([&](size_t i){matte->pixels[i]=white?0xffffffffu:0xff000000u;}); else std::fill(matte->pixels,matte->pixels+count,white?0xffffffffu:0xff000000u);
-        o.dc=matte->dc; o.dibPixels=matte->pixels;
-        PaintScene(o,dirty); GdiFlush();
+    const int reach=std::max(4,MulDiv(8,o.dpi*o.place.scale,9600));
+    ProfileScope areas(true,[&]{ return ProfileName(o,"  alpha foreground areas"); });
+    // Only what reaches the repainted area counts; one that covers all of it, such as the map, makes it all foreground.
+    HRGN rest=CreateRectRgn(0,0,o.width,o.height);
+    if(dirty) CombineRgn(rest,rest,dirty,RGN_AND);
+    RECT box{}; GetRgnBox(rest,&box); bool covered=false;
+    std::vector<RECT> reached; reached.reserve(o.scene.size());
+    for(const auto& c:o.scene) {
+        RECT r=c.r,overlap{}; InflateRect(&r,reach,reach);
+        if(!IntersectRect(&overlap,&r,&box)) continue;
+        if(EqualRect(&overlap,&box)) { covered=true; break; }
+        reached.push_back(r);
     }
-    o.dc=dc; o.pixels=pixels; o.dibPixels=dib; o.foregroundMatte=false;
+    HRGN inked=CreateRectRgn(0,0,0,0);
+    if(covered) std::swap(inked,rest);
+    else if(!reached.empty()) { DeleteObject(inked); inked=UnionOf(reached); CombineRgn(inked,inked,rest,RGN_AND); CombineRgn(rest,rest,inked,RGN_DIFF); }
+    const std::vector<RECT> inkedRects=RegionRects(inked,0,0), plain=RegionRects(rest,0,0);
+    DeleteObject(rest);
+    areas.Stop();
+    ProfileScope mattes(true,[&]{ return ProfileName(o,"  alpha mattes"); });
+    if(!inkedRects.empty()) {
+        const auto dc=o.dc; auto* pixels=o.pixels;
+        o.foregroundMatte=true; o.pixels=nullptr;
+        for(auto* matte:{&o.blackMatte,&o.whiteMatte}) {
+            const std::uint32_t ground=matte==&o.whiteMatte?0xffffffffu:0xff000000u;
+            spans(inkedRects,[&](size_t at,size_t n){ std::fill(matte->pixels+at,matte->pixels+at+n,ground); });
+            o.dc=matte->dc; o.dibPixels=matte->pixels; o.matteAreas=&inkedRects;
+            PaintScene(o,inked); GdiFlush();
+        }
+        o.dc=dc; o.pixels=pixels; o.dibPixels=dib; o.foregroundMatte=false; o.matteAreas=nullptr;
+    }
+    mattes.Stop();
+    DeleteObject(inked);
     passes.Stop();
     ProfileScope compose(true,[&]{ return ProfileName(o,"alpha composition"); });
     const bool transparent=TransparentContent(o);
     const unsigned baseAlpha=transparent?(app.edit?64u:0u):255u;
     const unsigned backgroundAlpha=baseAlpha*o.place.opacity/100;
     // The composed image goes into the black matte; the same scene opaque, as the text will be drawn on, into the
-    // white one and the buffer.
-    eachPixel([&](size_t i) {
+    // white one and the buffer. Without foreground, no ink and none of its alpha: per channel a value from a table.
+    std::uint32_t faded[3][256],solid[3][256];
+    for(unsigned v=0;v<256;++v) {
+        const unsigned b=transparent && baseAlpha?std::min(255u,(v*255+baseAlpha/2)/baseAlpha):v, f=std::min(255u,(b*backgroundAlpha*255+32512)/65025);
+        for(unsigned k=0;k<3;++k) { faded[k][v]=f<<(8*k); solid[k][v]=b<<(8*k); }
+    }
+    const std::uint32_t backgroundBits=backgroundAlpha<<24;
+    auto background=[&](size_t i) {
+        const auto back=dib[i]; const unsigned b=back&255,g=(back>>8)&255,r=(back>>16)&255;
+        o.blackMatte.pixels[i]=backgroundBits|faded[0][b]|faded[1][g]|faded[2][r];
+        o.whiteMatte.pixels[i]=dib[i]=solid[0][b]|solid[1][g]|solid[2][r];
+    };
+    spans(inkedRects,[&](size_t at,size_t n){ for(size_t i=at;i<at+n;++i) {
         const auto black=o.blackMatte.pixels[i],white=o.whiteMatte.pixels[i],back=dib[i];
         unsigned foregroundAlpha=0;
         for(unsigned shift:{0u,8u,16u}) foregroundAlpha=std::max(foregroundAlpha,255u-static_cast<unsigned>(std::clamp(static_cast<int>((white>>shift)&255)-static_cast<int>((black>>shift)&255),0,255)));
+        // Most pixels near the foreground have none of it, or nothing but it: the ink alone, opaque.
+        if(!foregroundAlpha) { background(i); continue; }
+        if(foregroundAlpha==255) { o.blackMatte.pixels[i]=0xff000000u|(black&0xffffffu); o.whiteMatte.pixels[i]=dib[i]=black&0xffffffu; continue; }
         const unsigned alpha=foregroundAlpha+(backgroundAlpha*(255-foregroundAlpha)+127)/255;
         std::uint32_t result=alpha<<24, opaque=0;
         for(unsigned shift:{0u,8u,16u}) {
@@ -2735,7 +2801,8 @@ bool PaintBackgroundOpacity(Overlay& o,HRGN& dirty) {
             opaque|=std::min(255u,ink+(b*(255-foregroundAlpha)+127)/255)<<shift;
         }
         o.blackMatte.pixels[i]=result; o.whiteMatte.pixels[i]=dib[i]=opaque;
-    });
+    } });
+    spans(plain,[&](size_t at,size_t n){ for(size_t i=at;i<at+n;++i) background(i); });
     // ClearType text over the opaque scene, as without background opacity. Each channel's share of the text color
     // there is its coverage; laid with it over the composed image, the text keeps its ClearType weight and stays
     // opaque, while the faded background shows between its strokes. The coverage and text color wait in textCover
@@ -2743,12 +2810,15 @@ bool PaintBackgroundOpacity(Overlay& o,HRGN& dirty) {
     compose.Stop();
     if(o.textCover.size()!=count) o.textCover.assign(count,0);
     o.scene.clear(); for(const auto& c:full) if(c.type==DrawCommand::Text && !c.background) o.scene.push_back(c);
+    // Where each text's strokes are, a pixel wider for the outline: only there does the composed image change again.
+    std::vector<RECT> lettered;
     if(!o.scene.empty()) {
         ProfileScope text(true,[&]{ return ProfileName(o,"alpha text"); });
         PaintScene(o,dirty); GdiFlush();
         for(const auto& c:o.scene) {
             const COLORREF color=ForegroundInk(o,c.color);
             const int ink[3]={GetBValue(color),GetGValue(color),GetRValue(color)};
+            RECT stroked{o.width,o.height,0,0};
             for(const auto& area:rectangles) {
                 RECT r{}; if(!IntersectRect(&r,&area,&c.r)) continue;
                 for(LONG y=std::max(0L,r.top);y<std::min(static_cast<LONG>(o.height),r.bottom);++y) for(LONG x=std::max(0L,r.left);x<std::min(static_cast<LONG>(o.width),r.right);++x) {
@@ -2768,16 +2838,23 @@ bool PaintBackgroundOpacity(Overlay& o,HRGN& dirty) {
                     if(!widest) continue;
                     o.textCover[i]=static_cast<std::uint8_t>(channels?(sum+channels/2)/channels:steepest);
                     o.whiteMatte.pixels[i]=color;
+                    stroked={std::min(stroked.left,x),std::min(stroked.top,y),std::max(stroked.right,x+1),std::max(stroked.bottom,y+1)};
                 }
             }
+            if(stroked.right<=stroked.left) continue;
+            InflateRect(&stroked,1,1);
+            for(const auto& area:rectangles) { RECT r{}; if(IntersectRect(&r,&stroked,&area)) lettered.push_back(r); }
         }
     }
     o.scene=std::move(full);
+    ProfileScope finish(true,[&]{ return ProfileName(o,"alpha outline"); });
+    spans(rectangles,[&](size_t at,size_t n){ std::memcpy(dib+at,o.blackMatte.pixels+at,n*sizeof(std::uint32_t)); });
     // Around the strokes, a dark outline in the panel's color, only where the faded background shows: the strokes
     // keep their weight, and light text stays readable over a light game. It fades in as the opacity goes down.
+    // A pixel taken twice, where texts overlap, comes out the same: it starts again from the composed image.
     const unsigned outline=static_cast<unsigned>(std::clamp((100-o.place.opacity)*153/60,0,153));
     const auto coverAt=[&](LONG x,LONG y)->unsigned { return x<0 || y<0 || x>=o.width || y>=o.height?0u:o.textCover[static_cast<size_t>(y)*o.width+x]; };
-    for(const auto& r:rectangles) for(LONG y=std::max(0L,r.top);y<std::min(static_cast<LONG>(o.height),r.bottom);++y) for(LONG x=std::max(0L,r.left);x<std::min(static_cast<LONG>(o.width),r.right);++x) {
+    for(const auto& r:lettered) for(LONG y=std::max(0L,r.top);y<std::min(static_cast<LONG>(o.height),r.bottom);++y) for(LONG x=std::max(0L,r.left);x<std::min(static_cast<LONG>(o.width),r.right);++x) {
         const size_t i=static_cast<size_t>(y)*o.width+x;
         std::uint32_t composed=o.blackMatte.pixels[i];
         if(outline && (composed>>24)<255) {
@@ -2799,7 +2876,7 @@ bool PaintBackgroundOpacity(Overlay& o,HRGN& dirty) {
         }
         dib[i]=composed;
     }
-    eachPixel([&](size_t i){ o.textCover[i]=0; });
+    spans(lettered,[&](size_t at,size_t n){ std::fill(o.textCover.begin()+at,o.textCover.begin()+at+n,std::uint8_t{0}); });
     o.backgroundComposed=true; return true;
 }
 bool PaintBackgroundOpacity(Overlay& o) { HRGN whole=nullptr; return PaintBackgroundOpacity(o,whole); }
@@ -2826,15 +2903,19 @@ void RefreshOverlay(Overlay& o) {
     const bool full=resized || app.sceneBuffer.size()!=o.scene.size() || (o.layeredAlpha && !o.place.backgroundOnly);
     HRGN dirty=nullptr;
     if(!full) {
+        ProfileScope changes(true,[&]{ return ProfileName(o,"  changed areas"); });
         // The old and new areas of what changed. Many small areas, such as cars moving on the track map,
         // cost more to combine and to clip against than repainting the whole scene once.
         // Past the limit, one rectangle around everything that changed: unchanged header and footer stay.
         // Measured on the track map: only the cars' own places as the copied region (ExtCreateRegion) quartered
         // the area copied, but building it and the clipped copy cost more than the larger copy saved.
-        constexpr size_t MaxChanges=24; size_t changed[MaxChanges]; size_t count=0; bool many=false; RECT bounds{};
+        // With background only, every pixel painted is composed in software at many times the cost of copying it:
+        // there the changed areas stay apart up to every car on the map, and the map is not repainted whole.
+        constexpr size_t MaxChanges=24, MaxComposedChanges=4*MaxCars; size_t changed[MaxComposedChanges]; size_t count=0; bool many=false; RECT bounds{};
+        const size_t most=o.place.backgroundOnly?MaxComposedChanges:MaxChanges;
         for(size_t i=0;i<app.sceneBuffer.size();++i) if(!(app.sceneBuffer[i]==o.scene[i])) {
             UnionRect(&bounds,&bounds,&app.sceneBuffer[i].r); UnionRect(&bounds,&bounds,&o.scene[i].r);
-            if(count==MaxChanges) many=true; else changed[count++]=i;
+            if(count==most) many=true; else changed[count++]=i;
         }
         if(!count) return;
         if(many) {
@@ -2842,9 +2923,10 @@ void RefreshOverlay(Overlay& o) {
             for(const auto& c:app.sceneBuffer) { RECT overlap{}; if(c.type==DrawCommand::Map && IntersectRect(&overlap,&bounds,&c.r)) UnionRect(&bounds,&bounds,&c.r); }
             dirty=CreateRectRgnIndirect(&bounds);
         }
-        else for(size_t n=0;n<count;++n) for(const RECT* r:{&app.sceneBuffer[changed[n]].r,&o.scene[changed[n]].r}) {
-            HRGN part=CreateRectRgnIndirect(r);
-            if(!dirty) dirty=part; else { CombineRgn(dirty,dirty,part,RGN_OR); DeleteObject(part); }
+        else {
+            std::vector<RECT> areas; areas.reserve(2*count);
+            for(size_t n=0;n<count;++n) { areas.push_back(app.sceneBuffer[changed[n]].r); areas.push_back(o.scene[changed[n]].r); }
+            dirty=UnionOf(areas);
         }
     }
 #ifdef RACEMATE_DIAGNOSTICS
@@ -3236,7 +3318,9 @@ void UpdateOverlays(bool force=true) {
     UpdateSide();
     for(auto& o:app.overlays) {
         if(!o.window) continue;
-        bool visible=LayoutRunning(o.layout) && (o.place.enabled || o.place.spout) && !app.hidden && (o.kind!=WeatherKind || std::any_of(o.weather.display.begin(),o.weather.display.begin()+WeatherPanelCount,[](bool value){return value;})) && (app.preview || (app.frame.connected && (o.kind!=PitLimiterKind || pitVisible)));
+        // On your screen and to OBS each have their own switch, and Hide all and Pause OBS output act on one each.
+        const bool onScreen=o.place.enabled && !app.hidden, toObs=o.place.spout && !app.obsPaused;
+        bool visible=LayoutRunning(o.layout) && (onScreen || toObs) && (o.kind!=WeatherKind || std::any_of(o.weather.display.begin(),o.weather.display.begin()+WeatherPanelCount,[](bool value){return value;})) && (app.preview || (app.frame.connected && (o.kind!=PitLimiterKind || pitVisible)));
         auto style=GetWindowLongPtrW(o.window,GWL_EXSTYLE);
         const auto desired=(app.edit || Editing(o))?(style&~WS_EX_TRANSPARENT):(style|WS_EX_TRANSPARENT);
         if(style!=desired) SetWindowLongPtrW(o.window,GWL_EXSTYLE,desired);
@@ -3262,7 +3346,7 @@ void UpdateOverlays(bool force=true) {
         }
         if(o.kind==SideWarningKind) {
             shown=visible && (app.edit || app.side.left); mirrored=visible && (app.edit || app.side.right); visible=shown || mirrored;
-            if(!o.place.enabled) mirrored=false;
+            if(!onScreen) mirrored=false;
             if(mirrored!=static_cast<bool>(IsWindowVisible(o.mirror))) { ShowWindow(o.mirror,mirrored?SW_SHOWNOACTIVATE:SW_HIDE); if(mirrored) o.due=0; }
         }
         const bool layoutPreview=LayoutPreviewing(o.layout) && !app.preview && !app.hidden && (o.place.enabled || o.place.spout);
@@ -3274,10 +3358,10 @@ void UpdateOverlays(bool force=true) {
             if(o.mirror) ShowWindow(o.mirror,SW_SHOWNOACTIVATE);
             RenderEditorPreview(o,force); UpdateFrame(o); continue;
         }
-        if(!o.place.enabled && !Editing(o)) shown=false;
+        if(!onScreen && !Editing(o)) shown=false;
         if(shown && !IsWindowVisible(o.window)) { ShowWindow(o.window,SW_SHOWNOACTIVATE); o.due=0; }
         if(!shown && IsWindowVisible(o.window)) ShowWindow(o.window,SW_HIDE);
-        if(!visible || !o.place.spout) o.spout.reset();
+        if(!visible || !toObs) o.spout.reset();
         UpdateFrame(o);
         if(visible) {
             const int dpi=GetDpiForWindow(o.window);
@@ -3287,7 +3371,7 @@ void UpdateOverlays(bool force=true) {
             else if(!OverlayDue(o,rate)) continue;
             if(client.bottom!=MulDiv(BaseHeight(o),dpi*o.place.scale,9600) || client.right!=MulDiv(OverlayWidth(o),dpi*o.place.scale,9600)) { Fit(o); InvalidateModel(); }
             RefreshOverlay(o);
-            if(o.place.spout) PublishSpout(o);
+            if(toObs) PublishSpout(o);
             if(app.refreshHook) app.refreshHook(o);
         }
     }
@@ -3419,6 +3503,7 @@ void WriteProfile() {
 void ShowSettings() { ShowWindow(app.main,IsIconic(app.main)?SW_RESTORE:SW_SHOW); SetForegroundWindow(app.main); UpdateOverlays(); }
 void ToggleEdit() { app.edit=!app.edit; Tick(); UpdateOverlays(); RefreshPage(); }
 void ToggleHidden() { app.hidden=!app.hidden; UpdateOverlays(); RefreshPage(); }
+void ToggleObsPaused() { app.obsPaused=!app.obsPaused; UpdateOverlays(); RefreshPage(); }
 #include "Snapping.inc"
 LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     auto* o=reinterpret_cast<Overlay*>(GetWindowLongPtrW(w,GWLP_USERDATA));
@@ -3494,6 +3579,7 @@ void TrayMenu() {
     AppendMenuW(menu,MF_STRING,1,L"Open settings"); SetMenuDefaultItem(menu,1,FALSE); // Bold, like TPMate.
     AppendMenuW(menu,MF_STRING|(app.edit?MF_CHECKED:0),2,L"Move overlays");
     AppendMenuW(menu,MF_STRING,3,app.hidden?L"Show overlays":L"Hide overlays");
+    AppendMenuW(menu,MF_STRING|(app.obsPaused?MF_CHECKED:0),7,L"Pause OBS output");
     AppendMenuW(menu,MF_STRING,6,L"Race Control");
     if(app.layouts.size()>1) {
         HMENU layouts=CreatePopupMenu();
@@ -3505,7 +3591,7 @@ void TrayMenu() {
     int choice=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,p.x,p.y,0,app.main,nullptr);
     DestroyMenu(menu); PostMessageW(app.main,WM_NULL,0,0);
     if(choice>=100 && choice<100+static_cast<int>(app.layouts.size())) SwitchLayout(app.layouts[choice-100].id);
-    if(choice==6) OpenRaceControl(); if(choice==1) ShowSettings(); if(choice==2) ToggleEdit(); if(choice==3) ToggleHidden(); if(choice==5) DestroyWindow(app.main);
+    if(choice==6) OpenRaceControl(); if(choice==1) ShowSettings(); if(choice==2) ToggleEdit(); if(choice==3) ToggleHidden(); if(choice==7) ToggleObsPaused(); if(choice==5) DestroyWindow(app.main);
 }
 LRESULT CALLBACK MainProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     static const UINT taskbarCreated=RegisterWindowMessageW(L"TaskbarCreated");
@@ -3531,7 +3617,7 @@ LRESULT CALLBACK MainProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
         reinterpret_cast<MINMAXINFO*>(lp)->ptMinTrackSize={minimum.right-minimum.left,minimum.bottom-minimum.top}; return 0;
     }
     case TrayMessage: if(lp==WM_LBUTTONDBLCLK || lp==WM_LBUTTONUP) ShowSettings(); else if(lp==WM_RBUTTONUP || lp==WM_CONTEXTMENU) TrayMenu(); return 0;
-    case WM_HOTKEY: if(wp==1) ToggleEdit(); if(wp==2) ToggleHidden(); if(wp==3) ShowSettings(); if(wp==4 || wp==5) StepRaceEventByHotkey(wp==5?1:-1); return 0;
+    case WM_HOTKEY: if(wp==1) ToggleEdit(); if(wp==2) ToggleHidden(); if(wp==3) ShowSettings(); if(wp==4 || wp==5) StepRaceEventByHotkey(wp==5?1:-1); if(wp==6) ToggleObsPaused(); return 0;
     case RefreshUiMessage: UpdateStatus(); RefreshPage(); return 0;
     case TelemetryMessage: Tick(); return 0;
     case WM_COMMAND:
@@ -3643,7 +3729,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
 #endif
     if(benchmark) {
         app.pump.Start(app.main,TelemetryMessage);
-        app.hidden=true; Tick(); SetTimer(app.main,2,10000,nullptr);
+        app.hidden=app.obsPaused=true; Tick(); SetTimer(app.main,2,10000,nullptr);
         MSG message{};
         while(GetMessageW(&message,nullptr,0,0)>0) { TranslateMessage(&message); DispatchMessageW(&message); }
         DeleteObject(app.brush); return 0;

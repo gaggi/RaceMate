@@ -59,7 +59,7 @@ Where each car is within its lap comes from iRacing's estimate (`CarIdxEstTime`)
 | Estimated Laps Remaining | Remaining distance for the reference car |
 | Leader lap / Leader projected distance | The overall leader's current lap alongside its fractional projection, for example `Leader lap 70 / ~86.70` |
 
-The Fuel Calculator module **Your laps at finish** (off by default) shows the lap your car finishes on. When that is fewer laps than the leader, as when you are lapped, it adds in orange how many fewer, for example `2 laps fewer than leader`; in the strip layout the value reads `85 −2`. Refuel, Needed and the pit window are calculated from your own laps, not the leader's.
+The Fuel Calculator module **Your laps at finish** (off by default) shows the lap your car finishes on. When that is fewer laps than the leader, as when you are lapped, it adds in orange how many fewer, for example `2 laps fewer than leader`; in the strip layout it takes two cells, **YOUR LAPS 85** and **VS LEADER −2 laps**, or **lead lap** in green on the leader's lap. Refuel, Needed and the pit window are calculated from your own laps, not the leader's.
 
 The current lap keeps counting with your car while a teammate drives it.
 

@@ -333,6 +333,9 @@ int RunDiagnostics() {
         forecastOk=FuelHeight(fuel)==64 && Export(fuel.window,L"build\\qa\\fuel-leader-forecast.bmp") && forecastOk;
         fuel.fuel.strip=true; Save(); Load(); UpdateOverlays();
         forecastOk=FuelStripCount(fuel)==2 && InStrip(FuelKind,LeaderDistanceModule) && InStrip(FuelKind,WhiteFlagTimeModule) && Export(fuel.window,L"build\\qa\\fuel-leader-forecast-strip.bmp") && forecastOk;
+        // Your laps and the laps fewer than the leader take a labelled cell each.
+        fuel.fuel.display[OwnLapsModule]=true; UpdateOverlays();
+        forecastOk=FuelStripCount(fuel)==4 && Export(fuel.window,L"build\\qa\\fuel-own-laps-strip.bmp") && forecastOk;
         fuel.fuel=settings; Save(); UpdateOverlays();
         report<<"Leader forecast precision, final-lap clock, independent Fuel modules and universal header/footer choices: "<<(forecastOk?"PASS":"FAIL")<<"\n"; allOk=forecastOk && allOk;
     }
@@ -1661,6 +1664,10 @@ int RunDiagnostics() {
     for(auto& o:app.overlays) ok=!IsWindowVisible(o.window)&&ok;
     app.preview=true; app.hidden=true; UpdateOverlays();
     for(auto& o:app.overlays) ok=!IsWindowVisible(o.window)&&ok;
+    // Hide all clears the screen only; Pause OBS output stops the sender.
+    First(0).place.spout=true; app.obsPaused=true; UpdateOverlays();
+    ok=!IsWindowVisible(First(0).window) && !First(0).spout && ok;
+    First(0).place.spout=false; app.obsPaused=false; UpdateOverlays();
     First(0).place.x=123; First(0).place.scale=130; Save();
     First(0).place.x=0; First(0).place.scale=50; Load();
     ok=(First(0).place.x==123 && First(0).place.scale==130 && !app.settingsError)&&ok;

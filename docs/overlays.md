@@ -354,7 +354,7 @@ Each instance has its own source and shares its content, size, opacity, refresh
 rate and visibility conditions with RaceMate. To use different content in the
 stream, add a second overlay instance where the overlay type supports instances,
 configure it separately, disable its desktop switch and enable its OBS output.
-All currently matching layouts are exported independently. Layouts selected for editing do not replace running stream layouts. **Hide all overlays** also hides OBS sources.
+All currently matching layouts are exported independently. Layouts selected for editing do not replace running stream layouts. **Hide all overlays** clears your screen only; OBS keeps its sources. **Pause OBS output** (Overlays page, tray menu or Ctrl + Alt + Shift + O) stops every OBS source and leaves your screen as it is. In the overlay list a pill shows where each overlay appears: **Screen**, **OBS** or **Screen + OBS**.
 Conditional overlays disappear when their conditions no longer apply.
 Side Warning exports both bars next to each other in one image; crop/duplicate
 the source in OBS to place the bars separately.

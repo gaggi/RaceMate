@@ -57,7 +57,7 @@ The [Race Control guide](docs/race-control.md) explains filtering, optional colu
 
 Every overlay has independent content, size, opacity, refresh rate and a fixed corner for resizing. Headers and footers each hold up to four selectable metrics. Add more Relative, Standings, Fuel Calculator, Weather or Track Map instances, and save different arrangements as layouts.
 
-Layouts switch automatically by priority when you enter the car, leave it or open the garage. Settings are saved immediately to `%LOCALAPPDATA%\RaceMate\settings.ini`. Closing the main window normally keeps RaceMate in the tray; choose **Exit** there to quit.
+Every layout whose condition matches runs at the same time, so an Always layout for OBS can run beside In car and Out of car layouts for your screen; they follow you as you enter the car, leave it or open the garage. Settings are saved immediately to `%LOCALAPPDATA%\RaceMate\settings.ini`. Closing the main window normally keeps RaceMate in the tray; choose **Exit** there to quit.
 
 Global, configurable shortcuts move and hide the overlays, open the settings and step through Race Control events; see [keyboard shortcuts](docs/layouts-and-settings.md#keyboard-shortcuts). [Layouts and settings](docs/layouts-and-settings.md) also covers automatic selection, startup, backups and customization.
 
@@ -76,7 +76,7 @@ Telemetry is read locally from iRacing's shared memory. Race Control can send ca
 | [Documentation index](docs/README.md) | All user and developer guides |
 | [Getting started](docs/getting-started.md) | Requirements, first launch and connection |
 | [Overlay reference](docs/overlays.md) | All overlays, columns, status badges and header/footer metrics |
-| [Layouts and settings](docs/layouts-and-settings.md) | Layout priority, additional instances, appearance and shortcuts |
+| [Layouts and settings](docs/layouts-and-settings.md) | Matching layouts, additional instances, appearance and shortcuts |
 | [Fuel and pit strategy](docs/fuel-and-pit-strategy.md) | Learning, forecasts, opponent range and pit exit estimates |
 | [Track Map](docs/track-map.md) | Map, Circle, Line, labels, cache and experimental limits |
 | [Race Control](docs/race-control.md) | Events, filters, standings, cameras and replays |

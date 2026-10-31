@@ -3,7 +3,7 @@ class OverlaysPage : public PageWindow {
 public:
     OverlaysPage() : PageWindow(ui.heading,ui.text) {}
 private:
-    enum class Key { None, Instance, Add, Move, Hide, Reset, Layout, AddLayout };
+    enum class Key { None, Instance, Add, Move, Hide, PauseObs, Reset, Layout, AddLayout };
     static constexpr int ListId=100, LayoutNameId=220, LayoutConditionId=221;
 
     void OnCreate() override {
@@ -17,7 +17,6 @@ private:
     static std::wstring Summary(const Overlay& o) {
         std::wstring text=std::to_wstring(o.place.scale)+L" %  ·  opacity "+std::to_wstring(o.place.opacity)+L" %  ·  "+OverlayCorners[CornerIndex(o.place)]+L"  ·  "+std::to_wstring(o.place.rate)+L" Hz";
         if(o.place.rounded) text+=L"  ·  rounded corners";
-        if(o.place.spout) text+=L"  ·  OBS (Spout2)";
         if(o.place.backgroundOnly) text+=L"  ·  background opacity only";
         return text;
     }
@@ -33,7 +32,8 @@ private:
             RowList::Row row; row.title=title; row.detail=std::move(detail); row.toggle=on?1:0; push(std::move(row),key);
         };
         toggle(Key::Move,L"Move overlays",L"Drag overlays with the mouse.  ·  "+HotkeyText(app.hotkeys[0]),app.edit);
-        toggle(Key::Hide,L"Hide all overlays",L"Keeps their settings.  ·  "+HotkeyText(app.hotkeys[1]),app.hidden);
+        toggle(Key::Hide,L"Hide all overlays",L"On your screen; OBS keeps its output.  ·  "+HotkeyText(app.hotkeys[1]),app.hidden);
+        toggle(Key::PauseObs,L"Pause OBS output",L"Stops sending to OBS; your screen is unchanged.  ·  "+HotkeyText(app.hotkeys[5]),app.obsPaused);
         header(L"Layouts");
         for(const auto& l:app.layouts) {
             const bool open=std::find(app.openLayoutGroups.begin(),app.openLayoutGroups.end(),l.id)!=app.openLayoutGroups.end();
@@ -50,7 +50,9 @@ private:
             for(auto& o:app.overlays) if(o.layout==l.id) {
                 RowList::Row child; child.title=Name(o); child.detail=Summary(o); child.indent=40;
                 if(!o.customName.empty()) child.detail=std::wstring(Titles[o.kind])+L"  ·  "+child.detail;
+                // The switch is your screen; the pill says where it appears, OBS being set on its page.
                 child.toggle=o.place.enabled?1:0; child.button=L"Settings";
+                child.pill=o.place.enabled && o.place.spout?L"Screen + OBS":(o.place.spout?L"OBS":(o.place.enabled?L"Screen":L""));
                 // Size, opacity, OBS and the rest are on its page, under Window.
                 child.iconButtons={o.number>1?Glyph::Remove:wchar_t{0}};
                 push(std::move(child),Key::Instance,&o,l.id);
@@ -167,6 +169,7 @@ private:
         case Key::Add: if(pressed) Add(layout); break;
         case Key::Move: if(code==RowList::kToggled && on!=app.edit) ToggleEdit(); break;
         case Key::Hide: if(code==RowList::kToggled && on!=app.hidden) ToggleHidden(); break;
+        case Key::PauseObs: if(code==RowList::kToggled && on!=app.obsPaused) ToggleObsPaused(); break;
         case Key::Reset: if(pressed) { Save(); app.layout=layout; ResetPositions(); } break;
         default: break;
         }

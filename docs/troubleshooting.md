@@ -6,8 +6,8 @@
 
 1. Turn on **Preview**. If sample overlays appear, the application can render; check the simulator connection and the conditions below.
 2. Make sure the overlay's switch is enabled in the **active layout**.
-3. Check **Hide all overlays**, including its global shortcut and tray-menu state.
-4. Check the layout conditions. If no layout applies to the current situation, all overlays are hidden; the Overlays page then says **None applies now: overlays hidden**. Add an **Always** layout at the end of the list, or click **Use** to show a layout anyway. See [How RaceMate chooses](layouts-and-settings.md#how-racemate-chooses).
+3. Check **Hide all overlays**, including its global shortcut and tray-menu state. For missing OBS sources, check **Pause OBS output** the same way.
+4. Check the layout conditions. Every layout whose condition matches runs; if none matches the current situation, no overlays show. A running layout has a green **Active** badge. Add an **Always** layout for overlays that should always run. See [Matching layouts](layouts-and-settings.md#matching-layouts).
 5. Run iRacing in **borderless windowed** mode.
 6. Enable **Move overlays** to find the frames. After a monitor change, use **Reset positions** on the Overlays page.
 7. Check the overlay's content choices. A Weather panel with all modules hidden has nothing to display; Pit Assist appears only under its driving/pit conditions.
