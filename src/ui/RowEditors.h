@@ -47,6 +47,7 @@ public:
             id == 0 ? nullptr : reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance_, nullptr);
         SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
         if (_wcsicmp(className, L"EDIT") == 0 && !(style & ES_MULTILINE)) UiTheme::StyleTextInput(control);
+        UiTheme::StyleControl(control);
         if (_wcsicmp(className, L"EDIT") == 0 && (style & ES_MULTILINE))
             SetWindowLongPtrW(control, GWL_EXSTYLE, GetWindowLongPtrW(control, GWL_EXSTYLE) | WS_EX_CLIENTEDGE);
         editors_.push_back({control, x, y, width, height});

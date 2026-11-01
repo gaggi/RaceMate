@@ -577,14 +577,14 @@ private:
 
     void PaintToggle(HDC dc, RECT rect, bool on, bool enabled, bool hover)
     {
-        COLORREF track = on ? RGB(55, 138, 221) : hover ? RGB(140, 144, 152) : RGB(165, 169, 176);
-        if (!enabled) track = on ? RGB(160, 196, 234) : RGB(214, 216, 220);
+        COLORREF track = on ? UiTheme::Colors.accent : hover ? UiTheme::Colors.toggleOffHover : UiTheme::Colors.toggleOff;
+        if (!enabled) track = on ? UiTheme::Colors.toggleOnDisabled : UiTheme::Colors.toggleOffDisabled;
         FillRounded(dc, rect, rect.bottom - rect.top, track, track);
         const int inset = Scale(3);
         const int knob = rect.bottom - rect.top - 2 * inset;
         const int left = on ? rect.right - inset - knob : rect.left + inset;
         const RECT circle{left, rect.top + inset, left + knob, rect.top + inset + knob};
-        const HBRUSH brush = CreateSolidBrush(UiTheme::Surface);
+        const HBRUSH brush = CreateSolidBrush(UiTheme::Colors.knob);
         const auto oldBrush = SelectObject(dc, brush);
         const auto oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
         Ellipse(dc, circle.left, circle.top, circle.right + 1, circle.bottom + 1);
@@ -607,16 +607,16 @@ private:
         if (row.header)
         {
             SelectObject(dc, textFont_);
-            SetTextColor(dc, RGB(95, 99, 108));
+            SetTextColor(dc, UiTheme::Colors.heading);
             DrawTextW(dc, row.title.c_str(), -1, &layout.text, DT_LEFT | DT_BOTTOM | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
             return;
         }
 
-        const COLORREF border = RGB(220, 222, 225);
+        const COLORREF border = UiTheme::Colors.border;
         const bool hovered = hover_.row == static_cast<int>(index);
         // Expanded rows stay white: the controls in them are drawn on white.
-        COLORREF fill = row.selected ? RGB(232, 240, 252)
-            : hovered && hover_.kind == PartKind::Body && row.expandHeight == 0 ? RGB(248, 249, 251) : UiTheme::Surface;
+        COLORREF fill = row.selected ? UiTheme::Colors.selected
+            : hovered && hover_.kind == PartKind::Body && row.expandHeight == 0 ? UiTheme::Colors.hover : UiTheme::Surface;
         // Rows of a card share one rounded outline; inner edges are hairlines.
         RECT outline = layout.bounds;
         const int radius = Scale(10);
@@ -628,18 +628,18 @@ private:
         if (!layout.firstInCard)
         {
             const RECT line{layout.bounds.left + Scale(14), layout.bounds.top, layout.bounds.right - Scale(14), layout.bounds.top + 1};
-            FillRect(dc, line, RGB(234, 236, 239));
+            FillRect(dc, line, UiTheme::Colors.divider);
         }
         if (row.expandHeight > 0)
         {
             const RECT line{layout.expansion.left, layout.expansion.top, layout.expansion.right, layout.expansion.top + 1};
-            FillRect(dc, line, RGB(234, 236, 239));
+            FillRect(dc, line, UiTheme::Colors.divider);
         }
         if (focused)
         {
             RECT focus = layout.bounds;
             InflateRect(&focus, -Scale(3), -Scale(3));
-            const HPEN pen = CreatePen(PS_SOLID, Scale(2), RGB(55, 138, 221));
+            const HPEN pen = CreatePen(PS_SOLID, Scale(2), UiTheme::Colors.accent);
             const auto oldPen = SelectObject(dc, pen);
             const auto oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
             RoundRect(dc, focus.left, focus.top, focus.right, focus.bottom, Scale(8), Scale(8));
@@ -654,7 +654,7 @@ private:
         {
             // Six dots, two across and three down, darker under the mouse.
             const bool gripHover = hovered && hover_.kind == PartKind::Grip;
-            const COLORREF ink = gripHover || (dragging_ && dragRow_ == static_cast<int>(index)) ? RGB(80, 85, 95) : RGB(160, 164, 172);
+            const COLORREF ink = gripHover || (dragging_ && dragRow_ == static_cast<int>(index)) ? UiTheme::Colors.strong : UiTheme::Colors.faint;
             const HBRUSH brush = CreateSolidBrush(ink);
             const auto oldBrush = SelectObject(dc, brush);
             const auto oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
@@ -677,7 +677,7 @@ private:
                     layout.icon.bottom - layout.icon.top, 0, nullptr, DI_NORMAL);
         }
 
-        const COLORREF titleColor = row.muted ? RGB(136, 135, 128) : UiTheme::Text;
+        const COLORREF titleColor = row.muted ? UiTheme::Colors.mutedTitle : UiTheme::Text;
         RECT title = layout.text;
         RECT detail = layout.text;
         if (!row.detail.empty())
@@ -692,16 +692,17 @@ private:
             (row.detail.empty() ? DT_VCENTER : DT_BOTTOM) | DT_LEFT | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
         if (!row.detail.empty())
         {
-            SetTextColor(dc, RGB(110, 112, 118));
+            SetTextColor(dc, UiTheme::Colors.muted);
             DrawTextW(dc, row.detail.c_str(), -1, &detail, DT_TOP | DT_LEFT | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
         }
 
         if (!row.pill.empty())
         {
-            COLORREF pillFill = RGB(241, 239, 232), pillText = RGB(95, 94, 90);
-            if (row.pillTone == Tone::Active) { pillFill = RGB(234, 243, 222); pillText = RGB(39, 80, 10); }
-            else if (row.pillTone == Tone::Warning) { pillFill = RGB(250, 238, 218); pillText = RGB(133, 79, 11); }
-            else if (row.pillTone == Tone::Accent) { pillFill = RGB(230, 241, 251); pillText = RGB(12, 68, 124); }
+            const auto& colors = UiTheme::Colors;
+            COLORREF pillFill = colors.pillNeutral, pillText = colors.pillNeutralInk;
+            if (row.pillTone == Tone::Active) { pillFill = colors.pillActive; pillText = colors.pillActiveInk; }
+            else if (row.pillTone == Tone::Warning) { pillFill = colors.pillWarning; pillText = colors.pillWarningInk; }
+            else if (row.pillTone == Tone::Accent) { pillFill = colors.pillAccent; pillText = colors.pillAccentInk; }
             FillRounded(dc, layout.pill, layout.pill.bottom - layout.pill.top, pillFill, pillFill);
             SetTextColor(dc, pillText);
             DrawTextW(dc, row.pill.c_str(), -1, &layout.pill, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
@@ -713,7 +714,7 @@ private:
             {
                 // Centered on the toggle, not the row, so it stays put when the row expands.
                 RECT label{layout.text.right, layout.toggle.top - Scale(10), layout.toggle.left - Scale(10), layout.toggle.bottom + Scale(10)};
-                SetTextColor(dc, row.toggleEnabled ? RGB(80, 85, 95) : RGB(160, 162, 168));
+                SetTextColor(dc, row.toggleEnabled ? UiTheme::Colors.strong : UiTheme::Colors.disabled);
                 DrawTextW(dc, row.toggleLabel.c_str(), -1, &label, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             }
             PaintToggle(dc, layout.toggle, row.toggle == 1, row.toggleEnabled,
@@ -723,16 +724,16 @@ private:
         if (!row.button.empty())
         {
             const bool buttonHover = hovered && hover_.kind == PartKind::Button && row.buttonEnabled;
-            FillRounded(dc, layout.button, Scale(8), buttonHover ? RGB(243, 244, 246) : UiTheme::Surface,
-                row.buttonEnabled ? RGB(190, 194, 201) : RGB(226, 228, 231));
-            SetTextColor(dc, row.buttonEnabled ? UiTheme::Text : RGB(160, 162, 168));
+            FillRounded(dc, layout.button, Scale(8), buttonHover ? UiTheme::Colors.buttonHover : UiTheme::Surface,
+                row.buttonEnabled ? UiTheme::Colors.buttonBorder : UiTheme::Colors.buttonBorderDisabled);
+            SetTextColor(dc, row.buttonEnabled ? UiTheme::Text : UiTheme::Colors.disabled);
             DrawTextW(dc, row.button.c_str(), -1, &layout.button, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
 
         if (!row.choices.empty())
         {
             // One outline like a button's; the chosen segments filled in the accent, hairlines between the others.
-            FillRounded(dc, layout.button, Scale(8), UiTheme::Surface, RGB(190, 194, 201));
+            FillRounded(dc, layout.button, Scale(8), UiTheme::Surface, UiTheme::Colors.buttonBorder);
             HRGN inside = CreateRoundRectRgn(layout.button.left + 1, layout.button.top + 1, layout.button.right, layout.button.bottom, Scale(8), Scale(8));
             SelectClipRgn(dc, inside);
             for (size_t choice = 0; choice < row.choices.size(); ++choice)
@@ -740,10 +741,10 @@ private:
                 const RECT& segment = layout.choices[choice];
                 const bool chosen = Chosen(row, choice);
                 const bool choiceHover = hovered && hover_.kind == PartKind::Choice && hover_.iconButton == static_cast<int>(choice);
-                if (chosen || choiceHover) FillRect(dc, segment, chosen ? RGB(220, 234, 250) : RGB(243, 244, 246));
+                if (chosen || choiceHover) FillRect(dc, segment, chosen ? UiTheme::Colors.chosen : UiTheme::Colors.buttonHover);
                 if (choice > 0 && !chosen && !Chosen(row, choice - 1))
-                    FillRect(dc, {segment.left, segment.top + Scale(7), segment.left + 1, segment.bottom - Scale(7)}, RGB(220, 222, 225));
-                SetTextColor(dc, chosen ? RGB(12, 68, 124) : UiTheme::Text);
+                    FillRect(dc, {segment.left, segment.top + Scale(7), segment.left + 1, segment.bottom - Scale(7)}, UiTheme::Colors.border);
+                SetTextColor(dc, chosen ? UiTheme::Colors.chosenInk : UiTheme::Text);
                 RECT text = segment;
                 DrawTextW(dc, row.choices[choice].c_str(), -1, &text, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             }
@@ -756,8 +757,8 @@ private:
         {
             if (row.iconButtons[button] == 0) continue;
             const bool buttonHover = hovered && hover_.kind == PartKind::IconButton && hover_.iconButton == static_cast<int>(button);
-            if (buttonHover) FillRounded(dc, layout.iconButtons[button], Scale(6), RGB(238, 240, 243), RGB(238, 240, 243));
-            SetTextColor(dc, buttonHover ? UiTheme::Text : RGB(110, 112, 118));
+            if (buttonHover) FillRounded(dc, layout.iconButtons[button], Scale(6), UiTheme::Colors.iconHover, UiTheme::Colors.iconHover);
+            SetTextColor(dc, buttonHover ? UiTheme::Text : UiTheme::Colors.muted);
             DrawTextW(dc, &row.iconButtons[button], 1, &layout.iconButtons[button], DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
     }
@@ -774,7 +775,7 @@ private:
         SetBkMode(dc, TRANSPARENT);
         if (rows_.empty() && !emptyText_.empty())
         {
-            SetTextColor(dc, RGB(110, 112, 118));
+            SetTextColor(dc, UiTheme::Colors.muted);
             RECT text{Scale(4), Scale(8), client.right - Scale(4), client.bottom};
             DrawTextW(dc, emptyText_.c_str(), -1, &text, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
         }
@@ -792,7 +793,7 @@ private:
             const auto& bounds = layouts[static_cast<size_t>(dropRow_)].bounds;
             const int y = (dropRow_ < dragRow_ ? bounds.top : bounds.top + LineHeight(rows_[static_cast<size_t>(dropRow_)])) - scroll_;
             const RECT line{bounds.left + Scale(8), y - Scale(1), bounds.right - Scale(8), y + Scale(2)};
-            FillRect(dc, line, RGB(55, 138, 221));
+            FillRect(dc, line, UiTheme::Colors.accent);
         }
         SelectObject(dc, oldFont);
         BitBlt(target, 0, 0, client.right, client.bottom, dc, 0, 0, SRCCOPY);
@@ -842,12 +843,13 @@ private:
         case WM_CTLCOLORSTATIC:
         case WM_CTLCOLORBTN:
         case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORLISTBOX:
         {
             const HDC dc = reinterpret_cast<HDC>(wParam);
             const HWND control = reinterpret_cast<HWND>(lParam);
             SetBkMode(dc, TRANSPARENT);
             SetBkColor(dc, UiTheme::Surface);
-            SetTextColor(dc, IsWindowEnabled(control) ? UiTheme::Text : RGB(160, 162, 168));
+            SetTextColor(dc, IsWindowEnabled(control) ? UiTheme::Text : UiTheme::Colors.disabled);
             return reinterpret_cast<LRESULT>(UiTheme::SurfaceBrush());
         }
         case WM_COMMAND:

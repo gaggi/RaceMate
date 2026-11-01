@@ -123,7 +123,7 @@ private:
         FillRect(dc, &client, UiTheme::BackgroundBrush());
         const auto rects = SegmentRects();
         RECT group{0, 0, rects.empty() ? 0 : rects.back().right, client.bottom};
-        Rounded(dc, group, Scale(8), RGB(232, 234, 238), RGB(220, 222, 225));
+        Rounded(dc, group, Scale(8), UiTheme::Colors.segmentTrack, UiTheme::Colors.border);
         const auto oldFont = SelectObject(dc, font_);
         SetBkMode(dc, TRANSPARENT);
         const bool focused = GetFocus() == window_;
@@ -135,15 +135,15 @@ private:
             {
                 RECT inner = rect;
                 InflateRect(&inner, -Scale(3), -Scale(3));
-                Rounded(dc, inner, Scale(6), UiTheme::Surface, focused ? RGB(55, 138, 221) : RGB(210, 213, 218));
+                Rounded(dc, inner, Scale(6), UiTheme::Surface, focused ? UiTheme::Colors.accent : UiTheme::Colors.segmentBorder);
             }
             else if (static_cast<int>(index) == hover_)
             {
                 RECT inner = rect;
                 InflateRect(&inner, -Scale(3), -Scale(3));
-                Rounded(dc, inner, Scale(6), RGB(224, 227, 231), RGB(224, 227, 231));
+                Rounded(dc, inner, Scale(6), UiTheme::Colors.segmentHover, UiTheme::Colors.segmentHover);
             }
-            SetTextColor(dc, selected ? UiTheme::Text : RGB(80, 85, 95));
+            SetTextColor(dc, selected ? UiTheme::Text : UiTheme::Colors.strong);
             DrawTextW(dc, items_[index].c_str(), -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
         }
         SelectObject(dc, oldFont);

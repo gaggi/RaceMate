@@ -3,7 +3,7 @@ class GeneralPage : public PageWindow {
 public:
     GeneralPage() : PageWindow(ui.heading,ui.text) {}
 private:
-    enum class Key { None, StartWithWindows, StartMinimized, TitleBar, FuelReserve, OpponentFuel, PitLane, PitService, Hotkey, CheckUpdates, Version, SnapToGrid, SnapToOverlays };
+    enum class Key { None, Theme, StartWithWindows, StartMinimized, TitleBar, FuelReserve, OpponentFuel, PitLane, PitService, Hotkey, CheckUpdates, Version, SnapToGrid, SnapToOverlays };
     static constexpr int ListId=100, HotkeyId=200, LaneEditId=202, TiresEditId=203, RateEditId=204, GridEditId=205;
     static constexpr int LaneRow=10, ServiceRow=11, GridRow=12;
     // Below 5 Hz short offtracks and pit timing get lost.
@@ -55,6 +55,12 @@ private:
         auto toggle=[&](Key key,const wchar_t* title,std::wstring detail,bool on) {
             RowList::Row row; row.title=title; row.detail=std::move(detail); row.toggle=on?1:0; push(std::move(row),key);
         };
+        header(L"Appearance");
+        {
+            RowList::Row theme; theme.title=L"Theme"; theme.choices={L"System",L"Light",L"Dark"}; theme.choice=app.theme;
+            theme.detail=app.theme==0?L"As Windows sets its apps; the overlays keep their own look":L"The overlays keep their own look";
+            push(std::move(theme),Key::Theme);
+        }
         header(L"Startup");
         toggle(Key::StartWithWindows,L"Start with Windows",startupError_.empty()?L"No administrator rights needed":startupError_,app.startWithWindows);
         if(!startupError_.empty()) { rows.back().pill=L"Not changed"; rows.back().pillTone=RowList::Tone::Warning; }
@@ -184,6 +190,8 @@ private:
         const int row=list_.NotifiedRow();
         if(row<0 || static_cast<size_t>(row)>=keys_.size()) return true;
         const bool on=list_.Rows()[row].toggle==1, pressed=code==RowList::kButton || code==RowList::kActivated;
+        // The whole page is built again in the new colors: nothing of this one may be touched after it.
+        if(keys_[row]==Key::Theme) { if(code==RowList::kChoice) { app.theme=list_.NotifiedChoice(); Save(); ApplyTheme(); } return true; }
         switch(keys_[row]) {
         case Key::StartWithWindows:
             if(code==RowList::kToggled) { startupError_=SetStartWithWindows(on)?L"":L"Windows startup could not be changed; the previous setting is kept."; Refresh(); }

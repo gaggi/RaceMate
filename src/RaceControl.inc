@@ -65,10 +65,10 @@ int EventCategory(EventType type) {
 struct PillColors { COLORREF fill, text; };
 PillColors EventColors(EventType type) {
     switch(type) {
-    case EventType::Crash: return {RGB(252,235,235),RGB(121,31,31)};
-    case EventType::Offtrack: case EventType::Incident: return {RGB(250,238,218),RGB(133,79,11)};
-    case EventType::Overtake: return {RGB(230,241,251),RGB(12,68,124)};
-    default: return {RGB(241,239,232),RGB(95,94,90)};
+    case EventType::Crash: return {UiTheme::Colors.pillDanger,UiTheme::Colors.pillDangerInk};
+    case EventType::Offtrack: case EventType::Incident: return {UiTheme::Colors.pillWarning,UiTheme::Colors.pillWarningInk};
+    case EventType::Overtake: return {UiTheme::Colors.pillAccent,UiTheme::Colors.pillAccentInk};
+    default: return {UiTheme::Colors.pillNeutral,UiTheme::Colors.pillNeutralInk};
     }
 }
 std::wstring EventClock(double time) {
@@ -353,7 +353,7 @@ LRESULT CALLBACK RaceSplitterProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
         const int dpi=GetDpiForWindow(w), center=bounds.right/2, middle=bounds.bottom/2;
         const int thickness=std::max(1,MulDiv(2,dpi,96)), half=MulDiv(16,dpi,96);
         RECT grip{center-thickness/2,std::max(0,middle-half),center+(thickness+1)/2,std::min<int>(bounds.bottom,middle+half)};
-        SetDCBrushColor(dc,GetFocus()==w || raceControl.splitDragging?RGB(46,135,220):RGB(171,178,187));
+        SetDCBrushColor(dc,GetFocus()==w || raceControl.splitDragging?UiTheme::Colors.accent:UiTheme::Colors.faint);
         FillRect(dc,&grip,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
         if(GetFocus()==w) { InflateRect(&grip,MulDiv(3,dpi,96),MulDiv(3,dpi,96)); DrawFocusRect(dc,&grip); }
         EndPaint(w,&paint); return 0;
@@ -572,9 +572,9 @@ void DrawRacePill(HDC dc,RECT cell,const std::wstring& text,PillColors colors,HF
     SelectObject(dc,old);
 }
 COLORREF RaceRowBackground(HWND list,size_t index,const Row* row) {
-    if(ListView_GetItemState(list,static_cast<int>(index),LVIS_SELECTED)) return RGB(230,241,251);
-    if(row && row->player) return RGB(250,244,228);
-    return index%2?Background:RGB(255,255,255);
+    if(ListView_GetItemState(list,static_cast<int>(index),LVIS_SELECTED)) return UiTheme::Colors.selected;
+    if(row && row->player) return UiTheme::Colors.playerRow;
+    return index%2?Background:UiTheme::Surface;
 }
 LRESULT RaceCustomDraw(NMLVCUSTOMDRAW& draw) {
     const HWND list=draw.nmcd.hdr.hwndFrom; const bool feed=list==raceControl.feed;
@@ -613,12 +613,12 @@ LRESULT RaceCustomDraw(NMLVCUSTOMDRAW& draw) {
             const RECT block{cell.left+MulDiv(3,dpi,96),cell.top+MulDiv(3,dpi,96),cell.right-MulDiv(2,dpi,96),cell.bottom-MulDiv(3,dpi,96)};
             SetDCBrushColor(dc,SectorColumnColor(row->driver.index,i,parts)); FillRect(dc,&block,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
             SetTextColor(dc,Ink::Panel);
-        } else SetTextColor(dc,RGB(145,150,157));
+        } else SetTextColor(dc,UiTheme::Colors.disabled);
         const auto text=Format(time,2);
         DrawTextW(dc,text.c_str(),-1,&area,DT_SINGLELINE|DT_RIGHT|DT_VCENTER|DT_NOPREFIX);
         return CDRF_SKIPDEFAULT;
     }
-    draw.clrText=inactive?RGB(145,150,157):(row->player?RGB(140,96,0):Text);
+    draw.clrText=inactive?UiTheme::Colors.disabled:(row->player?UiTheme::Colors.playerInk:Text);
     if(column==9) { const unsigned c=row->driver.licenseColor; draw.clrText=RGB((c>>16)&255,(c>>8)&255,c&255); }
     if(column==11) draw.clrText=TireTextColor(*row);
     if(column==15 && row->car.sessionFlags) draw.clrText=(row->car.sessionFlags&(SessionFlag::Black|SessionFlag::Disqualify))?RGB(180,40,35):RGB(155,90,15);
@@ -627,7 +627,8 @@ LRESULT RaceCustomDraw(NMLVCUSTOMDRAW& draw) {
         const int change=RaceRatingChange(*row);
         if(change!=NoRatingChange && change) draw.clrText=change>0?RGB(25,125,65):RGB(175,45,40);
     }
-    if(GetRValue(draw.clrText)+GetGValue(draw.clrText)+GetBValue(draw.clrText)>500) draw.clrText=RGB(GetRValue(draw.clrText)/2,GetGValue(draw.clrText)/2,GetBValue(draw.clrText)/2);
+    // On white, light inks are darkened to be read; on the dark theme's rows they stay as they are.
+    if(!UiTheme::Dark && GetRValue(draw.clrText)+GetGValue(draw.clrText)+GetBValue(draw.clrText)>500) draw.clrText=RGB(GetRValue(draw.clrText)/2,GetGValue(draw.clrText)/2,GetBValue(draw.clrText)/2);
     if(column==RaceFuelField) {
         const auto status=FuelFinishStatus(row->driver.index);
         const PillColors colors=status==OpponentFuelStatus::End?PillColors{Ink::Green,Ink::Panel}:PillColors{Ink::Yellow,Ink::Panel};
@@ -652,7 +653,8 @@ LRESULT RaceCustomDraw(NMLVCUSTOMDRAW& draw) {
     }
     if(column==8) {
         const auto status=RaceCarStatus(*row);
-        const PillColors colors[]={{0,0},{RGB(252,235,235),RGB(121,31,31)},{RGB(250,238,218),RGB(133,79,11)},{RGB(241,239,232),RGB(95,94,90)}};
+        const auto& ink=UiTheme::Colors;
+        const PillColors colors[]={{0,0},{ink.pillDanger,ink.pillDangerInk},{ink.pillWarning,ink.pillWarningInk},{ink.pillNeutral,ink.pillNeutralInk}};
         fillCell(); DrawRacePill(dc,cell,status.text,colors[status.tone],raceControl.font,false);
         return CDRF_SKIPDEFAULT;
     }
@@ -757,7 +759,7 @@ LRESULT CALLBACK RaceControlProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
         const auto* rect=reinterpret_cast<RECT*>(lp); SetWindowPos(w,nullptr,rect->left,rect->top,rect->right-rect->left,rect->bottom-rect->top,SWP_NOZORDER);
         LayoutRaceControl(); UpdateRaceControl(true); return 0;
     }
-    case WM_CTLCOLORSTATIC: SetBkColor(reinterpret_cast<HDC>(wp),Background); SetTextColor(reinterpret_cast<HDC>(wp),reinterpret_cast<HWND>(lp)==raceControl.status?RGB(110,112,118):Text); return reinterpret_cast<LRESULT>(app.brush);
+    case WM_CTLCOLORSTATIC: SetBkColor(reinterpret_cast<HDC>(wp),Background); SetTextColor(reinterpret_cast<HDC>(wp),reinterpret_cast<HWND>(lp)==raceControl.status?UiTheme::Colors.muted:Text); return reinterpret_cast<LRESULT>(app.brush);
     case WM_DESTROY:
         KillTimer(w,1); if(raceControl.font) DeleteObject(raceControl.font); if(raceControl.heading) DeleteObject(raceControl.heading);
         // The controls own windows; reset the plain data and leave the control objects to their windows.
@@ -795,7 +797,7 @@ void OpenRaceControl() {
     raceControl.feed=create(WC_LISTVIEWW,L"",RaceFeedId,LVS_REPORT|LVS_OWNERDATA|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_TABSTOP|WS_BORDER);
     raceControl.standings=create(WC_LISTVIEWW,L"",RaceStandingsId,LVS_REPORT|LVS_OWNERDATA|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_TABSTOP|WS_BORDER);
     raceControl.splitter=create(splitterClass.lpszClassName,L"Resize event and standings tables",RaceSplitterId,WS_TABSTOP);
-    for(HWND list:{raceControl.standings,raceControl.feed}) { ListView_SetExtendedListViewStyle(list,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP); ListView_SetBkColor(list,RGB(255,255,255)); ListView_SetTextBkColor(list,RGB(255,255,255)); ListView_SetTextColor(list,Text); }
+    for(HWND list:{raceControl.standings,raceControl.feed}) { ListView_SetExtendedListViewStyle(list,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP); ListView_SetBkColor(list,UiTheme::Surface); ListView_SetTextBkColor(list,UiTheme::Surface); ListView_SetTextColor(list,Text); }
     create(L"STATIC",L"Replay from",RaceReplayLabelId,SS_CENTERIMAGE);
     raceControl.replay.Create(app.instance,raceControl.window,RaceReplayId,raceControl.font,{L"Live",L"5 s",L"10 s"});
     create(L"BUTTON",L"Only this car",RaceOnlyCarId,WS_TABSTOP);
@@ -810,7 +812,8 @@ void OpenRaceControl() {
     wchar_t cameraName[256]{}; GetPrivateProfileStringW(L"RaceControl",L"Camera",L"Far Chase",cameraName,256,app.config.c_str()); raceControl.cameraName=cameraName;
     UiTheme::Apply(raceControl.window);
     UpdateCameraButton(); ApplyRaceOnTop();
-    LayoutRaceControl(); UpdateRaceControl(true); ShowWindow(raceControl.window,app.diagnostics?SW_SHOWNOACTIVATE:SW_SHOWNORMAL); RefreshPage();
+    LayoutRaceControl(); UpdateRaceControl(true); UiTheme::RefreshWindow(raceControl.window);
+    ShowWindow(raceControl.window,app.diagnostics?SW_SHOWNOACTIVATE:SW_SHOWNORMAL); RefreshPage();
     if(!app.diagnostics) SetForegroundWindow(raceControl.window);
 }
 void CloseRaceControl() { if(raceControl.window) DestroyWindow(raceControl.window); RefreshPage(); }

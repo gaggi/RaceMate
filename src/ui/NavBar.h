@@ -84,7 +84,6 @@ public:
 
 private:
     static constexpr wchar_t kClassName[] = L"LaunchMateNavBar";
-    static constexpr COLORREF kBackground = RGB(236, 238, 241);
 
     int Scale(int value) const { return MulDiv(value, GetDpiForWindow(window_), 96); }
 
@@ -121,7 +120,7 @@ private:
         const HDC dc = CreateCompatibleDC(target);
         const HBITMAP bitmap = CreateCompatibleBitmap(target, std::max<LONG>(1, client.right), std::max<LONG>(1, client.bottom));
         const auto oldBitmap = SelectObject(dc, bitmap);
-        const HBRUSH background = CreateSolidBrush(kBackground);
+        const HBRUSH background = CreateSolidBrush(UiTheme::Colors.nav);
         FillRect(dc, &client, background);
         DeleteObject(background);
         SetBkMode(dc, TRANSPARENT);
@@ -139,8 +138,8 @@ private:
             const bool selected = item.page && item.id == selected_;
             if (selected || static_cast<int>(index) == hover_)
             {
-                const HBRUSH fill = CreateSolidBrush(selected ? UiTheme::Surface : RGB(226, 229, 233));
-                const HPEN pen = CreatePen(PS_SOLID, 1, selected ? RGB(220, 222, 225) : RGB(226, 229, 233));
+                const HBRUSH fill = CreateSolidBrush(selected ? UiTheme::Surface : UiTheme::Colors.navHover);
+                const HPEN pen = CreatePen(PS_SOLID, 1, selected ? UiTheme::Colors.border : UiTheme::Colors.navHover);
                 const auto oldBrush = SelectObject(dc, fill);
                 const auto oldPen = SelectObject(dc, pen);
                 RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, Scale(8), Scale(8));
@@ -149,7 +148,7 @@ private:
                 DeleteObject(pen);
                 DeleteObject(fill);
             }
-            const COLORREF color = selected ? UiTheme::Text : RGB(80, 85, 95);
+            const COLORREF color = selected ? UiTheme::Text : UiTheme::Colors.strong;
             SetTextColor(dc, color);
             SelectObject(dc, iconFont_);
             RECT icon{rect.left + Scale(10), rect.top, rect.left + Scale(36), rect.bottom};
@@ -160,7 +159,7 @@ private:
         }
 
         SelectObject(dc, textFont_);
-        SetTextColor(dc, footerHighlight_ ? RGB(24, 95, 165) : RGB(136, 135, 128));
+        SetTextColor(dc, footerHighlight_ ? UiTheme::Colors.link : UiTheme::Colors.mutedTitle);
         RECT footer{Scale(22), client.bottom - Scale(40), client.right - Scale(10), client.bottom - Scale(16)};
         DrawTextW(dc, footer_.c_str(), -1, &footer, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 

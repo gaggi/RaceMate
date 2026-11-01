@@ -95,6 +95,7 @@ See the [metric reference](overlays.md#header-and-footer-metrics) for which valu
 
 | Setting | Behavior |
 | --- | --- |
+| Theme | **System** (as Windows sets its apps), **Light** or **Dark**, for the settings and Race Control windows; the overlays keep their own look. Race Control's column headings stay light |
 | Start with Windows | Adds RaceMate to the current user's Windows Run key; administrator rights are not needed |
 | Start minimized | Starts in the tray when the tray icon is available |
 | Headers on all overlays | Changes header visibility across overlays |

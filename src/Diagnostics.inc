@@ -1129,6 +1129,25 @@ int RunDiagnostics() {
         report<<"Choices in rows: shows on, OBS alpha, gap decimals, fixed corner and the overlays bar: "<<(choiceOk?"PASS":"FAIL")<<"\n"; allOk=choiceOk && allOk;
     }
     {
+        // The dark theme: chosen in its row, stored, the pages and Race Control drawn in it; then light again.
+        bool darkOk=true;
+        ShowPage(Page::Settings);
+        const HWND handle=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr);
+        auto* rows=handle?reinterpret_cast<RowList*>(GetWindowLongPtrW(handle,GWLP_USERDATA)):nullptr; int theme=-1;
+        if(rows) for(int i=0;i<static_cast<int>(rows->Rows().size()) && theme<0;++i) if(rows->Rows()[i].title==L"Theme") theme=i;
+        darkOk=theme>=0 && darkOk;
+        if(theme>=0) rows->PressChoice(theme,2);
+        darkOk=app.theme==2 && UiTheme::Dark && UiTheme::Background==UiTheme::DarkPalette.background && darkOk;
+        app.theme=1; Load(); darkOk=app.theme==2 && darkOk;
+        ShowPage(Page::Overlays); darkOk=Export(app.main,L"build\\qa\\main-dark-overlays.bmp") && darkOk;
+        OpenOverlay(First(RelativeKind)); darkOk=Export(app.main,L"build\\qa\\main-dark-relative.bmp") && darkOk;
+        ShowPage(Page::Settings); darkOk=Export(app.main,L"build\\qa\\main-dark-settings.bmp") && darkOk;
+        OpenRaceControl(); darkOk=Export(raceControl.window,L"build\\qa\\race-control-dark.bmp") && darkOk; CloseRaceControl();
+        app.theme=1; ApplyTheme(); Save(); darkOk=!UiTheme::Dark && UiTheme::Background==UiTheme::LightPalette.background && darkOk;
+        ShowPage(Page::Overlays);
+        report<<"Dark theme: chosen, stored, pages and Race Control drawn, light again: "<<(darkOk?"PASS":"FAIL")<<"\n"; allOk=darkOk && allOk;
+    }
+    {
         // Rings outside the overlay: red on the one whose page is open, dashed yellow while moving; none on the Pit Assist; square corners on request.
         bool bordersOk=true; auto& relative=First(RelativeKind);
         auto ringAround=[](const Overlay& o) {

@@ -110,6 +110,22 @@ bool Editing(const Overlay& o) {
     return IsWindowVisible(app.main) && !IsIconic(app.main) &&
         ui.page==Page::Overlay && ui.overlay==&o;
 }
+// Dark as Windows' apps are set: AppsUseLightTheme 0.
+bool WindowsAppsDark() {
+    DWORD light=1,size=sizeof(light);
+    return RegGetValueW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",L"AppsUseLightTheme",RRF_RT_REG_DWORD,nullptr,&light,&size)==ERROR_SUCCESS && light==0;
+}
+// The settings and Race Control windows in the chosen theme; the overlays keep their own dark look.
+void ApplyTheme(bool rebuild=true) {
+    UiTheme::SetDark(app.theme==2 || (app.theme==0 && WindowsAppsDark()));
+    app.brush=UiTheme::BackgroundBrush();
+    if(rebuild && ui.page==Page::Overlay && ui.overlay) ShowPage(ui.page,ui.overlay); else if(rebuild) ShowPage(ui.page);
+    if(app.main) UiTheme::RefreshWindow(app.main);
+    if(raceControl.window) {
+        for(HWND list:{raceControl.standings,raceControl.feed}) if(list) { ListView_SetBkColor(list,UiTheme::Surface); ListView_SetTextBkColor(list,UiTheme::Surface); ListView_SetTextColor(list,Text); }
+        UiTheme::RefreshWindow(raceControl.window);
+    }
+}
 void ShowRaceControlPage() { ShowSettings(); ShowPage(Page::RaceControl); }
 void CreateMainUi() {
     CreateUiFonts();

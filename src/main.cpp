@@ -41,7 +41,8 @@
 namespace {
 using namespace rm;
 bool spoutPremultiplied=true;
-constexpr COLORREF Background=RGB(246,247,249), Text=RGB(40,47,58);
+// The settings windows' page and text colors, light or dark: the current theme's.
+const COLORREF& Background=UiTheme::Background; const COLORREF& Text=UiTheme::Text;
 constexpr UINT TrayMessage=WM_APP+1;
 enum OverlayKind { RelativeKind, StandingsKind, FuelKind, PitLimiterKind, WeatherKind, TrackMapKind, SideWarningKind, RadarKind, TrafficKind, AdjustmentsKind };
 constexpr int OverlayCount=AdjustmentsKind+1;
@@ -416,6 +417,7 @@ struct App {
     int opponentFuelExtraLaps=3;
     // Fuel to keep at the finish, in tenths of a litre or of a lap: in refuel, needed, the pit window and the targets.
     int reserveTenths=0; bool reserveInLaps=false;
+    int theme=0; // The settings windows: 0 as Windows' apps are set, 1 light, 2 dark.
     // Pit stop estimate: lane loss learned per track or fixed by the user, service times per car (CarPath).
     PitLaneLoss pitLane; RefuelRate refuel; PitLaneEnds pitEnds; BrakingRate braking;
     // Whether Pit Assist shows, and where its strip starts while it does, so it stays put on the way in.
@@ -916,6 +918,7 @@ void Load() {
     app.reserveTenths=std::clamp(ReadInt(L"General",L"FuelReserveTenths",0),0,200); app.reserveInLaps=ReadBool(L"General",L"FuelReserveInLaps",false);
     app.startWithWindows=ReadBool(L"General",L"StartWithWindows",false);
     app.startMinimized=ReadBool(L"General",L"StartMinimized",false);
+    app.theme=std::clamp(ReadInt(L"General",L"Theme",0),0,2);
     app.windowRect={ReadInt(L"General",L"WindowLeft",0),ReadInt(L"General",L"WindowTop",0),ReadInt(L"General",L"WindowRight",0),ReadInt(L"General",L"WindowBottom",0)};
     app.windowMaximized=ReadBool(L"General",L"WindowMaximized",false);
     for(int i=0;i<HotkeyCount;++i) { const WORD hotkey=static_cast<WORD>(ReadInt(L"Hotkeys",HotkeyKeys[i],DefaultHotkeys[i])); app.hotkeys[i]=LOBYTE(hotkey)?hotkey:0; }
@@ -1005,7 +1008,7 @@ void Save() {
     number(L"General",L"ShowTitleBar",app.showTitleBar);
     number(L"General",L"OpponentFuelExtraLaps",app.opponentFuelExtraLaps);
     number(L"General",L"FuelReserveTenths",app.reserveTenths); number(L"General",L"FuelReserveInLaps",app.reserveInLaps);
-    number(L"General",L"StartWithWindows",app.startWithWindows); number(L"General",L"StartMinimized",app.startMinimized); number(L"General",L"CheckForUpdates",app.checkUpdates);
+    number(L"General",L"StartWithWindows",app.startWithWindows); number(L"General",L"StartMinimized",app.startMinimized); number(L"General",L"Theme",app.theme); number(L"General",L"CheckForUpdates",app.checkUpdates);
     number(L"General",L"SnapToGrid",app.snapToGrid); number(L"General",L"SnapToOverlays",app.snapToOverlays); number(L"General",L"GridSize",app.gridSize);
     if(app.windowRect.right>app.windowRect.left) {
         number(L"General",L"WindowLeft",app.windowRect.left); number(L"General",L"WindowTop",app.windowRect.top);
@@ -3403,12 +3406,13 @@ void UpdateOverlays(bool force=true) {
         if(editorPreview!=o.editorPreview) { o.editorPreview=editorPreview; o.due=0; if(!editorPreview) Fit(o); }
         if(editorPreview) {
             o.spout.reset();
-            if(!IsWindowVisible(o.window)) ShowWindow(o.window,SW_SHOWNOACTIVATE);
+            // A window coming into view is drawn and handed over whole: what it was given while hidden may be gone.
+            if(!IsWindowVisible(o.window)) { o.scene.clear(); ShowWindow(o.window,SW_SHOWNOACTIVATE); }
             if(o.mirror) ShowWindow(o.mirror,SW_SHOWNOACTIVATE);
             RenderEditorPreview(o,force); UpdateFrame(o); continue;
         }
         if(!onScreen && !Editing(o)) shown=false;
-        if(shown && !IsWindowVisible(o.window)) { ShowWindow(o.window,SW_SHOWNOACTIVATE); o.due=0; }
+        if(shown && !IsWindowVisible(o.window)) { o.scene.clear(); ShowWindow(o.window,SW_SHOWNOACTIVATE); o.due=0; }
         if(!shown && IsWindowVisible(o.window)) ShowWindow(o.window,SW_HIDE);
         if(!visible || !toObs) o.spout.reset();
         UpdateFrame(o);
@@ -3680,9 +3684,11 @@ LRESULT CALLBACK MainProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
         return 0;
     case WM_CTLCOLORSTATIC: {
         const HDC dc=reinterpret_cast<HDC>(wp);
-        SetBkColor(dc,Background); SetTextColor(dc,reinterpret_cast<HWND>(lp)==ui.hint?RGB(110,112,118):Text); return reinterpret_cast<LRESULT>(app.brush);
+        SetBkColor(dc,Background); SetTextColor(dc,reinterpret_cast<HWND>(lp)==ui.hint?UiTheme::Colors.muted:Text); return reinterpret_cast<LRESULT>(app.brush);
     }
     case WM_ERASEBKGND: { RECT r{}; GetClientRect(w,&r); FillRect(reinterpret_cast<HDC>(wp),&r,app.brush); return 1; }
+    // Windows' own app mode changed: followed when the theme is left to Windows.
+    case WM_SETTINGCHANGE: if(app.theme==0 && lp && !lstrcmpiW(reinterpret_cast<const wchar_t*>(lp),L"ImmersiveColorSet")) ApplyTheme(); break;
     case WM_DPICHANGED: {
         const auto* r=reinterpret_cast<RECT*>(lp); SetWindowPos(w,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER|SWP_NOACTIVATE);
         ApplyUiDpi(); return 0;
@@ -3758,13 +3764,16 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
         }
     }
     INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_STANDARD_CLASSES|ICC_LISTVIEW_CLASSES|ICC_HOTKEY_CLASS}; InitCommonControlsEx(&controls);
-    app.brush=CreateSolidBrush(Background);
+    app.brush=UiTheme::BackgroundBrush();
     WNDCLASSEXW cls{sizeof(cls)}; cls.lpfnWndProc=MainProc; cls.hInstance=instance; cls.hCursor=LoadCursorW(nullptr,IDC_ARROW); cls.hIcon=LoadIconW(instance,MAKEINTRESOURCEW(101)); cls.hbrBackground=app.brush; cls.lpszClassName=L"RaceMate.Settings"; RegisterClassExW(&cls);
     constexpr DWORD style=WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN;
     const UINT dpi=GetDpiForSystem(); RECT size{0,0,MulDiv(1000,dpi,96),MulDiv(720,dpi,96)}; AdjustWindowRectExForDpi(&size,style,FALSE,WS_EX_CONTROLPARENT,dpi);
     app.main=CreateWindowExW(WS_EX_CONTROLPARENT,cls.lpszClassName,L"RaceMate",style,CW_USEDEFAULT,CW_USEDEFAULT,size.right-size.left,size.bottom-size.top,nullptr,nullptr,instance,nullptr);
     if(!app.main) { DeleteObject(app.brush); if(mutex) CloseHandle(mutex); return 1; }
     CreateMainUi();
+    // Diagnostics compare their captures in the light theme, whatever Windows is set to.
+    if(app.diagnostics) app.theme=1;
+    ApplyTheme(false);
     cls.lpfnWndProc=OverlayProc; cls.hbrBackground=nullptr; cls.lpszClassName=L"RaceMate.Overlay"; RegisterClassExW(&cls);
     cls.lpfnWndProc=FrameProc; cls.lpszClassName=L"RaceMate.Frame"; RegisterClassExW(&cls);
     cls.lpfnWndProc=MirrorProc; cls.lpszClassName=L"RaceMate.Mirror"; RegisterClassExW(&cls);

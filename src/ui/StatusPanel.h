@@ -68,6 +68,7 @@ public:
             tone_ = tone;
             if (brush_) DeleteObject(brush_);
             brush_ = CreateSolidBrush(Colors().background);
+            brushDark_ = UiTheme::Dark;
         }
         title_ = title;
         detail_ = detail;
@@ -98,9 +99,12 @@ private:
     {
         switch (tone_)
         {
-        case Tone::Active: return {RGB(234, 243, 222), RGB(192, 221, 151), RGB(99, 153, 34), RGB(39, 80, 10), RGB(59, 109, 17)};
-        case Tone::Busy: return {RGB(250, 238, 218), RGB(250, 199, 117), RGB(186, 117, 23), RGB(99, 56, 6), RGB(133, 79, 11)};
-        default: return {UiTheme::Surface, RGB(220, 222, 225), RGB(180, 178, 169), UiTheme::Text, RGB(95, 94, 90)};
+        // Light: pale fill, dark text; dark: deep fill, light text.
+        case Tone::Active: return UiTheme::Dark ? Palette{RGB(32, 52, 22), RGB(58, 92, 30), RGB(99, 153, 34), RGB(192, 221, 151), RGB(160, 200, 120)}
+            : Palette{RGB(234, 243, 222), RGB(192, 221, 151), RGB(99, 153, 34), RGB(39, 80, 10), RGB(59, 109, 17)};
+        case Tone::Busy: return UiTheme::Dark ? Palette{RGB(58, 44, 18), RGB(110, 80, 30), RGB(186, 117, 23), RGB(250, 199, 117), RGB(230, 180, 110)}
+            : Palette{RGB(250, 238, 218), RGB(250, 199, 117), RGB(186, 117, 23), RGB(99, 56, 6), RGB(133, 79, 11)};
+        default: return {UiTheme::Surface, UiTheme::Colors.border, RGB(180, 178, 169), UiTheme::Text, UiTheme::Colors.muted};
         }
     }
 
@@ -118,6 +122,13 @@ private:
     void Paint(HDC dc)
     {
         const auto colors = Colors();
+        // The fill follows a change of theme as well as of tone.
+        if (brushDark_ != UiTheme::Dark || !brush_)
+        {
+            if (brush_) DeleteObject(brush_);
+            brush_ = CreateSolidBrush(colors.background);
+            brushDark_ = UiTheme::Dark;
+        }
         RECT client{};
         GetClientRect(window_, &client);
         FillRect(dc, &client, UiTheme::BackgroundBrush());
@@ -200,6 +211,7 @@ private:
     HFONT titleFont_{};
     HFONT textFont_{};
     HBRUSH brush_{};
+    bool brushDark_{};
     Tone tone_{Tone::Neutral};
     std::wstring title_;
     std::wstring detail_;
