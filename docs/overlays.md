@@ -125,8 +125,12 @@ Relative and Standings use the same set of columns. Each overlay has its own cho
 Only one driver status is displayed, with this priority:
 
 ```text
-PIT > TOW > BLACK/DQ > REPAIR > SLOW > OUT
+PIT > TOW > BLACK/DQ > REPAIR > SLOW > OUT > AI
 ```
+
+**AI** marks an AI driver, only in a field of humans and AI; in a race against the AI alone everyone else would carry it. AI drivers show **AI** instead of an iRating, and they are left out of the SOF, the average iRating and the iRating change.
+
+**Pace car.** While the pace car is out on the circuit, the Relative lists it as **Pace Car** with a yellow **PACE** badge and its distance, without a position, number or other values. In the pits it is not shown; the Standings never list it.
 
 **OUT** lasts from an observed pit exit until the next line crossing. Towing is taken from the SDK for your car and inferred for others from a direct return to the stall. The badge and its black flag, slowdown and repair indicators are switched in the expanded **Driver** column row. An inferred status is limited by what RaceMate has actually observed.
 

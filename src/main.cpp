@@ -652,14 +652,22 @@ std::wstring DriverName(const Row& row,const TableSettings& t) {
     const size_t initial=(name[0]>=0xd800 && name[0]<=0xdbff && name.size()>1 && name[1]>=0xdc00 && name[1]<=0xdfff)?2:1;
     return name.substr(0,initial)+(t.nameFormat==1?L". ":L" ")+name.substr(last);
 }
+// Humans and AI in one field: only there does an AI badge tell them apart; in an AI race everyone else is AI.
+bool MixedAiField() {
+    bool ai=false,human=false;
+    for(const auto& d:app.session.drivers) (d.ai?ai:human)=true;
+    return ai && human;
+}
 std::wstring OverlayStatus(const Row& row,const TableSettings& t) {
+    if(row.driver.paceCar) return L"PACE";
     if(row.car.pit) return L"PIT";
     if(row.car.towing) return L"TOW";
     if(t.driverFlags[0] && (row.car.sessionFlags&SessionFlag::Disqualify)) return L"DQ";
     if(t.driverFlags[0] && (row.car.sessionFlags&SessionFlag::Black)) return L"BLACK";
     if(t.driverFlags[2] && (row.car.sessionFlags&SessionFlag::Repair)) return L"REPAIR";
     if(t.driverFlags[1] && (row.car.sessionFlags&SessionFlag::Furled)) return L"SLOW";
-    return row.car.outLap?L"OUT":L"";
+    if(row.car.outLap) return L"OUT";
+    return row.driver.ai && MixedAiField()?L"AI":L"";
 }
 // In full, or short in thousands: 2,4K.
 std::wstring IRatingText(int rating,bool shortView) {
@@ -680,7 +688,7 @@ std::wstring DriverValue(const Row& row,int driverColumn,const TableSettings* t=
         auto value=Wide(row.driver.license.substr(start,end==std::string::npos?end:end-start));
         std::replace(value.begin(),value.end(),L'.',L','); return value;
     }
-    case IRatingColumn: return IRatingText(row.driver.rating,shortView);
+    case IRatingColumn: return row.driver.ai?L"AI":IRatingText(row.driver.rating,shortView);
     case TiresColumn: { const auto label=TireLabel(row.driver,row.car.tireCompound); return label.empty()?L"—":Wide(label); }
     case PitLapColumn: return row.car.lastPitLap<0?L"—":std::to_wstring(row.car.lastPitLap);
     case PitStopColumn: {
@@ -1438,7 +1446,7 @@ struct Cell {
 };
 void SetBadge(Cell& c,std::wstring status) {
     c.badgeFill=Ink::Yellow; c.badgeInk=Ink::Panel;
-    if(status==L"OUT") { c.badgeFill=RGB(70,78,88); c.badgeInk=Ink::White; }
+    if(status==L"OUT" || status==L"AI") { c.badgeFill=RGB(70,78,88); c.badgeInk=Ink::White; }
     else if(status==L"TOW" || status==L"REPAIR" || status==L"SLOW") c.badgeFill=RGB(245,140,60);
     else if(status==L"BLACK" || status==L"DQ") { c.badgeFill=RGB(214,64,56); c.badgeInk=RGB(255,255,255); }
     c.badge=std::move(status);
@@ -1508,12 +1516,19 @@ const CellRenderer CellRenderers[]={
         c.box=Cell::Filled; c.boxColor=status==OpponentFuelStatus::End?Ink::Green:Ink::Yellow; c.ink=Ink::Panel; c.font=SmallBold; },
     // iRating on the license color: safety class and rating in one badge, with its own short view.
     +[](const Row& r,const Overlay& o,Cell& c) {
-        c.text=IRatingText(r.driver.rating,o.table.driverShortView[2]); if(c.text==L"—") { c.ink=Ink::Muted; return; }
+        c.text=r.driver.ai?L"AI":IRatingText(r.driver.rating,o.table.driverShortView[2]); if(c.text==L"—") { c.ink=Ink::Muted; return; }
+        if(r.driver.ai) { c.box=Cell::Filled; c.boxColor=Ink::NeutralBadge; c.ink=RGB(255,255,255); c.font=SmallBold; return; }
         c.box=Cell::Filled; c.boxColor=r.driver.license.empty()?Ink::NeutralBadge:LicenseFill(r.driver); c.ink=RGB(255,255,255); c.font=SmallBold; },
     +[](const Row&,const Overlay&,Cell&) {}, // Sector cells are drawn individually in BuildScene.
     +[](const Row& r,const Overlay&,Cell& c) { if(r.driver.team.empty()) { c.text=L"—"; c.ink=Ink::Muted; return; } c.text=Wide(r.driver.team); c.ink=Ink::Value; }
 };
 static_assert(std::size(CellRenderers)==ColumnCount);
+// The pace car's row has its name with a PACE badge and its distance; it has no number, position, rating or laps.
+void RenderCell(int id,const Row& r,const Overlay& o,Cell& c) {
+    if(!r.driver.paceCar) { CellRenderers[id](r,o,c); return; }
+    if(id==DriverColumn) { c.text=L"Pace Car"; c.ink=Ink::Yellow; SetBadge(c,L"PACE"); }
+    if(id==GapColumn) CellRenderers[id](r,o,c);
+}
 bool Editing(const Overlay& o); // Its own page is open in the visible main window.
 #ifdef RACEMATE_DIAGNOSTICS
 // Time per draw command type and overlay kind, GDI flushed after each so batched work lands on its command.
@@ -1828,6 +1843,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             int x=12;
             for(int id:columns) {
                 const int w=ColumnWidth(o,id), inner=w-8; Cell cell{{},color};
+                if(id==SectorsColumn && r.driver.paceCar) { x+=w; continue; }
                 if(id==SectorsColumn) {
                     const int count=SectorCount();
                     if(!count) label(L"No SDK splits",rect(x,y,inner,27),Ink::Muted,Small);
@@ -1835,7 +1851,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                     for(int i=0;i<count*parts;++i) label(Format(SectorColumnTime(r.driver.index,i,parts),2),rect(x+i*step,y,step-8,27),SectorColumnColor(r.driver.index,i,parts),SmallBold,DT_RIGHT);
                     x+=w; continue;
                 }
-                CellRenderers[id](r,o,cell);
+                RenderCell(id,r,o,cell);
                 if(cell.box==Cell::Ringed) {
                     const int left=x+(inner-19)/2;
                     out.push_back({DrawCommand::Ring,cell.font,0,{px(left),px(y+4)-titleOffset,px(left+19),px(y+23)-titleOffset},cell.ink,{std::max(1.f,1.6f*px(100)/100.f)},std::move(cell.text)});

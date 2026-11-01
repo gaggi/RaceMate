@@ -29,6 +29,7 @@ struct Driver {
     double estimatedLapTime = -1;
     std::string brand; // Manufacturer, from CarBrand().
     std::string team; // TeamName; in solo events iRacing repeats the driver's name.
+    bool ai = false; // CarIsAI: an AI driver, without a real iRating.
 };
 std::string TireLabel(const Driver&, int compound);
 // Manufacturer from CarPath, else the first word of CarScreenName; empty without either.
@@ -55,6 +56,8 @@ struct Session {
     // WeekendInfo TrackNorthOffset in radians: how the track's own frame lies to north; NaN while unknown.
     double trackNorthOffset = std::numeric_limits<double>::quiet_NaN();
     std::vector<Driver> drivers;
+    // CarIdx of the pace car, -1 without one. It is kept out of drivers: only the Relative shows it, while it is out.
+    int paceCar = -1;
     std::vector<CameraGroup> cameras;
     std::vector<SectorBoundary> sectors; // SplitTimeInfo: SDK boundaries, not assumed thirds.
     std::array<SessionResult, MaxCars> results{};

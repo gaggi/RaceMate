@@ -339,6 +339,7 @@ Session ParseSession(const std::string& yaml, int sessionNumber) {
         result={}; resultIndex=-1; hasResult=false;
     };
     auto save = [&] {
+        if(driver.paceCar && driver.index>=0 && driver.index<MaxCars) s.paceCar=driver.index;
         if (driver.index >= 0 && driver.index < MaxCars && !driver.paceCar && !driver.spectator) {
             // The car's count, as the limits count it; the current driver's alone restarts at each driver change.
             if(teamIncidents>=0) driver.incidentCount=teamIncidents;
@@ -466,6 +467,7 @@ Session ParseSession(const std::string& yaml, int sessionNumber) {
         if (key == "TeamIncidentCount") teamIncidents = Integer(value,-1);
         if (key == "IRating") driver.rating = Integer(value,0);
         if (key == "CarIsPaceCar") driver.paceCar = value == "1" || value == "true";
+        if (key == "CarIsAI") driver.ai = value == "1" || value == "true";
         if (key == "IsSpectator") driver.spectator = value == "1" || value == "true";
     }
     if(section=="QualifyResultsInfo") saveGrid();
@@ -546,7 +548,7 @@ std::array<int,MaxCars> IRatingChanges(const Session& s,const Frame& f) {
     struct Entry { int classId, position, index; double e; };
     std::vector<Entry> entries;
     for(const auto& d:s.drivers)
-        if(d.rating>0 && d.index>=0 && d.index<MaxCars && f.cars[d.index].classPosition>0)
+        if(d.rating>0 && !d.ai && d.index>=0 && d.index<MaxCars && f.cars[d.index].classPosition>0)
             entries.push_back({d.classId,f.cars[d.index].classPosition,d.index,std::exp(-d.rating/scale)});
     std::sort(entries.begin(),entries.end(),[](const Entry& a,const Entry& b){return a.classId!=b.classId?a.classId<b.classId:a.position<b.position;});
     for(size_t begin=0;begin<entries.size();) {
@@ -612,6 +614,11 @@ std::vector<Row> Relative(const Session& s, const Frame& f, int count, bool ownC
         if (row.player) row.gap = 0;
         rows.push_back(std::move(row));
     }
+    // The pace car while it is out on the circuit: where it is against you, not a competitor with a position.
+    if(s.paceCar>=0 && s.paceCar<MaxCars && OnCircuit(f.cars[s.paceCar]) && !f.cars[s.paceCar].pit) {
+        Row row; row.driver.index=s.paceCar; row.driver.paceCar=true; row.driver.name="Pace Car"; row.car=f.cars[s.paceCar];
+        row.car.position=row.car.classPosition=0; rows.push_back(std::move(row));
+    }
     // Select each side independently so a crowded side cannot displace the reference.
     const int half=RelativeRowCount(count)/2;
     auto distance=[&](const Row& row) { double value=row.car.pct-mine.pct; return value-std::floor(value+.5); };
@@ -629,6 +636,7 @@ std::vector<Row> Relative(const Session& s, const Frame& f, int count, bool ownC
     // is timed at its own pace where known.
     auto gap=[&](Row& row,bool isAhead) {
         const auto& d=row.driver; const auto& c=row.car;
+        if(d.paceCar) { row.gap=-distance(row)*lapTime; return; } // By the lap fraction at your lap time.
         if(isAhead) row.gap=-ReachGap(passes,d,c,*me,mine,lapTime,&row);
         else { const double pace=DriverLapTime(s,f,d.index); row.gap=ReachGap(passes,*me,mine,d,c,ValidTime(pace)?pace:lapTime,&row); }
         if(!std::isfinite(row.gap) && d.classId==me->classId && c.estTime>0 && mine.estTime>0 && std::abs(c.pct-mine.pct)<.5) row.gap=mine.estTime-c.estTime;

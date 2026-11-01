@@ -15,13 +15,13 @@ std::wstring FooterTemperature(double value) {
 // The plain average iRating of a class's rated drivers; -1 without any.
 int ClassAverageRating(int classId) {
     long long sum=0; int rated=0;
-    for(const auto& d:app.session.drivers) if(d.classId==classId && !d.paceCar && !d.spectator && d.rating>0) { sum+=d.rating; ++rated; }
+    for(const auto& d:app.session.drivers) if(d.classId==classId && !d.paceCar && !d.spectator && !d.ai && d.rating>0) { sum+=d.rating; ++rated; }
     return rated?static_cast<int>(std::lround(static_cast<double>(sum)/rated)):-1;
 }
 int ClassSof(int classId,int& cars) {
     double sum=0; int rated=0; const double scale=1600/std::log(2.0); cars=0;
     for(const auto& d:app.session.drivers) if(d.classId==classId && !d.paceCar && !d.spectator) {
-        ++cars; if(d.rating>0) { sum+=std::exp(-d.rating/scale); ++rated; }
+        ++cars; if(d.rating>0 && !d.ai) { sum+=std::exp(-d.rating/scale); ++rated; }
     }
     return rated && sum>0?static_cast<int>(std::lround(scale*std::log(rated/sum))):-1;
 }

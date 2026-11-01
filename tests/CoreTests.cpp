@@ -196,6 +196,19 @@ void RowTests() {
  auto target=std::find_if(replayRows.begin(),replayRows.end(),[](const Row& row){return row.player;});
  Require(target!=replayRows.end() && target->driver.index==8,"replay highlight");
  f.replay=false; Require(ReferenceCar(f)==3,"driving restores own car");
+ {
+   // The pace car: read apart from the drivers, in the Relative only while it is out on the circuit, by distance.
+   const auto parsed=ParseSession("DriverInfo:\n Drivers:\n - CarIdx: 0\n   UserName: Pace Car\n   CarIsPaceCar: 1\n - CarIdx: 1\n   UserName: AI Driver\n   CarIsAI: 1\n - CarIdx: 2\n   UserName: Human\n   CarIsAI: 0\n",0);
+   Require(parsed.paceCar==0 && parsed.drivers.size()==2 && parsed.drivers[0].ai && !parsed.drivers[1].ai,"pace car kept apart, AI flag read");
+   auto paced=DemoSession(); auto frame=DemoFrame(10); paced.paceCar=20;
+   frame.cars[20]=frame.cars[3]; frame.cars[20].pct=std::fmod(frame.cars[3].pct+.01,1.0); frame.cars[20].pit=false;
+   const auto withPace=Relative(paced,frame,21,false);
+   const auto pace=std::find_if(withPace.begin(),withPace.end(),[](const Row& r){ return r.driver.paceCar; });
+   Require(pace!=withPace.end() && pace->gap<0 && pace->car.position==0,"pace car ahead in the Relative, without a position");
+   Require(Standings(paced,frame,21,false).size()==paced.drivers.size(),"standings without the pace car");
+   frame.cars[20].pit=true; const auto parked=Relative(paced,frame,21,false);
+   Require(std::none_of(parked.begin(),parked.end(),[](const Row& r){ return r.driver.paceCar; }),"pace car in the pits not shown");
+ }
  f.onTrack=false; f.camera=MaxCars; Require(ReferenceCar(f)==3,"invalid camera fallback");
 }
 void RelativeCenterTests() {

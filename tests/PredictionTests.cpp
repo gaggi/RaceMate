@@ -62,6 +62,7 @@ void PitHistoryTests() {
         Require(change[0]>0 && change[2]<0 && std::abs(change[0]+change[2])<=2 && std::abs(change[1])<=2,"equal ratings: gain for the leader, loss for the last");
         Require(change[3]==NoRatingChange,"a class of one has no change");
         rated.drivers[2].rating=4000; Require(IRatingChanges(rated,order)[2]<change[2],"losing to weaker drivers costs more");
+        rated.drivers[2].ai=true; Require(IRatingChanges(rated,order)[2]==NoRatingChange && IRatingChanges(rated,order)[0]!=change[0],"AI drivers have no iRating change and do not count for others");
         rated.type="Practice"; Require(IRatingChanges(rated,order)[0]==NoRatingChange,"no change outside races");
     }
     s.gridPositions[0]=4; s.gridPositions[1]=7;
