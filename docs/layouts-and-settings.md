@@ -4,25 +4,32 @@
 
 ## Position and appearance
 
-Open **Overlays** and click **Settings** on an overlay's row, or double-click the row. The row's switch puts the overlay on your screen; a pill says where it appears: **Screen**, **OBS** or **Screen + OBS**. The **Window** section at the top of its page holds its name and placement; they belong to that overlay in its own layout. The row in the list summarizes them.
+Open **Overlays** and click **Settings** on an overlay's row, or double-click the row. The row's switch puts the overlay on your screen; a blue pill says when it also goes to OBS (**OBS** or **Screen + OBS**). The row's second line lists only what differs from a new overlay, such as `120 %  ·  grows from Bottom right`.
+
+An overlay's page starts with **Shows on**: **Off**, **Screen**, **OBS** or **Both**. What it shows follows, and the **Window** section at the end holds its name and placement; they belong to that overlay in its own layout.
 
 | Setting | Available choices | Effect |
 | --- | --- | --- |
+| Rounded corners | On or off | Square corners are the default |
 | Size | 50–150%, in 10% steps | Scales the overlay |
 | Opacity | 40–100%, in 10% steps | Controls the overlay's opacity; **Background only** keeps text, badges and foreground at full opacity |
-| Fixed corner | Top left, top right, bottom left, bottom right | Keeps that corner in place when content changes size |
+| Fixed corner | The four arrows: top left, top right, bottom left, bottom right | Keeps that corner in place when content changes size |
 | Updates | 1, 2, 5, 10, 15 or 20 Hz | Controls that overlay's refresh rate |
-| OBS output | Off, On, On with straight alpha | Sends the overlay to OBS; see [OBS output](overlays.md#obs-output-spout2) |
+| OBS alpha | Premultiplied or Straight; only while it goes to OBS | Matches OBS's alpha mode; see [OBS output](overlays.md#obs-output-spout2) |
+
+A setting with a few short values shows them side by side in its row; click one to choose it. Buttons such as **100 % ▾** show the current value and open a menu of the others.
 
 The fixed corner is useful for standings near the right edge or a panel above the taskbar: adding rows, columns, a header or a footer grows the panel away from that corner. Changing the corner does not itself jump the overlay to a screen corner.
 
-Choose **Settings** in the row for content options. **Rounded corners** is a separate setting on that page; square corners are the default. **Reset positions** returns overlays to their default places on the main monitor.
+**Reset positions** returns overlays to their default places on the main monitor.
 
 ## Automatic layouts
 
 ![Layout list with independent arrangements and activation conditions](images/layouts.png)
 
 *Each layout is an expandable group with its own overlays and activation condition.*
+
+The Overlays page starts with **All overlays**: **Move**, **Hide** and **Pause OBS**, each switching on and off by itself. Below it, every layout's group is open when RaceMate starts, so its overlays are listed at once; the arrow folds a group away.
 
 A layout owns its overlays, their names, placement, size, opacity, refresh rates and content settings. Two Relatives in different layouts can look completely different. Click its header or arrow to open or close its settings and overlay group. The header settings contain its name, **Active when** and **Session**. The layout you edit does not determine which layouts run.
 
@@ -58,7 +65,7 @@ Opening an overlay's **Settings**, or expanding its inline placement controls, a
 
 Each layout has its own **Preview** / **Stop preview** button in its title row. Several layouts can be previewed independently, including layouts whose conditions do not currently match. Sample previews use a yellow **Preview** badge; the green **Active** badge is reserved for matching layouts using real SIM data. Previews remain on screen and never publish sample images to OBS. Live telemetry continues throughout. If a previewed layout becomes live, its live data takes priority; stopping its preview does not hide its live overlays.
 
-**Move overlays** lets you arrange the currently displayed overlays. While you drag one, its edges and centre lines snap to those of the other overlays and of the screen within 8 px, shown by a magenta guide line; otherwise the corner it grows from snaps to a 10 px grid counted from the corner of the screen. Hold **Alt** while dragging to place it freely. **Settings → Snap to grid while moving** (expand it for the grid size, 2–100 px) and **Snap to other overlays** switch these off. Any layout can be removed, including Default and the last remaining layout. An empty layout list remains empty after restarting; no fallback layout is recreated. The original Default layout initially retains older settings, but its name gives it no special activation behavior.
+**Move** under **All overlays** lets you arrange the currently displayed overlays. While you drag one, its edges and centre lines snap to those of the other overlays and of the screen within 8 px, shown by a magenta guide line; otherwise the corner it grows from snaps to a 10 px grid counted from the corner of the screen. Hold **Alt** while dragging to place it freely. **Settings → Snap to grid while moving** (expand it for the grid size, 2–100 px) and **Snap to other overlays** switch these off. Any layout can be removed, including Default and the last remaining layout. An empty layout list remains empty after restarting; no fallback layout is recreated. The original Default layout initially retains older settings, but its name gives it no special activation behavior.
 
 ## Sharing layouts
 

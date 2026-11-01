@@ -919,9 +919,11 @@ int main(int argc,char** argv) {
    switch(v.type) { case 0: case 1: value=*p; break; case 2: case 3: value=*reinterpret_cast<const int*>(p); break; case 4: value=*reinterpret_cast<const float*>(p); break; case 5: value=*reinterpret_cast<const double*>(p); break; }
    out<<"  "<<v.name<<"  "<<(v.type>=0 && v.type<6?types[v.type]:"?")<<'['<<v.count<<"]  "<<v.unit<<"  "<<value<<"  "<<v.description<<'\n';
   }
-  out<<"\nSession YAML:\n"<<yaml;
+  out<<"\nSession YAML:\n"<<yaml; out.close();
+  // The header lies in the mapping: read the count before unmapping it.
+  const int count=h->numVars;
   UnmapViewOfFile(memory); CloseHandle(map);
-  std::cout<<"Wrote irsdk-dump.txt ("<<h->numVars<<" variables).\n"; return 0;
+  std::cout<<"Wrote irsdk-dump.txt ("<<count<<" variables).\n"; return 0;
  }
  if(argc==4 && std::string(argv[1])=="--radar-log") {
   // Every new frame of a live session (or a TapeMate playback) for the given seconds: the spotter, your car, every

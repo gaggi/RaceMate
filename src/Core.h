@@ -33,6 +33,9 @@ struct Driver {
 std::string TireLabel(const Driver&, int compound);
 // Manufacturer from CarPath, else the first word of CarScreenName; empty without either.
 std::string CarBrand(const std::string& carPath, const std::string& carName);
+// Classes without a short name, as in some league sessions, named after their cars: one model's name, or GT3 when
+// every car's name has it.
+void NameUnnamedClasses(std::vector<Driver>& drivers);
 struct SessionResult {
     int position = 0, classPosition = 0;
     double best = -1, last = -1;

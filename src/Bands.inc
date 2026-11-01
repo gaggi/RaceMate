@@ -9,33 +9,54 @@ RowList::Row RoundedRow(const Overlay& o) {
     RowList::Row row; row.title=L"Rounded corners"; row.detail=L"Off: square corners."; row.toggle=o.place.rounded?1:0; return row;
 }
 void SetRounded(Overlay& o,bool on) { o.place.rounded=on; Fit(o); }
-// The Window section at the top of every overlay page: name, size, opacity, fixed corner, updates and OBS output.
-// A page lists WindowRows under its own key with the WindowItem as id; the name row expands to its edit field.
-enum WindowItem { WindowName, WindowSize, WindowOpacity, WindowBackground, WindowCorner, WindowRate, WindowObs };
+// Where an overlay shows, first on every overlay page, and its Window section, last: name, size, opacity, fixed
+// corner, updates and OBS's alpha. A page lists these rows under its own key with the WindowItem as id; the name
+// row expands to its edit field. A few values are chosen in the row; the others' buttons show their value.
+enum WindowItem { WindowName, WindowSize, WindowOpacity, WindowBackground, WindowCorner, WindowRate, WindowObs, WindowShows };
 constexpr int WindowNameEditId=180, WindowNameHeight=48;
 const wchar_t* OverlayCorners[]={L"Top left",L"Top right",L"Bottom left",L"Bottom right"};
 int CornerIndex(const Placement& place) { return (place.growLeft?1:0)+(place.growUp?2:0); }
-std::wstring ObsText(const Placement& place) { return !place.spout?L"Off":(place.spoutPremultiplied?L"On":L"On, straight alpha"); }
+// A value on a button that opens a menu of the others.
+std::wstring MenuButton(const std::wstring& value) { return value+L"  ▾"; }
+// Off, your screen, OBS, or both: a bit for each, as the choices stand.
+RowList::Row ShowsRow(const Overlay& o) {
+    RowList::Row row; row.title=L"Shows on"; row.choices={L"Off",L"Screen",L"OBS",L"Both"}; row.choice=(o.place.enabled?1:0)+(o.place.spout?2:0);
+    const auto sender=L"“"+Wide(SpoutSenderName(o))+L"”";
+    row.detail=row.choice==0?L"Neither on your screen nor in OBS":(row.choice==1?L"Your screen":(row.choice==2?L"OBS only, as Spout2 source "+sender:L"Your screen, and OBS as Spout2 source "+sender));
+    return row;
+}
 std::vector<std::pair<int,RowList::Row>> WindowRows(const Overlay& o,bool nameOpen) {
     std::vector<std::pair<int,RowList::Row>> rows;
-    auto add=[&](int item,const wchar_t* title,std::wstring detail,bool choose) {
-        RowList::Row row; row.title=title; row.detail=std::move(detail); if(choose) row.button=L"Choose..."; rows.emplace_back(item,std::move(row)); return &rows.back().second;
-    };
-    auto* name=add(WindowName,L"Name",Name(o)+(o.customName.empty()?L"":L"  \u00B7  "+std::wstring(Titles[o.kind])),false);
+    auto add=[&](int item,const wchar_t* title,std::wstring detail) { RowList::Row row; row.title=title; row.detail=std::move(detail); rows.emplace_back(item,std::move(row)); return &rows.back().second; };
+    auto* name=add(WindowName,L"Name",Name(o)+(o.customName.empty()?L"":L"  \u00B7  "+std::wstring(Titles[o.kind])));
     name->iconButtons={nameOpen?Glyph::Collapse:Glyph::Expand}; name->expandHeight=nameOpen?WindowNameHeight:0;
-    add(WindowSize,L"Size",std::to_wstring(o.place.scale)+L" %  \u00B7  scales text and layout alike",true);
-    add(WindowOpacity,L"Opacity",std::to_wstring(o.place.opacity)+L" %",true);
-    add(WindowBackground,L"Background only",L"The opacity applies to the panel; text and markings stay solid.",false)->toggle=o.place.backgroundOnly?1:0;
+    add(WindowSize,L"Size",L"Text and layout alike")->button=MenuButton(std::to_wstring(o.place.scale)+L" %");
+    add(WindowOpacity,L"Opacity",L"")->button=MenuButton(std::to_wstring(o.place.opacity)+L" %");
+    add(WindowBackground,L"Background only",L"Text and markings stay solid")->toggle=o.place.backgroundOnly?1:0;
     // The Side Warning's bars stay centred on their monitor, so no corner holds them.
-    if(o.kind!=SideWarningKind) add(WindowCorner,L"Fixed corner",std::wstring(OverlayCorners[CornerIndex(o.place)])+L"  \u00B7  rows, columns, header and footer grow away from it",true);
-    add(WindowRate,L"Updates",std::to_wstring(o.place.rate)+L" Hz  \u00B7  how often it redraws",true);
-    add(WindowObs,L"OBS output",ObsText(o.place)+(o.place.spout?L"  \u00B7  sender "+Wide(SpoutSenderName(o)):std::wstring(L"  \u00B7  On sends it to OBS as a Spout2 source")),true);
+    if(o.kind!=SideWarningKind) {
+        auto* corner=add(WindowCorner,L"Fixed corner",std::wstring(OverlayCorners[CornerIndex(o.place)])+L"  \u00B7  it grows away from it");
+        corner->choices={L"↖",L"↗",L"↙",L"↘"}; corner->choice=CornerIndex(o.place);
+    }
+    add(WindowRate,L"Updates",L"How often it redraws")->button=MenuButton(std::to_wstring(o.place.rate)+L" Hz");
+    // Straight alpha only for OBS's Default mode; while OBS gets nothing, nothing to choose.
+    if(o.place.spout) {
+        auto* alpha=add(WindowObs,L"OBS alpha",o.place.spoutPremultiplied?L"For OBS's Premultiplied alpha mode":L"For OBS's Default alpha mode");
+        alpha->choices={L"Premultiplied",L"Straight"}; alpha->choice=o.place.spoutPremultiplied?0:1;
+    }
     return rows;
 }
-// A Window row's switch or button; choose is the page's menu. The name row's arrow is the page's own: it expands it.
-template<class Choose> void WindowCommand(Overlay& o,int item,int code,bool on,Choose choose) {
+// A Window row's switch, choice or button; choose is the page's menu, picked the choice clicked. The name row's
+// arrow is the page's own: it expands it.
+template<class Choose> void WindowCommand(Overlay& o,int item,int code,bool on,int picked,Choose choose) {
     if(item==WindowBackground) { if(code==RowList::kToggled) { o.place.backgroundOnly=on; Fit(o); SettingChanged(); } return; }
-    if(code!=RowList::kButton && code!=RowList::kActivated) return;
+    if(code==RowList::kChoice) {
+        if(item==WindowShows) { o.place.enabled=picked&1; o.place.spout=(picked&2)!=0; SettingChanged(); }
+        if(item==WindowCorner) SetOverlayCorner(o,picked);
+        if(item==WindowObs) { o.place.spoutPremultiplied=picked==0; SettingChanged(); }
+        return;
+    }
+    if(code!=RowList::kButton) return;
     auto percents=[](int from,int to) { std::vector<std::wstring> items; for(int n=from;n<=to;n+=10) items.push_back(std::to_wstring(n)+L" %"); return items; };
     if(item==WindowSize) { const int choice=choose(percents(50,150),(o.place.scale-50)/10); if(choice>=0) { o.place.scale=50+10*choice; Fit(o); SettingChanged(); } }
     if(item==WindowOpacity) {
@@ -43,16 +64,10 @@ template<class Choose> void WindowCommand(Overlay& o,int item,int code,bool on,C
         o.place.opacity=40+10*choice;
         if(o.place.backgroundOnly) { Fit(o); SettingChanged(); } else { ApplyOpacity(o); Save(); }
     }
-    if(item==WindowCorner) { const int choice=choose(std::vector<std::wstring>(std::begin(OverlayCorners),std::end(OverlayCorners)),CornerIndex(o.place)); if(choice>=0) SetOverlayCorner(o,choice); }
     if(item==WindowRate) {
         std::vector<std::wstring> items; for(int n:OverlayRates) items.push_back(std::to_wstring(n)+L" Hz");
         const int choice=choose(items,static_cast<int>(std::find(std::begin(OverlayRates),std::end(OverlayRates),o.place.rate)-std::begin(OverlayRates)));
         if(choice>=0) { o.place.rate=OverlayRates[choice]; o.due=0; Timer(); SettingChanged(); UpdateStatus(); }
-    }
-    if(item==WindowObs) {
-        // Off keeps the alpha mode for the next time it is switched on; straight alpha only for OBS's Default mode.
-        const int choice=choose({L"Off",L"On",L"On, straight alpha"},!o.place.spout?0:(o.place.spoutPremultiplied?1:2));
-        if(choice>=0) { o.place.spout=choice>0; if(choice>0) o.place.spoutPremultiplied=choice==1; SettingChanged(); }
     }
 }
 void WindowNameEditor(RowEditors& editors,const Overlay& o) {

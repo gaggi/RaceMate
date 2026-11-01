@@ -26,6 +26,10 @@
 // ExpansionRect() and moves them again on kLayoutChanged (scrolling, resizing).
 // Their WM_COMMAND messages are passed on to the parent unchanged.
 //
+// A row with choices shows them as an inline segmented control in the text button's place and column, for a
+// choice among a few short values; clicking one sends kChoice with NotifiedChoice() the segment. With choiceFlags
+// each segment switches on its own and choice holds a bit per segment, as a bar of toggle buttons.
+//
 // Rows that share a dragGroup can be put in another order by dragging one by the grip at its left, six dots, up or
 // down: a line shows where it goes, and on release the parent gets kMoved with NotifiedRow() the dragged row and
 // DropRow() the row whose place it takes. A row of the group that is not draggable has no grip and stays put as
@@ -49,7 +53,9 @@ public:
         // Rows moved (scrolled, resized or replaced); reposition controls in expansions.
         kLayoutChanged = 6,
         // A row was dragged to another place in its group.
-        kMoved = 7
+        kMoved = 7,
+        // A segment of a row's choices was clicked, or chosen with the arrow keys.
+        kChoice = 8
     };
 
     enum class Tone
@@ -76,6 +82,10 @@ public:
         bool toggleEnabled{true};
         std::wstring button;
         bool buttonEnabled{true};
+        // Instead of a button: the selected one of these short values, or with choiceFlags a bit per value that is on.
+        std::vector<std::wstring> choices;
+        int choice{-1};
+        bool choiceFlags{};
         // Glyphs from Segoe Fluent Icons / Segoe MDL2 Assets; [0] is the rightmost:
         // expand first, then the others. Every row of a card with a toggle or icon
         // buttons reserves as many slots as the row with the most, so toggles and
@@ -122,6 +132,7 @@ public:
     HWND Handle() const noexcept { return window_; }
     int NotifiedRow() const noexcept { return notifiedRow_; }
     int NotifiedIconButton() const noexcept { return notifiedIconButton_; }
+    int NotifiedChoice() const noexcept { return notifiedIconButton_; }
     int DropRow() const noexcept { return dropRow_; }
     const std::vector<Row>& Rows() const noexcept { return rows_; }
 
@@ -166,11 +177,11 @@ public:
         return rect;
     }
 
-    // Client rectangle of a row's text button; empty without one.
+    // Client rectangle of a row's text button, or of its choices; empty without either.
     RECT ButtonRect(int index) const
     {
         const auto layouts = Compute();
-        if (index < 0 || index >= static_cast<int>(layouts.size()) || rows_[static_cast<size_t>(index)].button.empty()) return {};
+        if (index < 0 || index >= static_cast<int>(layouts.size()) || !HasButton(rows_[static_cast<size_t>(index)])) return {};
         RECT rect = layouts[static_cast<size_t>(index)].button;
         OffsetRect(&rect, 0, -scroll_);
         return rect;
@@ -185,6 +196,12 @@ public:
     void PressButton(int index)
     {
         if (index >= 0 && index < static_cast<int>(rows_.size())) Activate({index, PartKind::Button});
+    }
+    // Acts on one of a row's choices as a click on it does.
+    void PressChoice(int index, int choice)
+    {
+        if (index >= 0 && index < static_cast<int>(rows_.size()) && choice >= 0 && choice < static_cast<int>(rows_[static_cast<size_t>(index)].choices.size()))
+            Activate({index, PartKind::Choice, choice});
     }
 
     // Client rectangle of a row's top line.
@@ -207,7 +224,7 @@ public:
 private:
     static constexpr wchar_t kClassName[] = L"LaunchMateRowList";
 
-    enum class PartKind { None, Body, Toggle, Button, IconButton, Grip };
+    enum class PartKind { None, Body, Toggle, Button, IconButton, Grip, Choice };
     struct Part
     {
         int row{-1};
@@ -222,6 +239,7 @@ private:
         RECT toggle{};
         RECT button{};
         std::vector<RECT> iconButtons;
+        std::vector<RECT> choices;
         RECT pill{};
         RECT text{};
         RECT icon{};
@@ -232,6 +250,8 @@ private:
     };
 
     int Scale(int value) const { return MulDiv(value, GetDpiForWindow(window_), 96); }
+    static bool HasButton(const Row& row) { return !row.button.empty() || !row.choices.empty(); }
+    bool Chosen(const Row& row, size_t choice) const { return row.choiceFlags ? (row.choice >= 0 && (row.choice >> choice & 1)) : row.choice == static_cast<int>(choice); }
 
     void ReleaseResources()
     {
@@ -355,9 +375,20 @@ private:
                 }
                 x -= Scale(12);
             }
-            else if (controls && toggleColumn[index] && !row.button.empty())
+            else if (controls && toggleColumn[index] && HasButton(row))
                 x -= Scale(52); // The toggle's place, so this button stands with the others.
-            if (!row.button.empty())
+            if (!row.choices.empty())
+            {
+                // Segments as wide as their text, left to right, ending where a button would.
+                std::vector<int> widths;
+                int total = 0;
+                for (const auto& choice : row.choices) { widths.push_back(TextWidth(dc, textFont_, choice) + Scale(22)); total += widths.back(); }
+                layout.button = {x - total, middle - Scale(15), x, middle + Scale(15)};
+                int left = x - total;
+                for (const int width : widths) { layout.choices.push_back({left, middle - Scale(15), left + width, middle + Scale(15)}); left += width; }
+                x -= total + Scale(10);
+            }
+            else if (!row.button.empty())
             {
                 const int width = TextWidth(dc, textFont_, row.button) + Scale(28);
                 layout.button = {x - width, middle - Scale(15), x, middle + Scale(15)};
@@ -453,6 +484,8 @@ private:
             for (size_t button = 0; button < layout.iconButtons.size(); ++button)
                 if (PtInRect(&layout.iconButtons[button], point)) return {static_cast<int>(index), PartKind::IconButton, static_cast<int>(button)};
             if (PtInRect(&layout.grip, point)) return {static_cast<int>(index), PartKind::Grip};
+            for (size_t choice = 0; choice < layout.choices.size(); ++choice)
+                if (PtInRect(&layout.choices[choice], point)) return {static_cast<int>(index), PartKind::Choice, static_cast<int>(choice)};
             if (!row.button.empty() && PtInRect(&layout.button, point)) return {static_cast<int>(index), PartKind::Button};
             RECT toggle = layout.toggle;
             InflateRect(&toggle, Scale(6), Scale(8));
@@ -505,6 +538,13 @@ private:
             return;
         case PartKind::IconButton:
             Notify(kIconButton, part.row, part.iconButton);
+            return;
+        case PartKind::Choice:
+            // Show the change at once; the parent may refresh.
+            if (row.choiceFlags) row.choice = std::max(0, row.choice) ^ (1 << part.iconButton);
+            else row.choice = part.iconButton;
+            InvalidateRect(window_, nullptr, FALSE);
+            Notify(kChoice, part.row, part.iconButton);
             return;
         case PartKind::Body:
         case PartKind::Grip: // A click on the grip without dragging acts as one on the row.
@@ -561,6 +601,7 @@ private:
         shift(layout.bounds); shift(layout.text); shift(layout.toggle); shift(layout.button); shift(layout.pill); shift(layout.icon); shift(layout.grip);
         shift(layout.expansion);
         for (auto& rect : layout.iconButtons) shift(rect);
+        for (auto& rect : layout.choices) shift(rect);
         SetBkMode(dc, TRANSPARENT);
 
         if (row.header)
@@ -686,6 +727,28 @@ private:
                 row.buttonEnabled ? RGB(190, 194, 201) : RGB(226, 228, 231));
             SetTextColor(dc, row.buttonEnabled ? UiTheme::Text : RGB(160, 162, 168));
             DrawTextW(dc, row.button.c_str(), -1, &layout.button, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        }
+
+        if (!row.choices.empty())
+        {
+            // One outline like a button's; the chosen segments filled in the accent, hairlines between the others.
+            FillRounded(dc, layout.button, Scale(8), UiTheme::Surface, RGB(190, 194, 201));
+            HRGN inside = CreateRoundRectRgn(layout.button.left + 1, layout.button.top + 1, layout.button.right, layout.button.bottom, Scale(8), Scale(8));
+            SelectClipRgn(dc, inside);
+            for (size_t choice = 0; choice < row.choices.size(); ++choice)
+            {
+                const RECT& segment = layout.choices[choice];
+                const bool chosen = Chosen(row, choice);
+                const bool choiceHover = hovered && hover_.kind == PartKind::Choice && hover_.iconButton == static_cast<int>(choice);
+                if (chosen || choiceHover) FillRect(dc, segment, chosen ? RGB(220, 234, 250) : RGB(243, 244, 246));
+                if (choice > 0 && !chosen && !Chosen(row, choice - 1))
+                    FillRect(dc, {segment.left, segment.top + Scale(7), segment.left + 1, segment.bottom - Scale(7)}, RGB(220, 222, 225));
+                SetTextColor(dc, chosen ? RGB(12, 68, 124) : UiTheme::Text);
+                RECT text = segment;
+                DrawTextW(dc, row.choices[choice].c_str(), -1, &text, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            }
+            SelectClipRgn(dc, nullptr);
+            DeleteObject(inside);
         }
 
         SelectObject(dc, glyphFont_);
@@ -911,6 +974,17 @@ private:
             {
             case VK_UP: MoveFocus(-1); return 0;
             case VK_DOWN: MoveFocus(1); return 0;
+            case VK_LEFT:
+            case VK_RIGHT:
+            {
+                // The next or previous choice of a row with one choice at a time.
+                if (focused_ < 0) return 0;
+                const auto& row = rows_[static_cast<size_t>(focused_)];
+                if (row.choices.empty() || row.choiceFlags) return 0;
+                const int next = std::clamp(row.choice + (wParam == VK_RIGHT ? 1 : -1), 0, static_cast<int>(row.choices.size()) - 1);
+                if (next != row.choice) Activate({focused_, PartKind::Choice, next});
+                return 0;
+            }
             case VK_SPACE:
             case VK_RETURN:
             {

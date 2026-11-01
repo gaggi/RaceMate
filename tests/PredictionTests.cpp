@@ -34,6 +34,21 @@ void PitHistoryTests() {
 
     Require(CarBrand("bmwm4gt3","BMW M4 GT3")=="BMW" && CarBrand("astonmartin_vantagegt3","")=="Aston Martin" && CarBrand("mercedesamgevogt3","")=="Mercedes","brands from CarPath");
     Require(CarBrand("rayff1600","Ray FF1600")=="Ray" && CarBrand("","").empty(),"brand falls back to the first word of the car name");
+    Require(CarBrand("amvantageevogt3","Aston Martin Vantage GT3 EVO")=="Aston Martin" && CarBrand("amvantagegt4","")=="Aston Martin","Aston Martin's short paths");
+    Require(CarBrand("xyz123","Aston Martin DBR9 GT1")=="Aston Martin" && CarBrand("xyz123","Mercedes-AMG GT3 2020")=="Mercedes","a path without the maker: its name");
+    {
+        // A league class without a short name: GT3 from every car's name; one model gives its name; nothing shared, no name.
+        std::vector<Driver> drivers(5);
+        const char* cars[]={"Aston Martin Vantage GT3 EVO","Mercedes-AMG GT3 2020","Porsche 911 GT3 R (992)","Ford Mustang GT3","BMW M2 CS Racing"};
+        for(int i=0;i<5;++i) { drivers[i].classId=i<4?4091:7; drivers[i].carName=cars[i]; }
+        drivers[4].paceCar=true; drivers.push_back(drivers[0]); drivers.back().classId=12; drivers.back().className="GT4";
+        NameUnnamedClasses(drivers);
+        Require(drivers[0].className=="GT3" && drivers[3].className=="GT3" && drivers[4].className.empty() && drivers[5].className=="GT4","unnamed class takes its cars' common class");
+        std::vector<Driver> cup(2); for(auto& d:cup) { d.classId=5; d.carName="Porsche 911 GT3 Cup (992)"; }
+        std::vector<Driver> mixed(2); mixed[0].carName="Mazda MX-5 Cup"; mixed[1].carName="Toyota GR86"; for(auto& d:mixed) d.classId=6;
+        NameUnnamedClasses(cup); NameUnnamedClasses(mixed);
+        Require(cup[0].className=="Porsche 911 GT3 Cup (992)" && mixed[0].className.empty(),"one model names its class; nothing in common leaves it unnamed");
+    }
     Require(CarBrand("rufrt12r","")=="RUF" && CarBrand("fordgt2017","Ford GT")=="Ford" && CarBrand("trucks\\silverado","")=="Chevrolet","short fragments match at the start only");
 
     auto s=Race(); auto f=RacingFrame(); PitHistory history;

@@ -72,16 +72,13 @@ private:
             const bool open=expandedKey_==key && expandedId_==id;
             row.iconButtons.insert(row.iconButtons.begin(),open?Glyph::Collapse:Glyph::Expand); row.expandHeight=open?height:0;
         };
-        header(L"Window");
-        for(auto& [item,row]:WindowRows(o_,expandedKey_==Key::Window)) push(std::move(row),Key::Window,item);
-        header(L"Layout");
-        push(RoundedRow(o_),Key::Rounded);
+        // Where it shows first; its window last, under what it shows.
+        push(ShowsRow(o_),Key::Window,WindowShows);
         if(o_.kind==RelativeKind) {
             header(L"Rows");
             RowList::Row count; count.title=L"Rows"; count.detail=std::to_wstring(o_.table.rows)+L" rows including your car, which stays in the middle";
             expandable(count,Key::Rows,-1,48); push(std::move(count),Key::Rows);
-            RowList::Row decimals; decimals.title=L"Gap decimals"; decimals.detail=std::to_wstring(o_.table.gapDecimals)+L"  \u00B7  "+Format(0,o_.table.gapDecimals)+L" s"; decimals.button=L"Choose...";
-            push(std::move(decimals),Key::GapDecimals);
+            push(DecimalsRow(L"Gap decimals",L""),Key::GapDecimals);
             RowList::Row signs; signs.title=L"Show + and \u2212 before gaps"; signs.detail=L"Without them, cars above your row are ahead and cars below are behind."; signs.toggle=o_.table.gapSigns?1:0;
             push(std::move(signs),Key::GapSigns);
             RowList::Row pit; pit.title=L"Hide drivers in the pit lane"; pit.detail=L"Your own car always stays."; pit.toggle=o_.table.hidePit?1:0;
@@ -98,7 +95,7 @@ private:
             RowList::Row others; others.title=L"Rows in other classes"; others.muted=!classes;
             others.detail=standings.otherClasses?L"At least their "+std::to_wstring(standings.otherClasses)+(standings.otherClasses==1?L" leader":L" leaders"):std::wstring(L"Only their class header");
             expandable(others,Key::OtherClassRows,-1,48); push(std::move(others),Key::OtherClassRows);
-            RowList::Row view; view.title=L"Classes"; view.button=L"Choose...";
+            RowList::Row view; view.title=L"Classes"; view.choices={L"Separate",L"Combined"}; view.choice=standings.separateClasses?0:1;
             view.detail=standings.separateClasses?L"Separate classes, each with its leader and entrants":L"Combined overall standings";
             push(std::move(view),Key::ClassView);
             RowList::Row head; head.title=L"Class header"; head.muted=!standings.separateClasses;
@@ -111,12 +108,11 @@ private:
             RowList::Row live; live.title=L"Live positions and gaps"; live.detail=L"Estimated from track position between start/finish crossings."; live.toggle=standings.liveGaps?1:0;
             push(std::move(live),Key::LiveGaps);
             // As in the Relative; a layout for qualifying can show thousandths and one for races tenths.
-            RowList::Row decimals; decimals.title=L"Gap decimals"; decimals.detail=std::to_wstring(o_.table.gapDecimals)+L"  \u00B7  "+Format(0,o_.table.gapDecimals)+L" s  \u00B7  gap and interval"; decimals.button=L"Choose...";
-            push(std::move(decimals),Key::GapDecimals);
+            push(DecimalsRow(L"Gap decimals",L"Gap and interval"),Key::GapDecimals);
             RowList::Row signs; signs.title=L"Show + before gaps and intervals"; signs.detail=L"Both always count behind the leader or the car ahead."; signs.toggle=o_.table.gapSigns?1:0;
             push(std::move(signs),Key::GapSigns);
-            RowList::Row untimed; untimed.title=L"Drivers without a lap time"; untimed.button=L"Choose...";
-            untimed.detail=standings.fallbackByRating?L"Ordered by iRating, highest first":L"Ordered by car number";
+            RowList::Row untimed; untimed.title=L"Drivers without a lap time"; untimed.choices={L"By number",L"By iRating"}; untimed.choice=standings.fallbackByRating?1:0;
+            untimed.detail=L"Their order until they set one";
             push(std::move(untimed),Key::UntimedOrder);
         }
         header(L"Markings");
@@ -160,6 +156,9 @@ private:
         RowList::Row foot=BandRow(o_,true); expandable(foot,Key::Footer,-1,BandEditorHeight); push(std::move(foot),Key::Footer);
         RowList::Row headings; headings.title=L"Column headings"; headings.detail=L"Without them, columns shrink to their values."; headings.toggle=o_.table.columnHeaders?1:0;
         push(std::move(headings),Key::ColumnHeadings);
+        header(L"Window");
+        push(RoundedRow(o_),Key::Rounded);
+        for(auto& [item,row]:WindowRows(o_,expandedKey_==Key::Window)) push(std::move(row),Key::Window,item);
         list_.SetRows(std::move(rows));
     }
     int ExpandedRow() const {
@@ -269,10 +268,9 @@ private:
         }
         if(changed) Changed();
     }
-    void ChooseDecimals() {
-        const int choice=ChooseFromMenu({L"0  \u00B7  1 s",L"1  \u00B7  0.1 s",L"2  \u00B7  0.01 s",L"3  \u00B7  0.001 s"},o_.table.gapDecimals);
-        if(choice<0) return;
-        o_.table.gapDecimals=choice; Changed();
+    // Places after the point, as the gap reads with them.
+    RowList::Row DecimalsRow(const wchar_t* title,const wchar_t* detail) const {
+        RowList::Row row; row.title=title; row.detail=detail; row.choices={L"1 s",L"0.1",L"0.01",L"0.001"}; row.choice=o_.table.gapDecimals; return row;
     }
     void OnTimer(UINT_PTR id) override { if(id==TypingTimer) ApplyRows(); }
     bool OnCommand(int id,int code,HWND) override {
@@ -320,15 +318,15 @@ private:
         switch(key) {
         case Key::Window:
             if(column==WindowName) { if(toggleExpand) Expand(key,WindowName); }
-            else { WindowCommand(o_,column,code,on,[this](const std::vector<std::wstring>& items,int checked){ return ChooseFromMenu(items,checked); }); Refresh(); }
+            else { WindowCommand(o_,column,code,on,code==RowList::kChoice?list_.NotifiedChoice():-1,[this](const std::vector<std::wstring>& items,int checked){ return ChooseFromMenu(items,checked); }); Refresh(); }
             break;
         case Key::Rows: if(toggleExpand) Expand(key,-1); break;
-        case Key::GapDecimals: if(pressed) ChooseDecimals(); break;
+        case Key::GapDecimals: if(code==RowList::kChoice) { o_.table.gapDecimals=list_.NotifiedChoice(); Changed(); } break;
         case Key::GapSigns: if(code==RowList::kToggled) { SetGapSigns(o_,on); Refresh(); } break;
         case Key::HidePit: if(code==RowList::kToggled) { o_.table.hidePit=on; Changed(); } break;
         case Key::StandingsRows: case Key::OtherClassRows: case Key::ClassHeader: if(toggleExpand) Expand(key,-1); break;
         case Key::ClassView:
-            if(pressed) { const int choice=ChooseFromMenu({L"Separate classes",L"Combined overall standings"},o_.table.standings.separateClasses?0:1); if(choice>=0) { o_.table.standings.separateClasses=choice==0; Changed(); } }
+            if(code==RowList::kChoice) { o_.table.standings.separateClasses=list_.NotifiedChoice()==0; Changed(); }
             break;
         case Key::OwnClass: if(code==RowList::kToggled) { o_.table.standings.ownClass=on; Changed(); } break;
         case Key::ClassColors: if(code==RowList::kToggled) { o_.table.classColors=on; Changed(); } break;
@@ -337,7 +335,7 @@ private:
         case Key::PitExit: if(code==RowList::kToggled) { o_.table.pitExit=on; Changed(); } else if(toggleExpand) Expand(key,-1); break;
         case Key::LiveGaps: if(code==RowList::kToggled) { o_.table.standings.liveGaps=on; Changed(); } break;
         case Key::UntimedOrder:
-            if(pressed) { const int choice=ChooseFromMenu({L"By car number",L"By iRating, highest first"},o_.table.standings.fallbackByRating?1:0); if(choice>=0) { o_.table.standings.fallbackByRating=choice==1; Changed(); } }
+            if(code==RowList::kChoice) { o_.table.standings.fallbackByRating=list_.NotifiedChoice()==1; Changed(); }
             break;
         case Key::CopyColumns: if(pressed) CopyTo(); break;
         case Key::Column:

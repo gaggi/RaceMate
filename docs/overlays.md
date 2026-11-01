@@ -40,7 +40,7 @@ The **gap** is an estimated driving time: how long the car behind needs to get t
 
 ![Relative settings with row count, gap precision and color options](images/relative-settings.png)
 
-*The Relative page starts with its layout, then row and gap options. Scroll down for the columns, their order and their expanded options. Every Relative instance has its own settings.*
+*The Relative page starts with where it shows, then row and gap options; its window settings come last. Scroll down for the columns, their order and their expanded options. Every Relative instance has its own settings.*
 
 | Setting | What it does |
 | --- | --- |
@@ -335,27 +335,26 @@ replace the desktop renderer.
 
 1. Install the [OBS Spout2 plugin](https://github.com/Off-World-Live/obs-spout2-plugin)
    matching your OBS installation and restart OBS.
-2. In RaceMate's Overlays page, click **Settings** on an overlay and, under
-   **Window**, set **OBS output** to **On**. The sender name appears beside it. Layout previews are for the screen only; OBS output requires live SIM data.
+2. In RaceMate's Overlays page, click **Settings** on an overlay and set
+   **Shows on** to **OBS** or **Both**. The sender name appears below it. Layout previews are for the screen only; OBS output requires live SIM data.
 3. In OBS, add a **Spout2 Capture** source and select **RaceMate - Default - Relative**
    (or **RaceMate - your layout name - your overlay name**). Every sender includes
    both display names, including the Default layout. Renaming either updates the
-   sender label; select its new name in OBS afterward. **On** sends premultiplied
-   alpha; select the corresponding premultiplied composite mode in OBS. Choose
-   **On, straight alpha** in RaceMate only when using OBS's straight-alpha
+   sender label; select its new name in OBS afterward. RaceMate sends premultiplied
+   alpha; select the corresponding premultiplied composite mode in OBS. Set
+   **OBS alpha** under **Window** to **Straight** only when using OBS's straight-alpha
    **Default** mode. **Opaque** ignores transparency.
    A mismatch can cause dark edges or incorrect opacity. The selection is saved
    as `SpoutAlphaMode` in that overlay's INI section. The diagnostic environment
    override `RACEMATE_SPOUT_ALPHA` accepts `premultiplied` or `straight`.
-4. Position and scale the source independently in OBS. Turn off the overlay's
-   main row switch if it should appear only in OBS; that switch controls the
-   desktop window. With OBS output off too, the overlay is inactive.
+4. Position and scale the source independently in OBS. Choose **OBS** under
+   **Shows on** if it should appear only in OBS; **Off** makes the overlay inactive.
 
 Each instance has its own source and shares its content, size, opacity, refresh
 rate and visibility conditions with RaceMate. To use different content in the
 stream, add a second overlay instance where the overlay type supports instances,
-configure it separately, disable its desktop switch and enable its OBS output.
-All currently matching layouts are exported independently. Layouts selected for editing do not replace running stream layouts. **Hide all overlays** clears your screen only; OBS keeps its sources. **Pause OBS output** (Overlays page, tray menu or Ctrl + Alt + Shift + O) stops every OBS source and leaves your screen as it is. In the overlay list a pill shows where each overlay appears: **Screen**, **OBS** or **Screen + OBS**.
+configure it separately and set its **Shows on** to **OBS**.
+All currently matching layouts are exported independently. Layouts selected for editing do not replace running stream layouts. **Hide** under **All overlays** clears your screen only; OBS keeps its sources. **Pause OBS** (Overlays page, tray menu or Ctrl + Alt + Shift + O) stops every OBS source and leaves your screen as it is. In the overlay list a pill marks the overlays that go to OBS: **OBS** or **Screen + OBS**.
 Conditional overlays disappear when their conditions no longer apply.
 Side Warning exports both bars next to each other in one image; crop/duplicate
 the source in OBS to place the bars separately.

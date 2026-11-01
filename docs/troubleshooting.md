@@ -6,10 +6,10 @@
 
 1. Turn on **Preview**. If sample overlays appear, the application can render; check the simulator connection and the conditions below.
 2. Make sure the overlay's switch is enabled in the **active layout**.
-3. Check **Hide all overlays**, including its global shortcut and tray-menu state. For missing OBS sources, check **Pause OBS output** the same way.
+3. Check **Hide** under **All overlays**, including its global shortcut and tray-menu state. For missing OBS sources, check **Pause OBS** the same way.
 4. Check the layout conditions. Every layout whose condition matches runs; if none matches the current situation, no overlays show. A running layout has a green **Active** badge. Add an **Always** layout for overlays that should always run. See [Matching layouts](layouts-and-settings.md#matching-layouts).
 5. Run iRacing in **borderless windowed** mode.
-6. Enable **Move overlays** to find the frames. After a monitor change, use **Reset positions** on the Overlays page.
+6. Turn on **Move** under **All overlays** to find the frames. After a monitor change, use **Reset positions** on the Overlays page.
 7. Check the overlay's content choices. A Weather panel with all modules hidden has nothing to display; Pit Assist appears only under its driving/pit conditions.
 
 After Preview is off, disconnected overlays hide automatically. A transparent Track Map intentionally hides its panel, header and footer.
@@ -22,7 +22,7 @@ After Preview is off, disconnected overlays hide automatically. A transparent Tr
 | You drive your own car | Not while spotting, in replays or in the garage; in the pits Traffic shows nothing and the Radar only cars in the pit lane |
 | A car is near | Side Warning: the spotter reports one beside you. Radar: a car within its range, unless **Always while you drive** is on. Traffic: a car within its seconds behind |
 | Traffic's **Faster classes only** | On by default: only classes at least 2 % quicker by iRacing's class lap estimate. In a one-class race nothing qualifies; switch it off to see every car behind |
-| Preview or **Move overlays** | All three show then, so you can see them and place them |
+| Preview or **Move** | All three show then, so you can see them and place them |
 
 Radar lanes and the Side Warning come from iRacing's spotter; without it (off the track, or just joined) lanes are guessed from overlapping cars. See [Overlays](overlays.md#radar).
 
@@ -36,7 +36,7 @@ Starting the executable twice normally brings the existing settings window forwa
 
 ## I cannot click or drag an overlay
 
-Overlays are click-through outside **Move overlays** mode. Enable it with the Overlays page, tray menu or Ctrl + Alt + Shift + E, drag the overlay, then finish Move mode.
+Overlays are click-through outside Move mode. Enable it with the Overlays page, tray menu or Ctrl + Alt + Shift + E, drag the overlay, then finish Move mode.
 
 A red border means that overlay's settings page is open. The dashed yellow border means Move mode. The red selection border alone does not enable dragging.
 
@@ -126,9 +126,9 @@ A screenshot and the relevant setting names are often enough. A profile is usefu
 
 ## OBS output has black corners or dark edges
 
-Match RaceMate's per-overlay **OBS output** choice to the Spout2 Capture source's
-composite mode. **On** sends premultiplied alpha; select OBS's corresponding
-premultiplied mode. For OBS **Default** (straight alpha), choose **On, straight alpha**
+Match the overlay's **OBS alpha**, under **Window** on its page, to the Spout2 Capture
+source's composite mode. **Premultiplied**, the default, needs OBS's corresponding
+premultiplied mode. For OBS **Default** (straight alpha), choose **Straight**
 in RaceMate. **Opaque** discards transparency, including rounded corners. A mismatch
 between straight and premultiplied alpha can cause dark edges or incorrect
 brightness. RaceMate and OBS should run on the same GPU.

@@ -11,7 +11,7 @@ $destinationRoot = Join-Path $repoRoot 'docs/images'
 # sidebar and the preview banner around it.
 $images = [ordered]@{
     'main-overlays'         = @{ Sources = @('main-overlays') }
-    'layouts'               = @{ Sources = @('main-layouts'); Crop = @(310, 612, 1132, 305) }
+    'layouts'               = @{ Sources = @('main-layouts'); Crop = @(310, 380, 1132, 405) }
     'settings'              = @{ Sources = @('main-settings'); Crop = @(310, 185, 1132, 895) }
     'relative-settings'     = @{ Sources = @('main-0'); Crop = @(310, 180, 1132, 900) }
     'relative'              = @{ Sources = @('overlay-0') }
@@ -21,7 +21,7 @@ $images = [ordered]@{
     'fuel-save'             = @{ Sources = @('fuel-save') }
     'fuel-surplus'          = @{ Sources = @('fuel-surplus') }
     'fuel-strip'            = @{ Sources = @('fuel-strip') }
-    'pit-stop-settings'     = @{ Sources = @('settings-pit-stop'); Crop = @(310, 810, 1132, 270) }
+    'pit-stop-settings'     = @{ Sources = @('settings-pit-stop'); Crop = @(310, 805, 1132, 235) }
     'pit-assist'            = @{ Sources = @('pit-setup-changes', 'pit-turn-off-limiter') }
     'pit-lane-progress'     = @{ Sources = @('pit-strip-approach', 'pit-strip-lane', 'pit-strip-exit') }
     'weather'               = @{ Sources = @('weather-all') }

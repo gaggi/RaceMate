@@ -38,7 +38,7 @@ RaceMate puts nearby traffic, standings, fuel planning, weather, pit-limiter war
 1. Download the matching Windows executable or ZIP from [Releases](https://github.com/gaggi/RaceMate/releases). Use x64 for a 64-bit Windows installation.
 2. Put it in a stable, user-writable folder and launch it. RaceMate supports **Windows 10/11** and does not need a separate runtime installation.
 3. Click **Preview** to configure overlays with sample data, without joining iRacing.
-4. Enable **Move overlays**, drag the panels into place and click **Done**. Expand an overlay row for size, opacity, fixed corner and refresh rate; choose **Settings** for its contents.
+4. Click **Move**, drag the panels into place and click **Done**. Choose **Settings** on an overlay for its contents, and under **Window** for size, opacity, fixed corner and refresh rate.
 5. Turn Preview off, run iRacing in **borderless windowed mode** and join a session. RaceMate connects automatically.
 
 Outside Move mode, overlays pass mouse clicks through and do not take focus. They follow the camera car while spectating/replaying where the data supports it, and hide on disconnection unless Preview is active. Pit Assist appears under its own driving/pit conditions.

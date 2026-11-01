@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <map>
 #include <string_view>
 
 namespace rm {
@@ -470,6 +471,7 @@ Session ParseSession(const std::string& yaml, int sessionNumber) {
     if(section=="QualifyResultsInfo") saveGrid();
     if (inDrivers) save();
     if (inResults) saveResult();
+    NameUnnamedClasses(s.drivers);
     if(std::isfinite(tank) && tank>0 && std::isfinite(fuelFraction) && fuelFraction>0 && fuelFraction<=1) s.fuelCapacity=tank*fuelFraction;
     std::sort(s.sectors.begin(),s.sectors.end(),[](const SectorBoundary& a,const SectorBoundary& b){return a.number<b.number;});
     bool sectorsValid=!s.sectors.empty() && s.sectors.front().start==0 && s.sectors.size()<=64;
@@ -487,10 +489,34 @@ void KeepIncidents(Session& next, const Session& previous) {
     for(auto& d:next.drivers)
         for(const auto& p:previous.drivers) if(p.index==d.index && p.number==d.number) { d.incidentCount=std::max(d.incidentCount,p.incidentCount); break; }
 }
+// Hosted and league sessions can leave a class without a short name. Its name then comes from its cars: the one car's
+// name, or what every car's name has in common that reads as a class, such as GT3 in "Ferrari 296 GT3" and
+// "Mercedes-AMG GT3 2020". Without that it stays empty, and the class is shown by its number.
+void NameUnnamedClasses(std::vector<Driver>& drivers) {
+    std::map<int,std::vector<const Driver*>> classes;
+    for(const auto& d:drivers) if(d.className.empty() && !d.paceCar && !d.spectator && !d.carName.empty()) classes[d.classId].push_back(&d);
+    for(const auto& [id,cars]:classes) {
+        auto words=[](const std::string& name) {
+            std::vector<std::string> out; std::string word;
+            for(const char c:name+" ") if(c==' ' || c=='-' || c=='(' || c==')') { if(!word.empty()) out.push_back(word); word.clear(); } else word+=c;
+            return out;
+        };
+        std::string name;
+        if(std::all_of(cars.begin(),cars.end(),[&](const Driver* d){ return d->carName==cars.front()->carName; })) name=cars.front()->carName;
+        else for(const auto& word:words(cars.front()->carName)) {
+            // A class reads like GT3, GT4, LMP2 or TCR: capitals, perhaps with digits.
+            if(word.size()<2 || !std::all_of(word.begin(),word.end(),[](char c){ return std::isupper(static_cast<unsigned char>(c)) || std::isdigit(static_cast<unsigned char>(c)); })) continue;
+            if(std::all_of(cars.begin(),cars.end(),[&](const Driver* d){ const auto w=words(d->carName); return std::find(w.begin(),w.end(),word)!=w.end(); })) { name=word; break; }
+        }
+        if(name.empty()) continue;
+        for(auto& d:drivers) if(d.classId==id && d.className.empty()) d.className=name;
+    }
+}
 std::string CarBrand(const std::string& carPath, const std::string& carName) {
     // CarPath fragments, most specific first; ^ matches only at the start. The logo atlas uses the same names.
+    // Aston Martin's newer paths start "am" (amvantageevogt3).
     static constexpr std::pair<const char*,const char*> brands[]={
-        {"astonmartin","Aston Martin"},{"mclaren","McLaren"},{"mercedes","Mercedes"},{"amg","Mercedes"},{"lamborghini","Lamborghini"},
+        {"astonmartin","Aston Martin"},{"^amvantage","Aston Martin"},{"mclaren","McLaren"},{"mercedes","Mercedes"},{"amg","Mercedes"},{"lamborghini","Lamborghini"},
         {"porsche","Porsche"},{"ferrari","Ferrari"},{"bmw","BMW"},{"audi","Audi"},{"acura","Acura"},{"cadillac","Cadillac"},
         {"corvette","Chevrolet"},{"camaro","Chevrolet"},{"chevy","Chevrolet"},{"chevrolet","Chevrolet"},{"silverado","Chevrolet"},
         {"mustang","Ford"},{"fordgt","Ford"},{"ford","Ford"},{"toyota","Toyota"},{"supra","Toyota"},{"gr86","Toyota"},{"camry","Toyota"},
@@ -498,9 +524,16 @@ std::string CarBrand(const std::string& carPath, const std::string& carName) {
         {"superformula","Dallara"},{"radical","Radical"},{"lotus","Lotus"},{"renault","Renault"},{"williams","Williams"},{"subaru","Subaru"},
         {"volkswagen","Volkswagen"},{"vw","Volkswagen"},{"kia","Kia"},{"pontiac","Pontiac"},{"riley","Riley"},{"tatuus","Tatuus"},
         {"dodge","Dodge"},{"holden","Holden"},{"buick","Buick"},{"lexus","Lexus"},{"skipbarber","Skip Barber"},{"^ruf","RUF"},{"^ray","Ray"}};
+    auto match=[&](const std::string& text)->std::string {
+        for(const auto& [fragment,brand]:brands)
+            if(fragment[0]=='^'?text.rfind(fragment+1,0)==0:text.find(fragment)!=std::string::npos) return brand;
+        return {};
+    };
     std::string path=carPath; for(char& c:path) c=static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    for(const auto& [fragment,brand]:brands)
-        if(fragment[0]=='^'?path.rfind(fragment+1,0)==0:path.find(fragment)!=std::string::npos) return brand;
+    if(auto brand=match(path); !brand.empty()) return brand;
+    // A path without the maker's name: the car's name, in lower case without spaces, as a path would spell it.
+    std::string name; for(char c:carName) if(c!=' ' && c!='-') name+=static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if(auto brand=match(name); !brand.empty()) return brand;
     const auto first=carName.find_first_not_of(' ');
     return first==std::string::npos?std::string{}:carName.substr(first,carName.find(' ',first)-first);
 }

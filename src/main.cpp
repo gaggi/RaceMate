@@ -112,17 +112,17 @@ constexpr ModuleInfo FuelModules[]={
     {L"ShowPitWindow",L"Pit window",L"Earliest and latest lap to stop",true},
     {L"ShowTimeline",L"Pit window timeline",L"One block per lap of a full tank: window green, current lap yellow",true},
     {L"ShowOneShorter",L"One lap shorter",L"Most fuel per lap for one lap less",true},
-    {L"ShowTarget",L"Target",L"Most fuel per lap that still reaches the latest stop, or the finish; outside races, the laps the fuel lasts at the average",true},
+    {L"ShowTarget",L"Target",L"Most fuel per lap to the latest stop or the finish",true},
     {L"ShowOneLonger",L"One lap longer",L"Most fuel per lap for one lap more",true},
     {L"ShowTwoLonger",L"Two laps longer",L"Most fuel per lap for two laps more",false},
-    {L"ShowLeaderDistance",L"Leader projected race distance",L"Total leader laps at time expiry, with two decimals; at the finish for lap-limited races. No future stops assumed.",false},
-    {L"ShowFinalLapTime",L"Time left at leader's final lap",L"Race clock when the current overall leader is projected to start the final lap. No future stops assumed.",false},
-    {L"ShowPitExit",L"Pit exit",L"Class position and the car ahead if you box now: pit lane loss plus the service set in the pit menu",false},
+    {L"ShowLeaderDistance",L"Leader projected race distance",L"The leader's laps when time runs out; no stops still to come assumed",false},
+    {L"ShowFinalLapTime",L"Time left at leader's final lap",L"Race clock as the overall leader starts the final lap",false},
+    {L"ShowPitExit",L"Pit exit",L"Your class position and the car ahead if you box now",false},
     // Switched in the expanded Target row: on each target row, the fuel to add when you stop on that lap.
     {L"ShowTargetRefuel",L"Fuel to add at the stop",L"For each target: stopping a lap later leaves a lap less to fuel for",true},
     // The forecast counts no stops still to come: before the leader's, the race may run a lap shorter.
-    {L"ShowOneLapShorter",L"One lap shorter",L"Fuel to add if the race runs a lap shorter than forecast, as when the leader still has to stop",true},
-    {L"ShowOwnLaps",L"Your laps at finish",L"The lap you finish on, and in orange how many fewer than the leader when you are lapped; refuel counts these laps",false},
+    {L"ShowOneLapShorter",L"One lap shorter",L"Fuel to add if the race runs a lap shorter",true},
+    {L"ShowOwnLaps",L"Your laps at finish",L"The lap you finish on; in orange, laps fewer than the leader",false},
     // Switched in the expanded leader-laps and own-laps rows, for both: P1 of your class instead of overall.
     {L"LeaderOfYourClass",L"Leader of your class",L"Leader laps and laps fewer than the leader count from P1 of your class",false}};
 static_assert(std::size(FuelModules)==FuelModuleCount);
@@ -3728,6 +3728,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
     else if(SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData,0,nullptr,&data))) { app.config=std::wstring(data)+L"\\RaceMate"; CoTaskMemFree(data); CreateDirectoryW(app.config.c_str(),nullptr); app.config+=L"\\settings.ini"; }
     else { MessageBoxW(nullptr,L"Could not open the configuration folder.",L"RaceMate",MB_OK|MB_ICONERROR); if(mutex) CloseHandle(mutex); return 1; }
     Load();
+    // Every layout's group starts open: the overlays are the first thing on the page.
+    for(const auto& l:app.layouts) app.openLayoutGroups.push_back(l.id);
     if(diagnostics) {
         // One instance per kind with known settings, as the checks expect.
         for(auto it=app.overlays.begin();it!=app.overlays.end();) it=it->number>1?app.overlays.erase(it):std::next(it);

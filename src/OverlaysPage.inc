@@ -3,21 +3,27 @@ class OverlaysPage : public PageWindow {
 public:
     OverlaysPage() : PageWindow(ui.heading,ui.text) {}
 private:
-    enum class Key { None, Instance, Add, Move, Hide, PauseObs, Reset, Export, Layout, AddLayout, ImportLayout };
+    enum class Key { None, Instance, Add, Move, Reset, Export, Layout, AddLayout, ImportLayout };
     static constexpr int ListId=100, LayoutNameId=220, LayoutConditionId=221, LayoutSessionId=222;
 
     void OnCreate() override {
         list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont());
         editors_.Attach(list_,Instance(),TextFont());
-        // Layouts start folded; the ones opened stay open while RaceMate runs.
+        // Layouts start open; the ones closed stay closed while RaceMate runs.
         Refresh();
     }
     void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
 
+    // Only what differs from a new overlay: the defaults need no reading.
     static std::wstring Summary(const Overlay& o) {
-        std::wstring text=std::to_wstring(o.place.scale)+L" %  ·  opacity "+std::to_wstring(o.place.opacity)+L" %  ·  "+OverlayCorners[CornerIndex(o.place)]+L"  ·  "+std::to_wstring(o.place.rate)+L" Hz";
-        if(o.place.rounded) text+=L"  ·  rounded corners";
-        if(o.place.backgroundOnly) text+=L"  ·  background opacity only";
+        std::wstring text;
+        auto add=[&](const std::wstring& part) { text+=(text.empty()?L"":L"  ·  ")+part; };
+        if(o.place.scale!=100) add(std::to_wstring(o.place.scale)+L" %");
+        if(o.place.opacity!=90) add(L"opacity "+std::to_wstring(o.place.opacity)+L" %");
+        if(o.place.backgroundOnly) add(L"background only");
+        if(CornerIndex(o.place)) add(L"grows from "+std::wstring(OverlayCorners[CornerIndex(o.place)]));
+        if(o.place.rate!=DefaultRates[o.kind]) add(std::to_wstring(o.place.rate)+L" Hz");
+        if(o.place.rounded) add(L"rounded");
         return text;
     }
     Layout* FindLayout(int id) { for(auto& l:app.layouts) if(l.id==id) return &l; return nullptr; }
@@ -26,14 +32,13 @@ private:
         std::vector<RowList::Row> rows; keys_.clear(); overlays_.clear(); layouts_.clear();
         auto push=[&](RowList::Row row,Key key,Overlay* o=nullptr,int layout=0) { rows.push_back(std::move(row)); keys_.push_back(key); overlays_.push_back(o); layouts_.push_back(layout); };
         auto header=[&](std::wstring title) { RowList::Row row; row.header=true; row.title=std::move(title); push(std::move(row),Key::None); };
-        // Setup first, so it stays in view however many overlays follow.
-        header(L"Setup");
-        auto toggle=[&](Key key,const wchar_t* title,std::wstring detail,bool on) {
-            RowList::Row row; row.title=title; row.detail=std::move(detail); row.toggle=on?1:0; push(std::move(row),key);
-        };
-        toggle(Key::Move,L"Move overlays",L"Drag overlays with the mouse.  ·  "+HotkeyText(app.hotkeys[0]),app.edit);
-        toggle(Key::Hide,L"Hide all overlays",L"On your screen; OBS keeps its output.  ·  "+HotkeyText(app.hotkeys[1]),app.hidden);
-        toggle(Key::PauseObs,L"Pause OBS output",L"Stops sending to OBS; your screen is unchanged.  ·  "+HotkeyText(app.hotkeys[5]),app.obsPaused);
+        // Moving, hiding and pausing OBS in one bar, first so it stays in view however many overlays follow.
+        {
+            RowList::Row bar; bar.title=L"All overlays"; bar.choiceFlags=true; bar.choices={L"Move",L"Hide",L"Pause OBS"};
+            bar.choice=(app.edit?1:0)|(app.hidden?2:0)|(app.obsPaused?4:0);
+            bar.detail=app.edit?L"Drag them with the mouse":(app.hidden?L"Hidden on your screen; OBS keeps its output":(app.obsPaused?L"OBS gets nothing; your screen is unchanged":L"Shortcuts: "+HotkeyText(app.hotkeys[0])+L", "+HotkeyText(app.hotkeys[1])+L", "+HotkeyText(app.hotkeys[5])));
+            push(std::move(bar),Key::Move);
+        }
         header(L"Layouts");
         for(const auto& l:app.layouts) {
             const bool open=std::find(app.openLayoutGroups.begin(),app.openLayoutGroups.end(),l.id)!=app.openLayoutGroups.end();
@@ -52,7 +57,8 @@ private:
                 if(!o.customName.empty()) child.detail=std::wstring(Titles[o.kind])+L"  ·  "+child.detail;
                 // The switch is your screen; the pill says where it appears, OBS being set on its page.
                 child.toggle=o.place.enabled?1:0; child.button=L"Settings";
-                child.pill=o.place.enabled && o.place.spout?L"Screen + OBS":(o.place.spout?L"OBS":(o.place.enabled?L"Screen":L""));
+                // The switch is your screen; OBS, set on its page, shows as a pill.
+                child.pill=o.place.spout?(o.place.enabled?L"Screen + OBS":L"OBS"):L""; child.pillTone=RowList::Tone::Accent;
                 // Size, opacity, OBS and the rest are on its page, under Window.
                 child.iconButtons={o.number>1?Glyph::Remove:wchar_t{0}};
                 push(std::move(child),Key::Instance,&o,l.id);
@@ -201,9 +207,13 @@ private:
             break;
         case Key::AddLayout: if(pressed) AddLayoutChoice(); break;
         case Key::Add: if(pressed) Add(layout); break;
-        case Key::Move: if(code==RowList::kToggled && on!=app.edit) ToggleEdit(); break;
-        case Key::Hide: if(code==RowList::kToggled && on!=app.hidden) ToggleHidden(); break;
-        case Key::PauseObs: if(code==RowList::kToggled && on!=app.obsPaused) ToggleObsPaused(); break;
+        case Key::Move:
+            if(code==RowList::kChoice) {
+                const int picked=list_.NotifiedChoice();
+                if(picked==0) ToggleEdit(); else if(picked==1) ToggleHidden(); else ToggleObsPaused();
+                Refresh();
+            }
+            break;
         case Key::Reset: if(pressed) { Save(); app.layout=layout; ResetPositions(); } break;
         case Key::Export: if(pressed) Export(layout); break;
         case Key::ImportLayout: if(pressed) Import(); break;

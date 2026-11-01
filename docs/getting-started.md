@@ -33,9 +33,9 @@ Keep the executable in a stable location if you enable **Start with Windows**. I
 
 1. Click **Preview** in the title row of the layout you want to arrange. Its yellow **Preview** badge identifies sample data; each layout can be previewed independently.
 2. Enable the overlay types you want to use. **Track Map** is disabled by default.
-3. Turn on **Move overlays**. Drag the overlays into position; a dashed yellow border identifies Move mode.
-4. Click **Settings** on an overlay's row. Under **Window** at the top of its page, adjust **Size**, **Opacity**, **Fixed corner**, **Updates** and **OBS output**.
-5. Further down the same page, choose its columns, modules, header and footer. A red border identifies the overlay whose page is open.
+3. Click **Move** under **All overlays**. Drag the overlays into position; a dashed yellow border identifies Move mode.
+4. Click **Settings** on an overlay's row. **Shows on** at the top sends it to your screen, to OBS or both; its columns, modules, header and footer follow. A red border identifies the overlay whose page is open.
+5. Under **Window** at the end of the page, adjust **Size**, **Opacity**, **Fixed corner** and **Updates**.
 6. Click **Done**, or toggle Move mode off, when placement is complete.
 7. Click **Stop preview** on that layout when finished. Live telemetry continues during previews, and live data takes priority when the layout's condition matches.
 

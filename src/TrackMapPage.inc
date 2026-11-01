@@ -11,14 +11,14 @@ private:
         auto push=[&](RowList::Row row,Key key,int item=-1) { rows.push_back(std::move(row)); keys_.push_back(key); items_.push_back(item); };
         auto heading=[&](const wchar_t* title) { RowList::Row row; row.header=true; row.title=title; push(std::move(row),Info); };
         auto toggle=[&](const wchar_t* title,const wchar_t* detail,bool on,Key key) { RowList::Row row; row.title=title; row.detail=detail; row.toggle=on?1:0; push(std::move(row),key); };
-        heading(L"Window");
-        for(auto& [item,row]:WindowRows(o_,expanded_==WindowKey)) push(std::move(row),WindowKey,item);
+        // Where it shows first; its window last, under what it shows.
+        push(ShowsRow(o_),WindowKey,WindowShows);
         heading(L"Display");
         {
             // Circle and line need no SVG: for any track, and the line for wide monitors.
             static constexpr const wchar_t* names[]={L"Map",L"Circle",L"Line"};
             static constexpr const wchar_t* details[]={L"The official iRacing track drawing",L"Cars on a ring by lap position, 0 % at the top, clockwise; no download",L"Cars on a bar by lap position, for 21:9 and 32:9 monitors; no download"};
-            RowList::Row layout; layout.title=names[o_.map.layout]; layout.detail=details[o_.map.layout]; layout.button=L"Choose..."; push(std::move(layout),LayoutKey);
+            RowList::Row layout; layout.title=L"Drawing"; layout.detail=details[o_.map.layout]; layout.choices={std::begin(names),std::end(names)}; layout.choice=o_.map.layout; push(std::move(layout),LayoutKey);
         }
         toggle(L"White track",L"White with a black edge, readable over any background. Off: grey, as the panel.",o_.map.whiteTrack,WhiteTrackKey);
         toggle(L"Background and frame",L"Off: transparent map and cars only. Hides the frame, captions, header and footer; their settings are kept.",o_.map.background,Background);
@@ -31,7 +31,7 @@ private:
         toggle(L"Direction arrow",L"An arrow beside the track just past the line, in the driving direction, where there is room.",o_.map.directionArrow,DirectionKey);
         {
             static constexpr const wchar_t* texts[]={L"Car numbers",L"Position in class",L"Overall position"};
-            RowList::Row row; row.title=L"Text in markers"; row.toggle=o_.map.numbers?1:0; row.button=L"Choose...";
+            RowList::Row row; row.title=L"Text in markers"; row.toggle=o_.map.numbers?1:0; row.button=MenuButton(texts[o_.map.markerText]);
             row.detail=std::wstring(texts[o_.map.markerText])+L"  \u00B7  off for smaller dots. Cars use their class color; the car you drive or watch is yellow with a white ring.";
             push(std::move(row),Numbers);
         }
@@ -44,7 +44,7 @@ private:
         heading(L"Sectors and mini-sectors");
         toggle(L"Show sectors",L"Colour the full track width for your car (or the car you watch). Dark split marks and sector labels.",o_.map.sectors,SectorsKey);
         if(o_.map.sectors) {
-            RowList::Row row; row.title=L"Sector detail"; row.detail=o_.map.sectorParts==3?L"Three equal-distance mini-sectors per SDK sector":L"SDK sectors"; row.button=L"Choose..."; push(std::move(row),SectorPartsKey);
+            RowList::Row row; row.title=L"Sector detail"; row.detail=o_.map.sectorParts==3?L"Three equal-distance mini-sectors per sector":L"iRacing's sectors"; row.choices={L"Sectors",L"Mini-sectors"}; row.choice=o_.map.sectorParts==3?1:0; push(std::move(row),SectorPartsKey);
             toggle(L"Split marks",L"Dark lines across the road where sectors (and mini-sectors) begin.",o_.map.sectorMarks,SectorMarksKey);
             toggle(L"Sector labels",L"S1, S2 \u2026 beside the middle of each sector, always next to the road, never on it or on another part of the circuit.",o_.map.sectorLabels,SectorLabelsKey);
             RowList::Row note; note.title=L"Sector colours"; note.detail=L"Green: personal best. Purple: fastest observed in this session within the car's class. Yellow: slower, or with pit lane, off-track or caution (never a record). Grey: not yet completed this lap. A new S1 clears the previous lap's later splits. Estimated timing; no all-time history."; push(std::move(note),Info);
@@ -87,6 +87,8 @@ private:
         }
         RowList::Row cache; cache.title=L"Map cache"; cache.detail=TrackMapCache().wstring(); cache.button=L"Open folder"; push(std::move(cache),Cache);
         RowList::Row note; note.title=L"Car positions"; note.detail=L"Start/finish and direction come from the official SVG; where iRacing starts the lap is measured once per layout, as above. Lap percentages follow the drawing's path length. SVGs download once per layout while this overlay is enabled."; push(std::move(note),Info);
+        heading(L"Window");
+        for(auto& [item,row]:WindowRows(o_,expanded_==WindowKey)) push(std::move(row),WindowKey,item);
         list_.SetRows(std::move(rows));
     }
     void BuildEditors() {
@@ -118,8 +120,14 @@ private:
         const int index=list_.NotifiedRow(); if(index<0 || static_cast<size_t>(index)>=keys_.size()) return true;
         const Key key=keys_[index]; const bool on=list_.Rows()[index].toggle==1;
         if(key==WindowKey) {
-            if(items_[index]!=WindowName) { WindowCommand(o_,items_[index],code,on,[this](const std::vector<std::wstring>& items,int checked){ return ChooseFromMenu(items,checked); }); Refresh(); }
+            if(items_[index]!=WindowName) { WindowCommand(o_,items_[index],code,on,code==RowList::kChoice?list_.NotifiedChoice():-1,[this](const std::vector<std::wstring>& items,int checked){ return ChooseFromMenu(items,checked); }); Refresh(); }
             else if(code==RowList::kIconButton || code==RowList::kActivated) { expanded_=expanded_==WindowKey?Info:WindowKey; Refresh(); BuildEditors(); }
+            return true;
+        }
+        if(code==RowList::kChoice) {
+            const int picked=list_.NotifiedChoice();
+            if(key==LayoutKey && picked!=o_.map.layout) { o_.map.layout=picked; Fit(o_); SettingChanged(); Refresh(); }
+            if(key==SectorPartsKey) { o_.map.sectorParts=picked?3:1; SettingChanged(); Refresh(); }
             return true;
         }
         if(code==RowList::kToggled) {
@@ -147,7 +155,6 @@ private:
             SettingChanged(); Refresh(); return true;
         }
         if(code==RowList::kButton || code==RowList::kActivated || code==RowList::kIconButton) {
-            if(key==SectorPartsKey) { const int choice=ChooseFromMenu({L"SDK sectors",L"3 mini-sectors per sector"},o_.map.sectorParts==3?1:0); if(choice>=0) { o_.map.sectorParts=choice?3:1; SettingChanged(); Refresh(); } }
             if(key==Header || key==Footer || key==LabelSize) { expanded_=expanded_==key?Info:key; Refresh(); BuildEditors(); if(key==LabelSize && expanded_==LabelSize) list_.ScrollIntoView(index); }
             if(key==Retry) { RetryTrackMap(true); UpdateOverlays(); }
             if(key==NorthKey) { ForgetNorth(); ++trackMap.revision; UpdateOverlays(); Refresh(); }
@@ -155,10 +162,6 @@ private:
             if(key==Numbers) {
                 const int choice=ChooseFromMenu({L"Car numbers",L"Position in class",L"Overall position"},o_.map.markerText);
                 if(choice>=0 && choice!=o_.map.markerText) { o_.map.markerText=choice; SettingChanged(); Refresh(); }
-            }
-            if(key==LayoutKey) {
-                const int choice=ChooseFromMenu({L"Map",L"Circle",L"Line"},o_.map.layout);
-                if(choice>=0 && choice!=o_.map.layout) { o_.map.layout=choice; Fit(o_); SettingChanged(); Refresh(); }
             }
             if(key==Cache) { std::error_code error; std::filesystem::create_directories(TrackMapCache(),error); if(!error) ShellExecuteW(Handle(),L"open",TrackMapCache().c_str(),nullptr,nullptr,SW_SHOWNORMAL); }
         }

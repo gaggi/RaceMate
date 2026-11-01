@@ -46,8 +46,9 @@ private:
                 push(std::move(row),Key::Band,id);
             }
         };
-        header(L"Window");
-        for(auto& [item,row]:WindowRows(o_,expanded_==NameRow)) push(std::move(row),Key::Window,item);
+        // Where it shows first; its window last, under what it shows.
+        push(ShowsRow(o_),Key::Window,WindowShows);
+        auto window=[&] { header(L"Window"); for(auto& [item,row]:WindowRows(o_,expanded_==NameRow)) push(std::move(row),Key::Window,item); };
         if(o_.kind==AdjustmentsKind) {
             const auto& a=o_.adjust;
             header(L"Where it shows");
@@ -55,7 +56,7 @@ private:
             place.detail=a.replace<0?L"Placed and sized like the other overlays; hidden until you change a dial."
                 :L"Every shown "+std::wstring(Titles[a.replace])+L" shows it instead for a moment, at its size, on the dial's color.";
             push(std::move(place),Key::AdjustPlace);
-            RowList::Row time; time.title=L"For "+Format(a.tenths/10.0,a.tenths%10?1:0)+L" s"; time.button=L"Choose...";
+            RowList::Row time; time.title=L"Shows for"; time.choices={L"1 s",L"2 s",L"3 s",L"4 s",L"5 s"}; time.choice=std::clamp(a.tenths/10-1,0,4);
             time.detail=L"After your last change; another change starts it again.";
             push(std::move(time),Key::AdjustTime);
             RowList::Row sample; sample.title=L"Sample"; sample.button=L"Show";
@@ -77,21 +78,22 @@ private:
                 group.detail=std::wstring(members[g])+L"; in "+(g==0?L"red":g==1?L"yellow":g==2?L"violet":g==3?L"teal":L"blue")+L". Each car has only some.";
                 push(std::move(group),Key::AdjustGroup,g);
             }
-            list_.SetRows(std::move(rows)); return;
+            window(); list_.SetRows(std::move(rows)); return;
         }
         if(o_.kind==TrafficKind) {
             const auto& t=o_.traffic;
-            header(L"Layout");
+            header(L"Style");
             RowList::Row background; background.title=L"Background and frame"; background.toggle=t.background?1:0;
             background.detail=L"Off: transparent, only the boxes over the game.";
             push(std::move(background),Key::TrafficBackground);
-            RowList::Row count; count.title=t.cars==1?L"1 car":std::to_wstring(t.cars)+L" cars"; count.button=L"Choose...";
+            RowList::Row count; count.title=L"Cars"; count.choices={L"1",L"2",L"3"}; count.choice=t.cars-1;
             count.detail=L"The closest ones, one box each.";
             push(std::move(count),Key::TrafficCars);
             auto rounded=RoundedRow(o_); rounded.muted=!t.background; rounded.toggleEnabled=t.background; push(std::move(rounded),Key::Rounded);
             header(L"When it shows");
-            RowList::Row gap; gap.title=L"Within "+std::to_wstring(t.gap)+L" s behind"; gap.button=L"Choose...";
-            gap.detail=L"While you drive and a car is this close behind you, by its gap as in the Relative.";
+            RowList::Row gap; gap.title=L"Gap behind"; gap.choices={L"1 s",L"2 s",L"3 s",L"5 s"};
+            gap.choice=static_cast<int>(std::find(std::begin(TrafficGaps),std::end(TrafficGaps),t.gap)-std::begin(TrafficGaps));
+            gap.detail=L"Shows while a car is this close behind you";
             push(std::move(gap),Key::TrafficGapKey);
             RowList::Row faster; faster.title=L"Faster classes only"; faster.toggle=t.fasterOnly?1:0;
             faster.detail=L"Their estimated lap at least 2 % quicker than your class's. Off: every car behind you.";
@@ -99,21 +101,21 @@ private:
             header(L"Colors");
             info(L"Box",L"The car's class colour; it pulses within 1.5 s",L"Class");
             info(L"Bar",L"Fills as the car closes in, from green to red",L"Green to red");
-            list_.SetRows(std::move(rows)); return;
+            window(); list_.SetRows(std::move(rows)); return;
         }
         if(o_.kind==RadarKind) {
             const auto& r=o_.radar;
-            header(L"Layout");
+            header(L"Style");
             RowList::Row background; background.title=L"Background and frame"; background.toggle=r.background?1:0;
             background.detail=L"Off: transparent, only the cars, guides and distances over the game.";
             push(std::move(background),Key::RadarBackground);
-            RowList::Row range; range.title=L"Range"; range.button=L"Choose...";
-            range.detail=std::to_wstring(r.range)+L" m ahead and behind; guides every "+Format(r.range/4.0,r.range%4?1:0)+L" m";
+            RowList::Row range; range.title=L"Range"; range.choices={L"10 m",L"20 m",L"30 m",L"40 m"}; range.choice=r.range/10-1;
+            range.detail=L"Ahead and behind; guides every "+Format(r.range/4.0,r.range%4?1:0)+L" m";
             push(std::move(range),Key::RadarRange);
             auto rounded=RoundedRow(o_); rounded.muted=!r.background; rounded.toggleEnabled=r.background; push(std::move(rounded),Key::Rounded);
             header(L"When it shows");
-            RowList::Row shows; shows.title=r.always?L"Always while you drive":L"With cars near"; shows.button=L"Choose...";
-            shows.detail=r.always?L"While you drive your own car, also without cars in range":L"While you drive and a car is within range, until 2 s after the last one left it";
+            RowList::Row shows; shows.title=L"While you drive"; shows.choices={L"Cars near",L"Always"}; shows.choice=r.always?1:0;
+            shows.detail=r.always?L"Also without cars in range":L"Until 2 s after the last car left the range";
             push(std::move(shows),Key::RadarShows);
             header(L"On the radar");
             RowList::Row distances; distances.title=L"Distances"; distances.toggle=r.distances?1:0;
@@ -123,12 +125,12 @@ private:
             header(L"Colors");
             info(L"Cars",L"In their class color; yours outlined",L"Class");
             info(L"Spotter",L"Where it reports cars beside you",L"Red",RowList::Tone::Warning);
-            list_.SetRows(std::move(rows)); return;
+            window(); list_.SetRows(std::move(rows)); return;
         }
         if(o_.kind==SideWarningKind) {
-            header(L"Layout");
-            RowList::Row apart; apart.title=L"Distance apart"; apart.button=L"Choose...";
-            apart.detail=std::to_wstring(o_.sideApart)+(o_.sideApart==100?L" % of the screen width: at its edges":L" % of the screen width, centred on it");
+            header(L"Style");
+            RowList::Row apart; apart.title=L"Distance apart"; apart.button=MenuButton(std::to_wstring(o_.sideApart)+L" %");
+            apart.detail=o_.sideApart==100?L"Of the screen width: at its edges":L"Of the screen width, centred on it";
             push(std::move(apart),Key::SideApart);
             push(RoundedRow(o_),Key::Rounded);
             info(L"Placement",L"Drag either bar up or down, or onto another monitor; they stay centred on the one under the mouse. Size and opacity under Window.");
@@ -142,10 +144,10 @@ private:
             info(L"One car beside you",L"The whole bar",L"Red",RowList::Tone::Warning);
             info(L"Two cars on one side",L"Two stripes",L"Red",RowList::Tone::Warning);
             info(L"Where the car is",L"The block on the bar",L"Amber");
-            list_.SetRows(std::move(rows)); return;
+            window(); list_.SetRows(std::move(rows)); return;
         }
         if(o_.kind==PitLimiterKind) {
-            header(L"Layout");
+            header(L"Style");
             push(RoundedRow(o_),Key::Rounded);
             bands();
             header(L"When it shows");
@@ -155,7 +157,7 @@ private:
             RowList::Row strip; strip.title=L"Pit lane progress"; strip.toggle=o_.pitStrip?1:0;
             strip.detail=L"Entry, your box and exit with your car on the way: where to brake for the speed limit and for your box, and when the limiter can go off.";
             push(std::move(strip),Key::PitStrip);
-            RowList::Row countdown; countdown.title=o_.pitSeconds?L"Countdown in seconds":L"Countdown in metres"; countdown.button=L"Choose...";
+            RowList::Row countdown; countdown.title=L"Countdown"; countdown.choices={L"Metres",L"Seconds"}; countdown.choice=o_.pitSeconds?1:0;
             countdown.detail=o_.pitSeconds?L"To the brake points, your box and the exit at your current speed, in tenths of a second":L"To the brake points, your box and the exit along the lap";
             countdown.muted=!o_.pitStrip; push(std::move(countdown),Key::Countdown);
             RowList::Row setup; setup.title=L"Setup changes"; setup.toggle=o_.setupChanges?1:0;
@@ -166,10 +168,10 @@ private:
             info(L"Limiter off",L"PIT LIMITER NOT ACTIVE",L"Red",RowList::Tone::Warning);
             info(L"Limiter on after pit exit",L"TURN OFF PIT LIMITER",L"Flashing red",RowList::Tone::Warning);
             info(L"Status unknown",L"iRacing doesn't report the limiter",L"Gray");
-            list_.SetRows(std::move(rows)); return;
+            window(); list_.SetRows(std::move(rows)); return;
         }
-        header(L"Layout");
-        RowList::Row layout; layout.title=Strip()?L"Strip":L"Panel"; layout.button=L"Choose...";
+        header(L"Style");
+        RowList::Row layout; layout.title=L"Arrangement"; layout.choices={L"Panel",L"Strip"}; layout.choice=Strip()?1:0;
         layout.detail=!Strip()?L"The modules below, one under the other"
             :(Fuel()?L"Tank, range, average, refuel, latest stop and targets in one line":L"Track condition, rain, temperatures and wind in one line");
         push(std::move(layout),Key::Layout);
@@ -178,7 +180,7 @@ private:
             RowList::Row row; row.title=Modules()[id].title; row.detail=Fuel() && id==FiguresModule?FiguresDetail():Modules()[id].detail;
             if(Fuel() && id==HistoryModule && o_.fuel.display[CautionMarks]) row.detail+=L"; caution laps marked";
             if(Fuel() && id==TargetRow && o_.fuel.display[TargetRefuel]) row.detail=L"Most fuel per lap to reach the latest stop, and the fuel to add there; to the finish without a stop";
-            if(Fuel() && (id==LeaderDistanceModule || id==OwnLapsModule) && o_.fuel.display[ClassLeaderOption]) row.detail+=id==OwnLapsModule?L"; leader: P1 of your class":L" Leader: P1 of your class.";
+            if(Fuel() && (id==LeaderDistanceModule || id==OwnLapsModule) && o_.fuel.display[ClassLeaderOption]) row.detail+=L"; leader: P1 of your class";
             if(!Fuel() && id==TemperatureModule) row.detail=o_.weather.display[TemperatureHumidity]?L"Track, air and humidity":L"Track and air";
             if(!Fuel() && id==TemperatureHistoryModule) {
                 const auto& d=o_.weather.display;
@@ -204,7 +206,7 @@ private:
             header(L"Learning");
             info(L"Which laps count",L"Whole laps at racing speed: caution laps, pit and out laps, refuels and the first partial lap never count. The 10-lap average drives range, pit window, refuel and targets.");
         }
-        list_.SetRows(std::move(rows));
+        window(); list_.SetRows(std::move(rows));
     }
     int ExpandedRow() const {
         for(size_t i=0;i<keys_.size();++i) {
@@ -264,11 +266,11 @@ private:
         const bool on=list_.Rows()[row].toggle==1, pressed=code==RowList::kButton || code==RowList::kActivated;
         const int icon=code==RowList::kIconButton?list_.NotifiedIconButton():-1;
         const wchar_t glyph=icon>=0 && icon<static_cast<int>(list_.Rows()[row].iconButtons.size())?list_.Rows()[row].iconButtons[icon]:0;
-        const int element=ids_[row];
+        const int element=ids_[row], picked=code==RowList::kChoice?list_.NotifiedChoice():-1;
         switch(keys_[row]) {
         case Key::Window:
             if(element==WindowName) { if(glyph==Glyph::Expand || glyph==Glyph::Collapse || code==RowList::kActivated) Expand(NameRow); }
-            else { WindowCommand(o_,element,code,on,[this](const std::vector<std::wstring>& items,int checked){ return ChooseFromMenu(items,checked); }); Refresh(); }
+            else { WindowCommand(o_,element,code,on,picked,[this](const std::vector<std::wstring>& items,int checked){ return ChooseFromMenu(items,checked); }); Refresh(); }
             break;
         case Key::Module:
             if(code==RowList::kMoved) { if(MoveToPlace(Order(),element,ids_[list_.DropRow()])) { Refresh(); BuildEditors(); } }
@@ -288,7 +290,7 @@ private:
         case Key::AdjustGroup: if(code==RowList::kToggled) { o_.adjust.groups[element]=on; Changed(); } break;
         case Key::AdjustSample: if(pressed) { app.now=GetTickCount64(); app.adjustSample=app.now; Changed(); } break;
         case Key::AdjustTime:
-            if(pressed) { const int choice=ChooseFromMenu({L"1 s",L"2 s",L"3 s",L"4 s",L"5 s"},o_.adjust.tenths/10-1); if(choice>=0) { o_.adjust.tenths=10*(choice+1); Changed(); } }
+            if(code==RowList::kChoice) { o_.adjust.tenths=10*(picked+1); Changed(); }
             break;
         case Key::AdjustPlace:
             if(pressed) {
@@ -301,34 +303,31 @@ private:
         case Key::TrafficBackground: if(code==RowList::kToggled) { o_.traffic.background=on; Fit(o_); Changed(); } break;
         case Key::TrafficFaster: if(code==RowList::kToggled) { o_.traffic.fasterOnly=on; Changed(); } break;
         case Key::TrafficCars:
-            if(pressed) { const int choice=ChooseFromMenu({L"1 car",L"2 cars",L"3 cars"},o_.traffic.cars-1); if(choice>=0) { o_.traffic.cars=choice+1; Fit(o_); Changed(); } }
+            if(code==RowList::kChoice) { o_.traffic.cars=picked+1; Fit(o_); Changed(); }
             break;
         case Key::TrafficGapKey:
-            if(pressed) {
-                const int current=static_cast<int>(std::find(std::begin(TrafficGaps),std::end(TrafficGaps),o_.traffic.gap)-std::begin(TrafficGaps));
-                const int choice=ChooseFromMenu({L"1 s",L"2 s",L"3 s",L"5 s"},current); if(choice>=0) { o_.traffic.gap=TrafficGaps[choice]; Changed(); }
-            }
+            if(code==RowList::kChoice) { o_.traffic.gap=TrafficGaps[picked]; Changed(); }
             break;
         case Key::RadarBackground: if(code==RowList::kToggled) { o_.radar.background=on; Fit(o_); Changed(); } break;
         case Key::RadarDistances: if(code==RowList::kToggled) { o_.radar.distances=on; Changed(); } break;
         case Key::RadarRange:
-            if(pressed) { const int choice=ChooseFromMenu({L"10 m",L"20 m",L"30 m",L"40 m"},o_.radar.range/10-1); if(choice>=0) { o_.radar.range=10*(choice+1); Changed(); } }
+            if(code==RowList::kChoice) { o_.radar.range=10*(picked+1); Changed(); }
             break;
         case Key::RadarShows:
-            if(pressed) { const int choice=ChooseFromMenu({L"With cars near",L"Always while you drive"},o_.radar.always?1:0); if(choice>=0) { o_.radar.always=choice==1; Changed(); } }
+            if(code==RowList::kChoice) { o_.radar.always=picked==1; Changed(); }
             break;
         case Key::SideApart:
-            if(pressed) {
+            if(code==RowList::kButton) {
                 std::vector<std::wstring> items; for(int percent=100;percent>=20;percent-=10) items.push_back(std::to_wstring(percent)+(percent==100?L" %  ·  at the screen edges":L" %"));
                 const int choice=ChooseFromMenu(items,(100-o_.sideApart)/10);
                 if(choice>=0) { o_.sideApart=100-10*choice; Fit(o_); Changed(); }
             }
             break;
         case Key::Countdown:
-            if(pressed) { const int choice=ChooseFromMenu({L"Metres",L"Seconds"},o_.pitSeconds?1:0); if(choice>=0) { o_.pitSeconds=choice==1; Changed(); } }
+            if(code==RowList::kChoice) { o_.pitSeconds=picked==1; Changed(); }
             break;
         case Key::Layout:
-            if(pressed) { const int choice=ChooseFromMenu({L"Panel",L"Strip"},Strip()?1:0); if(choice>=0) { Strip()=choice==1; Changed(); } }
+            if(code==RowList::kChoice) { Strip()=picked==1; Changed(); }
             break;
         default: break;
         }

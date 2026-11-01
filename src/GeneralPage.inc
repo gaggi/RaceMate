@@ -56,24 +56,24 @@ private:
             RowList::Row row; row.title=title; row.detail=std::move(detail); row.toggle=on?1:0; push(std::move(row),key);
         };
         header(L"Startup");
-        toggle(Key::StartWithWindows,L"Start with Windows",startupError_.empty()?L"Starts RaceMate when you sign in. No administrator rights needed.":startupError_,app.startWithWindows);
+        toggle(Key::StartWithWindows,L"Start with Windows",startupError_.empty()?L"No administrator rights needed":startupError_,app.startWithWindows);
         if(!startupError_.empty()) { rows.back().pill=L"Not changed"; rows.back().pillTone=RowList::Tone::Warning; }
-        toggle(Key::StartMinimized,L"Start minimized",L"Starts in the tray; enabled overlays work as usual.",app.startMinimized);
+        toggle(Key::StartMinimized,L"Start minimized",L"In the tray; overlays work as usual",app.startMinimized);
         header(L"Overlays");
-        toggle(Key::TitleBar,L"Headers on all overlays",L"Switches the header of every overlay at once; each overlay's page also sets its own header and footer.",app.showTitleBar);
-        toggle(Key::SnapToGrid,L"Snap to grid while moving",L"Every "+std::to_wstring(app.gridSize)+L" px from the corner of the screen. Hold Alt while dragging to place freely.",app.snapToGrid);
+        toggle(Key::TitleBar,L"Headers on all overlays",L"Every overlay at once; each page also has its own",app.showTitleBar);
+        toggle(Key::SnapToGrid,L"Snap to grid while moving",L"Every "+std::to_wstring(app.gridSize)+L" px; hold Alt to place freely",app.snapToGrid);
         rows.back().iconButtons={expanded_==GridRow?Glyph::Collapse:Glyph::Expand}; rows.back().expandHeight=expanded_==GridRow?48:0;
-        toggle(Key::SnapToOverlays,L"Snap to other overlays",L"Edges and centre lines line up with other overlays and the screen; a magenta line shows where.",app.snapToOverlays);
+        toggle(Key::SnapToOverlays,L"Snap to other overlays",L"Edges and centre lines, shown by a magenta line",app.snapToOverlays);
         header(L"Fuel strategy");
-        RowList::Row reserve; reserve.title=L"Reserve at the finish"; reserve.button=L"Choose...";
-        reserve.detail=ReserveText()+L"  \u00B7  Kept in refuel, needed fuel, the pit window and the targets to the finish; spare fuel counts above it.";
+        RowList::Row reserve; reserve.title=L"Reserve at the finish"; reserve.button=MenuButton(ReserveText());
+        reserve.detail=L"Kept in refuel, needed fuel and the pit window";
         push(std::move(reserve),Key::FuelReserve);
         header(L"Opponent fuel estimate");
         RowList::Row fuel; fuel.title=L"Additional laps with fuel saving";
-        fuel.detail=L"+"+std::to_wstring(app.opponentFuelExtraLaps)+(app.opponentFuelExtraLaps==1?L" lap":L" laps")+L" for yellow SAVE. Green END uses your normal full-tank range. Shared by Relative and Standings."; fuel.button=L"Choose...";
+        fuel.detail=L"Yellow SAVE in the Relative and Standings; green END uses your full-tank range"; fuel.button=MenuButton(L"+"+std::to_wstring(app.opponentFuelExtraLaps)+(app.opponentFuelExtraLaps==1?L" lap":L" laps"));
         push(std::move(fuel),Key::OpponentFuel);
         RowList::Row assumption; assumption.title=L"Full tank assumed at the last observed stop";
-        assumption.detail=L"Uses your class, tank capacity, learned consumption and pace. Blank without enough data; opponents' actual fuel is unknown.";
+        assumption.detail=L"With your class's tank, consumption and pace; blank without enough data";
         push(std::move(assumption),Key::None);
         header(L"Pit stop estimate  \u00B7  where you rejoin if you box now");
         {

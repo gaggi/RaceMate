@@ -93,18 +93,13 @@ int RunDiagnostics() {
     MONITORINFO monitor{sizeof(monitor)};
     GetMonitorInfoW(MonitorFromPoint({0,0},MONITOR_DEFAULTTOPRIMARY),&monitor);
     std::ofstream report("build/qa/controls.txt");
-    // The page as built at startup: its layouts closed; opening one lists one row per overlay, each with its own title.
+    // The page as built at startup: its layouts open, one row per overlay, each with its own title.
     bool startupOk=false;
     if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) {
         auto* rows=reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA));
         auto titles=[&]{ std::vector<std::wstring> found; for(const auto& row:rows->Rows()) if(row.button==L"Settings" && row.toggle>=0) found.push_back(row.title); return found; };
-        int layout=-1; for(int i=0;i<static_cast<int>(rows->Rows().size()) && layout<0;++i) if(ActiveLayout() && rows->Rows()[i].title==ActiveLayout()->name && rows->Rows()[i].button==L"Preview") layout=i;
-        startupOk=layout>=0 && titles().empty();
-        if(startupOk) {
-            rows->PressIconButton(layout,0); const auto shown=titles();
-            startupOk=shown.size()>=OverlayCount; for(int kind=0;kind<OverlayCount && startupOk;++kind) startupOk=shown[kind]==Titles[kind];
-            rows->PressIconButton(layout,0);
-        }
+        const auto shown=titles();
+        startupOk=shown.size()>=OverlayCount; for(int kind=0;kind<OverlayCount && startupOk;++kind) startupOk=shown[kind]==Titles[kind];
     }
     report<<"Overlays page at startup lists every overlay by its own name: "<<(startupOk?"PASS":"FAIL")<<"\n"; allOk=(startupOk) && allOk;
     app.preview=true; app.edit=false; PreviewData(0); UpdateStatus(); RefreshPage();
@@ -892,7 +887,10 @@ int RunDiagnostics() {
         // Editing an inactive profile does not activate it or affect the stream.
         SwitchLayout(second); UpdateOverlays();
         layoutOk=!car.window && stream.window==streamWindow && layoutOk;
+        // The layout list for the documentation: its groups folded, as after closing them.
+        const auto groups=app.openLayoutGroups; app.openLayoutGroups.clear();
         ShowPage(Page::Overlays); layoutOk=Export(app.main,L"build\\qa\\main-layouts.bmp") && layoutOk;
+        app.openLayoutGroups=groups;
         RemoveLayout(second);
         wchar_t left[8]{}; GetPrivateProfileStringW((L"Layout "+std::to_wstring(second)+L": Relative").c_str(),L"X",L"",left,8,app.config.c_str());
         layoutOk=app.layouts.size()==1 && app.layout==1 && !left[0] && InstanceCount(WeatherKind)==1 && First(RelativeKind).place.x==place.x && layoutOk;
@@ -1108,6 +1106,27 @@ int RunDiagnostics() {
         }
         app.frame=savedFrame; app.preview=savedPreview; paced.due=0;
         report<<"Overlay rates on every telemetry rate, with jitter and pauses, and on iRacing frames: "<<(ratesOk?"PASS":"FAIL")<<"\n"; allOk=ratesOk && allOk;
+    }
+    {
+        // Choices in a row: where an overlay shows, gap decimals, and the overlays bar's own switches.
+        bool choiceOk=true; auto& relative=First(RelativeKind); const Placement savedPlace=relative.place; const int savedDecimals=relative.table.gapDecimals;
+        auto list=[]{ const HWND handle=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr); return handle?reinterpret_cast<RowList*>(GetWindowLongPtrW(handle,GWLP_USERDATA)):nullptr; };
+        auto find=[&](const wchar_t* title){ if(auto* rows=list()) for(int i=0;i<static_cast<int>(rows->Rows().size());++i) if(rows->Rows()[i].title==title) return i; return -1; };
+        OpenOverlay(relative);
+        int shows=find(L"Shows on"); choiceOk=shows>=0 && list()->Rows()[shows].choices.size()==4 && choiceOk;
+        if(shows>=0) {
+            list()->PressChoice(shows,2); choiceOk=!relative.place.enabled && relative.place.spout && choiceOk;
+            shows=find(L"Shows on"); choiceOk=list()->Rows()[shows].choice==2 && find(L"OBS alpha")>=0 && choiceOk;
+            list()->PressChoice(shows,1); choiceOk=relative.place.enabled && !relative.place.spout && find(L"OBS alpha")<0 && choiceOk;
+        }
+        const int decimals=find(L"Gap decimals"); if(decimals>=0) { list()->PressChoice(decimals,3); choiceOk=relative.table.gapDecimals==3 && choiceOk; } else choiceOk=false;
+        const int corner=find(L"Fixed corner"); if(corner>=0) { list()->PressChoice(corner,3); choiceOk=relative.place.growLeft && relative.place.growUp && choiceOk; } else choiceOk=false;
+        relative.place=savedPlace; relative.table.gapDecimals=savedDecimals; Fit(relative); Save();
+        ShowPage(Page::Overlays);
+        const int bar=find(L"All overlays"); const bool savedEdit=app.edit;
+        if(bar>=0) { list()->PressChoice(bar,0); choiceOk=app.edit!=savedEdit && choiceOk; if(app.edit!=savedEdit) ToggleEdit(); } else choiceOk=false;
+        ShowPage(Page::Overlays);
+        report<<"Choices in rows: shows on, OBS alpha, gap decimals, fixed corner and the overlays bar: "<<(choiceOk?"PASS":"FAIL")<<"\n"; allOk=choiceOk && allOk;
     }
     {
         // Rings outside the overlay: red on the one whose page is open, dashed yellow while moving; none on the Pit Assist; square corners on request.
