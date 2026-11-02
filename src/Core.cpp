@@ -1,5 +1,6 @@
 #include <cctype>
 #include "Core.h"
+#include "CarClasses.h"
 #include "PassingTimes.h"
 #include <algorithm>
 #include <cmath>
@@ -203,6 +204,40 @@ std::string TireLabel(const Driver& driver,int compound) {
         return compound<3?dry[compound]:"";
     }
     return compound==0?"Dry":(compound==1?"Wet":"");
+}
+void TopSpeeds::Update(const Session& s, Frame& f) {
+    if(!f.connected) { Reset(); return; }
+    if(key_!=s.key || session_!=f.session || f.time<time_) { Reset(); key_=s.key; session_=f.session; }
+    const double dt=f.time-time_;
+    if(time_>=0 && dt==0) {
+        for(int i=0;i<MaxCars;++i) { f.cars[i].lapTopSpeed=cars_[i].last; f.cars[i].sessionTopSpeed=cars_[i].session; }
+        return;
+    }
+    const bool continuous=time_>=0 && dt>0 && dt<=1;
+    for(int i=0;i<MaxCars;++i) {
+        auto& t=cars_[i]; auto& car=f.cars[i];
+        const bool seen=car.surface>=0 && car.pct>=0;
+        auto reading=[&](double speed) { if(speed>=0 && speed<=MaxSpeed) { t.lap=std::max(t.lap,speed); t.session=std::max(t.session,speed); } };
+        // A gap, a jump forward or back (towing, a reset) or leaving the world: the readings start again, and this lap is not whole.
+        double delta=car.pct-t.pct; delta-=std::round(delta);
+        const bool jump=s.trackMeters>0 && (delta<-.001 || delta*s.trackMeters>MaxSpeed*dt+5);
+        if(!continuous || !seen || t.pct<0 || jump) { t.from=seen?f.time:-1; t.distance=0; t.whole=false; }
+        else if(car.speed>=0) reading(car.speed); // Your own car, measured by iRacing.
+        else if(s.trackMeters>0) {
+            t.distance+=std::max(0.0,delta)*s.trackMeters;
+            if(f.time-t.from>=Window) { reading(t.distance/(f.time-t.from)); t.from=f.time; t.distance=0; }
+        }
+        // A finished lap: its top speed when it was seen whole; the next lap is whole when seen from its start.
+        if(car.completed>=0 && car.completed!=t.completed) {
+            if(t.completed>=0 && car.completed==t.completed+1) t.last=t.whole && t.lap>0?t.lap:-1;
+            else t.last=-1;
+            t.lap=-1; t.whole=continuous && seen && t.completed>=0;
+            t.completed=car.completed;
+        }
+        t.pct=seen?car.pct:-1;
+        car.lapTopSpeed=t.last; car.sessionTopSpeed=t.session;
+    }
+    time_=f.time;
 }
 void PitHistory::Update(const Session& s, Frame& f) {
     if(!f.connected) { Reset(); return; }
@@ -491,10 +526,16 @@ void KeepIncidents(Session& next, const Session& previous) {
     for(auto& d:next.drivers)
         for(const auto& p:previous.drivers) if(p.index==d.index && p.number==d.number) { d.incidentCount=std::max(d.incidentCount,p.incidentCount); break; }
 }
-// Hosted and league sessions can leave a class without a short name. Its name then comes from its cars: the one car's
-// name, or what every car's name has in common that reads as a class, such as GT3 in "Ferrari 296 GT3" and
-// "Mercedes-AMG GT3 2020". Without that it stays empty, and the class is shown by its number.
+std::string KnownClassName(int classId) {
+    const auto found=std::lower_bound(std::begin(KnownCarClasses),std::end(KnownCarClasses),classId,[](const KnownCarClass& c,int id){ return c.id<id; });
+    return found!=std::end(KnownCarClasses) && found->id==classId?found->name:std::string();
+}
+// Hosted and league sessions can leave a class without a short name. A known CarClassID then takes iRacing's name for
+// it; an unknown one is named from its cars: the one car's name, or what every car's name has in common that reads as
+// a class, such as GT3 in "Ferrari 296 GT3" and "Mercedes-AMG GT3 2020". Without that it stays empty, and the class is
+// shown by its number. A name from the session always stays, and classes stay apart by their ID whatever their names.
 void NameUnnamedClasses(std::vector<Driver>& drivers) {
+    for(auto& d:drivers) if(d.className.empty() && !d.paceCar && !d.spectator) d.className=KnownClassName(d.classId);
     std::map<int,std::vector<const Driver*>> classes;
     for(const auto& d:drivers) if(d.className.empty() && !d.paceCar && !d.spectator && !d.carName.empty()) classes[d.classId].push_back(&d);
     for(const auto& [id,cars]:classes) {

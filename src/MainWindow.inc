@@ -1,13 +1,14 @@
 // Main window in the shared LaunchMate style (docs/ui-design.md there): sidebar,
 // status banner, page title with a one-line hint, and the current page below.
 enum class Page { Overlays, Settings, Overlay, RaceControl };
-constexpr int NavOverlaysId=900, NavRaceControlId=901, NavSettingsId=902, StatusButtonId=903, BackId=904;
+constexpr int NavOverlaysId=900, NavRaceControlId=901, NavSettingsId=902, StatusButtonId=903;
 // Sent to the current page as WM_COMMAND when state changes outside it (shortcuts, tray, banner).
 constexpr int PageRefreshId=905;
 struct MainUi {
     NavBar nav; StatusPanel status; ScrollHost host;
     HFONT text=nullptr, heading=nullptr;
-    HWND title=nullptr, hint=nullptr, back=nullptr;
+    HWND title=nullptr, hint=nullptr;
+    HWND pane=nullptr; // Beside an overlay's page and the layouts: the layout's overlays, to go from one to the next.
     Page page=Page::Overlays; Overlay* overlay=nullptr; // The overlay whose own page is open.
 } ui;
 HWND CreateOverlaysPage(HWND parent);
@@ -16,7 +17,11 @@ HWND CreateTablePage(HWND parent,Overlay& overlay);
 HWND CreateElementsPage(HWND parent,Overlay& overlay);
 HWND CreateTrackMapPage(HWND parent,Overlay& overlay);
 HWND CreateRaceControlPage(HWND parent);
-void RefreshPage() { if(ui.host.Content()) SendMessageW(ui.host.Content(),WM_COMMAND,MAKEWPARAM(PageRefreshId,0),0); }
+HWND CreateOverlayPane(HWND parent);
+void RefreshPage() {
+    if(ui.host.Content()) SendMessageW(ui.host.Content(),WM_COMMAND,MAKEWPARAM(PageRefreshId,0),0);
+    if(ui.pane && IsWindowVisible(ui.pane)) SendMessageW(ui.pane,WM_COMMAND,MAKEWPARAM(PageRefreshId,0),0);
+}
 std::wstring HotkeyText(WORD hotkey) {
     if(!LOBYTE(hotkey)) return L"Off";
     const BYTE modifiers=HIBYTE(hotkey); std::wstring text;
@@ -32,25 +37,27 @@ std::wstring HotkeyText(WORD hotkey) {
 void UpdateStatus() {
     if(!ui.status.Handle()) return;
     using Tone=StatusPanel::Tone;
-    Tone tone=Tone::Neutral; std::wstring title,detail,button;
-    if(app.edit) { tone=Tone::Busy; title=L"Moving overlays"; detail=L"Drag them where you want them. Other programs don't get mouse clicks on them meanwhile."; button=L"Done"; }
-    else if(app.preview || (!app.frame.connected && !app.previewLayouts.empty())) { tone=Tone::Busy; title=L"Layout preview"; detail=L"Sample previews stay on screen. Live telemetry and OBS output are unchanged."; button=L"Layouts"; }
+    Tone tone=Tone::Neutral; std::wstring title,detail;
+    if(app.edit) { tone=Tone::Busy; title=L"Moving overlays"; detail=L"Drag them where you want them. Other programs don't get mouse clicks on them meanwhile."; }
+    else if(app.preview || (!app.frame.connected && !app.previewLayouts.empty())) { tone=Tone::Busy; title=L"Layout preview"; detail=L"Sample previews stay on screen. Live telemetry and OBS output are unchanged."; }
     else if(app.frame.connected) {
         tone=Tone::Active; title=L"Connected to iRacing";
         detail=Wide(app.session.track); if(!app.session.type.empty()) detail+=L"  \u00B7  "+Wide(app.session.type);
-        detail+=L"  \u00B7  "+std::to_wstring(app.frame.tickRate>0?app.frame.tickRate:60)+L" Hz"; button=L"Move overlays";
+        detail+=L"  \u00B7  "+std::to_wstring(app.frame.tickRate>0?app.frame.tickRate:60)+L" Hz";
     }
-    else { title=L"Waiting for iRacing"; detail=L"RaceMate connects as soon as a session is loaded."; button=L"Layouts"; }
+    else { title=L"Waiting for iRacing"; detail=L"RaceMate connects as soon as a session is loaded."; }
     std::wstring problems;
     if(!app.trayAvailable && !app.diagnostics) problems=L"No tray icon: closing this window exits RaceMate";
     if(!app.hotkeyError.empty()) problems+=(problems.empty()?L"":L"  \u00B7  ")+std::wstring(L"Shortcut in use by another program: ")+app.hotkeyError;
     if(!problems.empty()) { if(tone==Tone::Neutral) tone=Tone::Busy; detail=problems; }
-    ui.status.SetState(tone,title,detail,button,true);
+    ui.status.SetState(tone,title,detail);
+    ui.status.SetToggles({L"Move",L"Hide",L"Pause OBS"},(app.edit?1:0)|(app.hidden?2:0)|(app.obsPaused?4:0));
 }
 void ShowPage(Page page,Overlay* overlay);
-void StatusButton() {
-    if(app.edit || (!app.preview && app.frame.connected)) ToggleEdit();
-    else ShowPage(Page::Overlays,nullptr);
+// Move, Hide and Pause OBS in the status bar, for every overlay at once.
+void StatusButton(int which) {
+    if(which==0) ToggleEdit(); else if(which==1) ToggleHidden(); else if(which==2) ToggleObsPaused();
+    UpdateStatus();
 }
 int Dip(int value) { return MulDiv(value,GetDpiForWindow(app.main),96); }
 void CreateUiFonts() {
@@ -66,39 +73,41 @@ void LayoutMain() {
     RECT client{}; GetClientRect(app.main,&client);
     const int width=MulDiv(client.right,96,GetDpiForWindow(app.main)), height=MulDiv(client.bottom,96,GetDpiForWindow(app.main));
     auto place=[](HWND window,int x,int y,int w,int h) { if(window) MoveWindow(window,Dip(x),Dip(y),Dip(std::max(0,w)),Dip(std::max(0,h)),TRUE); };
-    constexpr int nav=184, margin=24;
-    const int left=nav+margin, content=width-left-margin;
+    // Narrow enough for 1366 x 768 at 125 %.
+    constexpr int nav=152, margin=16, pane=240;
+    // An overlay's page and the layouts have the overlay list beside them, the full height under the banner.
+    const bool listed=ui.pane && IsWindowVisible(ui.pane);
+    const int left=nav+margin+(listed?pane+margin:0), content=width-left-margin;
     place(ui.nav.Handle(),0,0,nav,height);
-    place(ui.status.Handle(),left,20,content,56);
-    // A sub-page shows its way back left of the title.
-    const int titleLeft=IsWindowVisible(ui.back)?left+124:left;
-    place(ui.back,left,90,112,28);
-    place(ui.title,titleLeft,92,content-(titleLeft-left),24);
+    if(listed) place(ui.pane,nav+margin,92,pane,height-92-20);
+    place(ui.status.Handle(),nav+margin,20,width-nav-2*margin,56);
+    // An overlay's page has only its name above it, no hint.
+    const int top=IsWindowVisible(ui.hint)?148:128;
+    place(ui.title,left,92,content,24);
     place(ui.hint,left,116,content,20);
-    place(ui.host.Handle(),left,148,content,height-148-20);
+    place(ui.host.Handle(),left,top,content,height-top-20);
+}
+// An overlay's page title: its layout, then its name, as two layouts can have overlays of the same name.
+std::wstring OverlayTitle(const Overlay& o) {
+    for(const auto& l:app.layouts) if(l.id==o.layout) return l.name+L"  \u203A  "+Name(o);
+    return Name(o);
 }
 void ShowPage(Page page,Overlay* overlay=nullptr) {
     ui.page=page; if(overlay) ui.overlay=overlay;
-    const wchar_t* hints[]={L"Choose how many cars it shows, its columns and its header and footer.",
-        L"Class leaders and the cars around you: rows, columns, header and footer.",
-        L"Choose and order what it shows, and which laps count toward consumption.",
-        L"The pit limiter, your way through the pit lane to your box with where to brake, and what you changed in the car since the setup.",
-        L"Choose and order what it shows.",L"The official iRacing track map with every car: layout, markers, pit exit and what is drawn.",
-        L"Bars at the screen edges that light up while a car is beside you.",
-        L"The cars around yours from above, with the lanes beside you estimated from the spotter.",
-        L"The cars of faster classes close behind you, each with its gap.",
-        L"An in-car adjustment you make, big for a moment: in its own window or in place of another overlay."};
     if(page==Page::Overlay) {
-        SetWindowTextW(ui.title,Name(*ui.overlay).c_str()); SetWindowTextW(ui.hint,hints[ui.overlay->kind]);
+        SetWindowTextW(ui.title,OverlayTitle(*ui.overlay).c_str()); SetWindowTextW(ui.hint,L"");
     } else if(page==Page::RaceControl) {
         SetWindowTextW(ui.title,L"Race Control");
         SetWindowTextW(ui.hint,L"Full standings and an event feed in their own window. Events are recorded even while it is closed.");
     } else {
-        SetWindowTextW(ui.title,page==Page::Overlays?L"Overlays":L"Settings");
-        SetWindowTextW(ui.hint,page==Page::Overlays?L"Turn overlays on or off, add more of a kind, and set their size and place. Open one to choose what it shows."
-            :L"Startup, update rates, fuel and pit stop estimates, shortcuts and updates.");
+        const Layout* layout=ActiveLayout();
+        SetWindowTextW(ui.title,page==Page::Settings?L"Settings":(layout?layout->name.c_str():L"Layouts"));
+        SetWindowTextW(ui.hint,page==Page::Settings?L"Startup, update rates, fuel and pit stop estimates, shortcuts and updates.":L"");
     }
-    ShowWindow(ui.back,page==Page::Overlay?SW_SHOW:SW_HIDE);
+    // Beside the list a page has only its name above it.
+    const bool listed=page==Page::Overlay || page==Page::Overlays;
+    ShowWindow(ui.hint,listed?SW_HIDE:SW_SHOW);
+    if(ui.pane) { ShowWindow(ui.pane,listed?SW_SHOW:SW_HIDE); if(listed) SendMessageW(ui.pane,WM_COMMAND,MAKEWPARAM(PageRefreshId,0),0); }
     UpdateOverlays(); // The edited overlay's border follows the page.
     ui.nav.SetSelected(page==Page::Settings?NavSettingsId:(page==Page::RaceControl?NavRaceControlId:NavOverlaysId));
     const HWND host=ui.host.Handle();
@@ -106,6 +115,12 @@ void ShowPage(Page page,Overlay* overlay=nullptr) {
     LayoutMain();
 }
 void OpenOverlay(Overlay& o) { if(app.layout!=o.layout) { Save(); app.layout=o.layout; } ShowPage(Page::Overlay,&o); }
+// The Overlays entry: the overlay open last, else the layout's first, beside the list; the layouts when it has none.
+void OpenOverlays() {
+    for(auto& o:app.overlays) if(&o==ui.overlay && o.layout==app.layout) { ShowPage(Page::Overlay,&o); return; }
+    for(auto& o:app.overlays) if(o.layout==app.layout) { ShowPage(Page::Overlay,&o); return; }
+    ShowPage(Page::Overlays);
+}
 bool Editing(const Overlay& o) {
     return IsWindowVisible(app.main) && !IsIconic(app.main) &&
         ui.page==Page::Overlay && ui.overlay==&o;
@@ -138,18 +153,18 @@ void CreateMainUi() {
     ui.hint=CreateWindowExW(0,L"STATIC",L"",WS_CHILD|WS_VISIBLE|SS_CENTERIMAGE|SS_ENDELLIPSIS,0,0,10,10,app.main,nullptr,app.instance,nullptr);
     SendMessageW(ui.title,WM_SETFONT,reinterpret_cast<WPARAM>(ui.heading),TRUE);
     SendMessageW(ui.hint,WM_SETFONT,reinterpret_cast<WPARAM>(ui.text),TRUE);
-    ui.back=CreateWindowExW(0,L"BUTTON",L"\u2190  Overlays",WS_CHILD|WS_TABSTOP|BS_PUSHBUTTON,0,0,10,10,app.main,reinterpret_cast<HMENU>(static_cast<INT_PTR>(BackId)),app.instance,nullptr);
-    SendMessageW(ui.back,WM_SETFONT,reinterpret_cast<WPARAM>(ui.text),TRUE);
     ui.host.Create(app.instance,app.main); ShowWindow(ui.host.Handle(),SW_SHOW);
-    UpdateStatus(); ShowPage(Page::Overlays);
+    ui.pane=CreateOverlayPane(app.main);
+    UpdateStatus(); OpenOverlays();
 }
 void ApplyUiDpi() {
     CreateUiFonts();
     ui.nav.SetFonts(ui.heading,ui.text); ui.status.SetFonts(ui.heading,ui.text);
     SendMessageW(ui.title,WM_SETFONT,reinterpret_cast<WPARAM>(ui.heading),TRUE);
     SendMessageW(ui.hint,WM_SETFONT,reinterpret_cast<WPARAM>(ui.text),TRUE);
-    SendMessageW(ui.back,WM_SETFONT,reinterpret_cast<WPARAM>(ui.text),TRUE);
-    ShowPage(ui.page);
+    // The overlay list holds the old fonts: made again with the new ones; ShowPage shows it where it belongs.
+    if(ui.pane) { DestroyWindow(ui.pane); ui.pane=CreateOverlayPane(app.main); }
+    if(ui.page==Page::Overlay && ui.overlay) ShowPage(ui.page,ui.overlay); else ShowPage(ui.page);
 }
 // The saved normal position is used only while it is still on a monitor.
 void RestoreWindowPlacement(int show) {
@@ -165,12 +180,17 @@ void RememberWindowPlacement() {
     app.windowRect=placement.rcNormalPosition; app.windowMaximized=placement.showCmd==SW_SHOWMAXIMIZED || (placement.flags&WPF_RESTORETOMAXIMIZED);
 }
 // Setting changes shared by the pages and the diagnostics.
-void SettingChanged() { Save(); AutoLayout(); UpdateOverlays(); }
+// The overlay list follows, as a switch on an overlay's page changes it there too.
+void SettingChanged() {
+    Save(); AutoLayout(); UpdateOverlays();
+    if(ui.pane && IsWindowVisible(ui.pane)) SendMessageW(ui.pane,WM_COMMAND,MAKEWPARAM(PageRefreshId,0),0);
+}
 // A further instance of a kind with default settings.
 Overlay& NewInstance(int kind) {
     auto& o=AddInstance(kind,InstanceCount(kind)+1);
     ReadInstance(o); // A removed instance's section is gone, so this gives the defaults.
-    o.place.enabled=true;
+    // The Stream Cover goes to OBS only: on your screen it would hide the setup you are working on.
+    if(kind==StreamCoverKind) { o.place.enabled=false; o.place.spout=true; } else o.place.enabled=true;
     if(LayoutRunning(o.layout)) CreateOverlayWindow(o); SettingChanged(); return o;
 }
 // Makes another layout the active one: the current one stays saved as it is, the other's overlays take
@@ -249,7 +269,7 @@ bool OverlaySectionName(const std::wstring& name) {
     for(int kind=0;kind<OverlayCount;++kind) {
         const std::wstring base=Sections[kind];
         if(name==base) return true;
-        if(SingleInstance(kind) || name.size()<=base.size()+1 || name.compare(0,base.size()+1,base+L" ")) continue;
+        if(name.size()<=base.size()+1 || name.compare(0,base.size()+1,base+L" ")) continue;
         const auto number=name.substr(base.size()+1);
         if(number.size()<=2 && std::all_of(number.begin(),number.end(),iswdigit) && std::stoi(number)>=2) return true;
     }
@@ -362,22 +382,26 @@ void CopyColumns(const Overlay& from,Overlay& to) {
     }
     t.columnOrder=order; StatusAfterDriver(t.columnOrder);
     t.driverColumns=f.driverColumns; t.extraColumns=f.extraColumns; t.driverShortView=f.driverShortView; t.driverFlags=f.driverFlags;
-    t.showDriver=f.showDriver; t.showStatus=f.showStatus; t.nameFormat=f.nameFormat; t.columnHeaders=f.columnHeaders;
+    t.showPosition=f.showPosition; t.showNumber=f.showNumber; t.showGap=f.showGap; t.showDriver=f.showDriver; t.showStatus=f.showStatus; t.nameFormat=f.nameFormat; t.columnHeaders=f.columnHeaders;
     t.classColors=f.classColors; t.brandLogo=f.brandLogo; t.brandName=f.brandName; t.gapSigns=f.gapSigns; t.interval=f.interval; t.sectorParts=f.sectorParts;
-    if(from.kind==to.kind && to.kind==RelativeKind) { t.best=f.best; t.last=f.last; t.classPositions=f.classPositions; }
+    if(from.kind==to.kind) { t.best=f.best; t.last=f.last; }
+    if(from.kind==to.kind && to.kind==RelativeKind) t.classPositions=f.classPositions;
     if(from.kind==to.kind && to.kind==StandingsKind) { t.laps=f.laps; t.gained=f.gained; }
     Fit(to); SettingChanged();
 }
 void SetColumnVisible(Overlay& o,int id,bool on) {
     auto& t=o.table;
     switch(id) {
+    case PositionColumn: t.showPosition=on; break;
+    case NumberColumn: t.showNumber=on; break;
     case DriverColumn: t.showDriver=on; break;
+    case GapColumn: t.showGap=on; break;
     case StatusColumn: t.showStatus=on; break;
     case IntervalColumn: t.interval=on; break;
     case LapsColumn: t.laps=on; break;
     case GainedColumn: t.gained=on; break;
-    case BestColumn: if(o.kind==RelativeKind) t.best=on; break;
-    case LastColumn: if(o.kind==RelativeKind) t.last=on; break;
+    case BestColumn: t.best=on; break;
+    case LastColumn: t.last=on; break;
     default:
         if(id>=BrandColumn) t.extraColumns[id-BrandColumn]=on;
         else if(id>=LicenseColumn && id<=PitStopColumn) t.driverColumns[id-LicenseColumn]=on;

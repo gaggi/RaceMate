@@ -44,40 +44,39 @@ bool spoutPremultiplied=true;
 // The settings windows' page and text colors, light or dark: the current theme's.
 const COLORREF& Background=UiTheme::Background; const COLORREF& Text=UiTheme::Text;
 constexpr UINT TrayMessage=WM_APP+1;
-enum OverlayKind { RelativeKind, StandingsKind, FuelKind, PitLimiterKind, WeatherKind, TrackMapKind, SideWarningKind, RadarKind, TrafficKind, AdjustmentsKind };
-constexpr int OverlayCount=AdjustmentsKind+1;
+enum OverlayKind { RelativeKind, StandingsKind, FuelKind, PitLimiterKind, WeatherKind, TrackMapKind, SideWarningKind, RadarKind, TrafficKind, AdjustmentsKind, StreamCoverKind };
+constexpr int OverlayCount=StreamCoverKind+1;
 constexpr bool IsTable(int kind) { return kind==RelativeKind || kind==StandingsKind; }
-constexpr bool SingleInstance(int kind) { return kind==PitLimiterKind || kind==SideWarningKind || kind==RadarKind || kind==TrafficKind || kind==AdjustmentsKind; }
-const wchar_t* Titles[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pit Assist",L"Weather",L"Track Map",L"Side Warning",L"Radar",L"Traffic",L"Adjustments"};
-const wchar_t* Sections[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pitlimiter",L"Weather",L"Track Map",L"Side Warning",L"Radar",L"Traffic",L"Adjustments"};
+const wchar_t* Titles[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pit Assist",L"Weather",L"Track Map",L"Side Warning",L"Radar",L"Traffic",L"Adjustments",L"Stream Cover"};
+const wchar_t* Sections[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pitlimiter",L"Weather",L"Track Map",L"Side Warning",L"Radar",L"Traffic",L"Adjustments",L"Stream Cover"};
 // The Side Warning's place is its left bar's, at the screen's left edge; the right bar mirrors it.
-constexpr POINT DefaultPositions[]={{40,120},{480,120},{40,470},{40,720},{40,820},{960,120},{8,380},{860,560},{840,420},{840,240}};
+constexpr POINT DefaultPositions[]={{40,120},{480,120},{40,470},{40,720},{40,820},{960,120},{8,380},{860,560},{840,420},{840,240},{480,240}};
 // Refresh rates an overlay can choose, and each overlay's default; telemetry is read at least as often as the fastest.
 constexpr int OverlayRates[]={1,2,5,10,15,20};
-constexpr int DefaultRates[]={10,1,1,10,1,20,20,20,10,20};
+constexpr int DefaultRates[]={10,1,1,10,1,20,20,20,10,20,5};
 // Relative and Standings columns. The values are stored in ColumnOrder.
 enum Column {
     PositionColumn, NumberColumn, DriverColumn, GapColumn, IntervalColumn, BestColumn, LastColumn,
     LicenseColumn, IRatingColumn, TiresColumn, PitLapColumn, PitTimeColumn, PitStopColumn,
-    LapsColumn, GainedColumn, StatusColumn, BrandColumn, RatingChangeColumn, StintColumn, StopsColumn, FuelColumn, CombinedRatingColumn, SectorsColumn, TeamColumn
+    LapsColumn, GainedColumn, StatusColumn, BrandColumn, RatingChangeColumn, StintColumn, StopsColumn, FuelColumn, CombinedRatingColumn, SectorsColumn, TeamColumn, TopSpeedColumn
 };
-constexpr int ColumnCount=TeamColumn+1;
+constexpr int ColumnCount=TopSpeedColumn+1;
 // License..PitStop are the optional driver columns, also used by Race Control; Brand..Stint came later with their own keys.
-constexpr int DriverColumnCount=PitStopColumn-LicenseColumn+1, ExtraColumnCount=TeamColumn-BrandColumn+1;
+constexpr int DriverColumnCount=PitStopColumn-LicenseColumn+1, ExtraColumnCount=TopSpeedColumn-BrandColumn+1;
 // Widths include the 8 px gap to the next column; Status is the badge after the driver's name, not a column.
 struct ColumnInfo { const wchar_t* title; int width, compactWidth; UINT align=DT_RIGHT; };
 constexpr ColumnInfo Columns[]={
     {L"P",36,32},{L"#",50,50,DT_CENTER},{L"DRIVER",180,170,DT_LEFT},{L"GAP",70,60},{L"INT",64,56},{L"BEST",80,72},{L"LAST",80,72},
     {L"LICENSE",70,58,DT_CENTER},{L"iRATING",66,48},{L"TIRES",54,30,DT_CENTER},{L"PIT LAP",64,48},{L"PIT TIME",74,66},{L"PIT STOP",80,72},
-    {L"LAPS",50,42},{L"GAIN",50,42},{L"STATUS",0,0,DT_LEFT},{L"CAR",124,116,DT_LEFT},{L"iR ±",54,46},{L"STINT",58,46,DT_CENTER},{L"STOPS",56,32,DT_CENTER},{L"FUEL",62,58,DT_CENTER},{L"RATING",70,58,DT_CENTER},{L"SECTORS ~",240,240},{L"TEAM",160,150,DT_LEFT}};
+    {L"LAPS",50,42},{L"GAIN",50,42},{L"STATUS",0,0,DT_LEFT},{L"CAR",124,116,DT_LEFT},{L"iR ±",54,46},{L"STINT",58,46,DT_CENTER},{L"STOPS",56,32,DT_CENTER},{L"FUEL",62,58,DT_CENTER},{L"RATING",70,58,DT_CENTER},{L"SECTORS ~",240,240},{L"TEAM",160,150,DT_LEFT},{L"TOP",62,50}};
 static_assert(std::size(Columns)==ColumnCount);
 const wchar_t* DriverColumnKeys[]={L"ShowLicense",L"ShowIRating",L"ShowTires",L"ShowLastPitLap",L"ShowPitTime",L"ShowPitStopTime"};
-const wchar_t* ExtraColumnKeys[]={L"ShowCar",L"ShowIRatingChange",L"ShowStint",L"ShowStops",L"ShowFuelFinish",L"ShowCombinedRating",L"ShowSectors",L"ShowTeam"};
+const wchar_t* ExtraColumnKeys[]={L"ShowCar",L"ShowIRatingChange",L"ShowStint",L"ShowStops",L"ShowFuelFinish",L"ShowCombinedRating",L"ShowSectors",L"ShowTeam",L"ShowTopSpeed"};
 // Saved orders keep their place; columns a file does not list yet go before their default successor.
 const std::vector<int> DefaultColumns[]={
-    {PositionColumn,NumberColumn,DriverColumn,StatusColumn,TeamColumn,BrandColumn,LicenseColumn,IRatingColumn,CombinedRatingColumn,RatingChangeColumn,StintColumn,StopsColumn,BestColumn,LastColumn,GapColumn,
+    {PositionColumn,NumberColumn,DriverColumn,StatusColumn,TeamColumn,BrandColumn,LicenseColumn,IRatingColumn,CombinedRatingColumn,RatingChangeColumn,StintColumn,StopsColumn,BestColumn,LastColumn,TopSpeedColumn,GapColumn,
      SectorsColumn,TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn,FuelColumn},
-    {PositionColumn,GainedColumn,NumberColumn,DriverColumn,StatusColumn,TeamColumn,BrandColumn,GapColumn,IntervalColumn,BestColumn,LastColumn,StintColumn,StopsColumn,LapsColumn,
+    {PositionColumn,GainedColumn,NumberColumn,DriverColumn,StatusColumn,TeamColumn,BrandColumn,GapColumn,IntervalColumn,BestColumn,LastColumn,TopSpeedColumn,StintColumn,StopsColumn,LapsColumn,
      SectorsColumn,LicenseColumn,IRatingColumn,CombinedRatingColumn,RatingChangeColumn,TiresColumn,PitLapColumn,PitTimeColumn,PitStopColumn,FuelColumn}};
 // Header and footer metrics. The values are stored in the Header*/Footer* keys.
 enum Metric {
@@ -165,7 +164,8 @@ static_assert(std::size(WeatherModules)==WeatherModuleCount);
 const std::vector<int> FuelOrder{TankModule,FiguresModule,LeaderDistanceModule,OwnLapsModule,WhiteFlagTimeModule,HistoryModule,RefuelCard,ShorterCard,WindowCard,TimelineModule,PitExitModule,OneShorterRow,TargetRow,OneLongerRow,TwoLongerRow};
 const std::vector<int> WeatherOrder{ConditionModule,RainModule,TemperatureModule,TemperatureHistoryModule,WindModule,DetailsModule,UsageModule};
 const wchar_t* WetnessNames[]={L"—",L"Dry",L"Mostly Dry",L"Very Lightly Wet",L"Lightly Wet",L"Moderately Wet",L"Very Wet",L"Extremely Wet"};
-struct Placement { int x=40,y=120,scale=100,opacity=90,rate=10; bool enabled=true, growLeft=false, growUp=false, rounded=false, spout=false, backgroundOnly=false, spoutPremultiplied=true; };
+// lastShows: where it showed before it was switched off, a bit each for the screen (1) and OBS (2).
+struct Placement { int x=40,y=120,scale=100,opacity=90,rate=10,lastShows=1; bool enabled=true, growLeft=false, growUp=false, rounded=false, spout=false, backgroundOnly=false, spoutPremultiplied=true; };
 // Layouts: complete sets of overlays, each with its places and settings, and when it becomes active.
 // Layout 1 keeps the plain section names, so settings from before layouts are its own.
 enum LayoutCondition { AlwaysCondition, InCarCondition, OutOfCarCondition, GarageCondition, ConditionCount };
@@ -187,7 +187,7 @@ int SessionKind(const std::string& type) {
 // DialTitle, DialValue and DialValueNarrow follow the overlay's size: the Adjustments' name and value, as big as fits.
 enum FontId : unsigned char { Regular, Bold, Large, Small, Hero, SmallBold, DialTitle, DialValue, DialValueNarrow, FontCount };
 struct DrawCommand {
-    enum Type : unsigned char { Fill, Text, DottedLine, WindRing, Outline, RoundFill, Ring, Hatch, Sparkline, Logo, Map, MapCar, MapLabel };
+    enum Type : unsigned char { Fill, Text, DottedLine, WindRing, Outline, RoundFill, Ring, Hatch, Sparkline, Logo, Map, MapCar, MapLabel, Picture };
     Type type=Fill; FontId font=Regular; UINT align=DT_LEFT; RECT r{}; COLORREF color=0;
     std::array<float,5> shape{}; // Wind ring: center x/y, radius, scale, bearing (negative without direction). Outline: corner radius, line width (1 when 0), dashed when 1. RoundFill: corner radius. Ring: stroke width. Hatch: background color. Sparkline: stroke width, dashed when 1; its text holds the points, 1 + 0..1000 from bottom to top. Logo: atlas cell.
     std::wstring text;
@@ -205,15 +205,17 @@ struct TableSettings {
     std::array<bool,ExtraColumnCount> extraColumns{};
     std::array<bool,3> driverShortView{}; // License, iRating, Safety and iRating.
     std::array<bool,3> driverFlags{true,true,true};
-    bool showDriver=true, showStatus=true, columnHeaders=false, classColors=true, brandLogo=true, brandName=true;
+    bool showPosition=true, showNumber=true, showGap=true, showDriver=true, showStatus=true, columnHeaders=false, classColors=true, brandLogo=true, brandName=true;
     bool gapSigns=false; // + / - before gaps (and intervals in the Standings); off by default: the row order already tells.
     int nameFormat=0;
     int gapDecimals=1; // Gaps, and in the Standings intervals: per layout, so a qualifying layout can show thousandths.
-    int rows=7; bool hidePit=false, best=false, last=false, lapColors=true, classPositions=true; // Relative.
+    bool best=false, last=false; // Off in the Relative, on in the Standings unless switched off.
+    int rows=7; bool hidePit=false, lapColors=true, classPositions=true; // Relative.
     // classPositions: the Position column counts within each car's class instead of overall (the Standings follow their class view).
     StandingsOptions standings; bool interval=false, laps=false, gained=false, progress=true, pitExit=false; // Standings.
     int pitExitAhead=2, pitExitBehind=2; // Cars shown around the pit exit row.
     int sectorParts=1; // Sector times: one column per SDK sector, or 3 mini-sectors each.
+    bool topSpeedSession=false; // Top speed: over the session instead of the last lap.
     // The class header in separate classes: cars, SOF, average iRating and the class's best lap.
     std::array<bool,4> classHeader{true,true,true,false};
 };
@@ -256,6 +258,10 @@ int RadarRange(int metres) { return ((std::clamp(metres,10,40)+5)/10)*10; }
 // Adjustments: the in-car adjustment you make, big, for tenths/10 seconds after its last change. In its own window,
 // or in place of every shown overlay of the kind replace names (-1: its own window). groups: which dials it shows,
 // by DialGroup; was: the value before; timer: a bar running down the time left.
+// The Stream Cover: a picture, or a dark panel without one, that hides the garage screen from the stream. Its size is
+// in logical pixels; fit shows the whole picture, else it fills the cover and is cut at the sides or top and bottom.
+struct CoverSettings { std::wstring image; int width=1280, height=720; bool fit=false; };
+constexpr int CoverMinWidth=160, CoverMaxWidth=3840, CoverMinHeight=90, CoverMaxHeight=2160;
 struct AdjustmentSettings { int tenths=30, replace=-1; bool was=false, timer=false; std::array<bool,5> groups{true,true,true,true,true}; };
 constexpr int AdjustmentsWidth=280, AdjustmentsHeight=160;
 // The overlays it can take the place of.
@@ -307,7 +313,8 @@ struct Overlay {
     MatteSurface blackMatte, whiteMatte;
     std::vector<std::uint8_t> textCover; // Background only: the text's coverage while composing, zero otherwise.
     bool foregroundMatte=false, backgroundComposed=false;
-    Bands bands; TableSettings table; FuelSettings fuel; WeatherSettings weather; TrackMapSettings map; RadarSettings radar; TrafficSettings traffic; AdjustmentSettings adjust;
+    Bands bands; TableSettings table; FuelSettings fuel; WeatherSettings weather; TrackMapSettings map; RadarSettings radar; TrafficSettings traffic; AdjustmentSettings adjust; CoverSettings cover;
+    HBITMAP coverBitmap=nullptr; std::wstring coverKey; // Stream Cover: the picture drawn at its size, and for what.
     RadarTracker radarTracker; std::vector<RadarCar> radarCars; ULONGLONG radarNear=0;
     std::array<double,MaxCars> radarAcross{}; std::array<bool,MaxCars> radarPresent{}; ULONGLONG radarGlided=0; unsigned radarResets=0;
     std::vector<CarBehind> trafficCars; ULONGLONG trafficNear=0;
@@ -391,7 +398,7 @@ struct App {
     bool layoutsLive=false;
     std::vector<int> openLayoutGroups;
     Frame frame; Session session; TelemetryPump pump; FuelCalculator fuel;
-    EventRecorder events; PitHistory pitHistory; PitLimiterVisibility pitVisibility; SetupDials setupDials;
+    EventRecorder events; PitHistory pitHistory; TopSpeeds topSpeeds; PitLimiterVisibility pitVisibility; SetupDials setupDials;
     // The adjustment being made, and each dial's lowest and highest value seen in this car (CarPath), kept for its
     // next session: the Adjustments' steps.
     DialWatcher dialWatcher; std::wstring dialCar; std::array<double,DialCount> dialLow{}, dialHigh{}; unsigned dialRanges=0;
@@ -519,14 +526,16 @@ void StatusAfterDriver(std::vector<int>& order) {
 bool ColumnVisible(const Overlay& o,int id) {
     const auto& t=o.table; const bool standings=o.kind==StandingsKind;
     switch(id) {
+    case PositionColumn: return t.showPosition;
+    case NumberColumn: return t.showNumber;
+    case GapColumn: return t.showGap;
     case DriverColumn: return t.showDriver;
     case StatusColumn: return false; // Drawn as the badge after the name; showStatus switches it.
     case GainedColumn: return standings && t.gained;
     case LapsColumn: return standings && t.laps;
     case IntervalColumn: return t.interval;
-    // Always shown in the Standings, optional in the Relative.
-    case BestColumn: return standings || t.best;
-    case LastColumn: return standings || t.last;
+    case BestColumn: return t.best;
+    case LastColumn: return t.last;
     default:
         if(id>=BrandColumn) return t.extraColumns[id-BrandColumn];
         return id>=LicenseColumn?t.driverColumns[id-LicenseColumn]:true;
@@ -614,6 +623,7 @@ int OverlayWidth(const Overlay& o) {
     if(o.kind==RadarKind) return RadarWidth;
     if(o.kind==TrafficKind) return TrafficWidth;
     if(o.kind==AdjustmentsKind) return AdjustmentsWidth;
+    if(o.kind==StreamCoverKind) return o.cover.width;
     return 365;
 }
 COLORREF TireTextColor(const Row& row) {
@@ -638,7 +648,7 @@ bool TransparentContent(const Overlay& o) { return MapOnly(o) || (o.kind==RadarK
 bool PerPixel(const Overlay& o) { return o.place.backgroundOnly || TransparentContent(o); }
 int EffectiveOpacity(const Overlay& o) { return o.place.backgroundOnly && o.backgroundComposed?100:o.place.opacity; }
 // The Side Warning's bars, the Radar, Traffic and Adjustments are instruments to glance at, without header or footer.
-bool NoBands(const Overlay& o) { return MapOnly(o) || o.kind==SideWarningKind || o.kind==RadarKind || o.kind==TrafficKind || o.kind==AdjustmentsKind; }
+bool NoBands(const Overlay& o) { return MapOnly(o) || o.kind==SideWarningKind || o.kind==RadarKind || o.kind==TrafficKind || o.kind==AdjustmentsKind || o.kind==StreamCoverKind; }
 bool ShowOverlayHeader(const Overlay& o) { return o.bands.header && !NoBands(o); }
 int FooterHeight(const Overlay& o) { return o.bands.footer.enabled && !NoBands(o)?28:0; }
 double SessionProgress();
@@ -731,7 +741,10 @@ void ReadTable(const wchar_t* section,int kind,TableSettings& t) {
     t.brandLogo=ReadBool(section,L"ShowCarLogo",true); t.brandName=ReadBool(section,L"ShowCarName",true);
     t.gapSigns=ReadBool(section,L"ShowGapSigns",false);
     t.sectorParts=ReadInt(section,L"SectorParts",1)==3?3:1;
+    t.topSpeedSession=ReadBool(section,L"TopSpeedSession",false);
     t.driverFlags={ReadBool(section,L"ShowBlackFlag",true),ReadBool(section,L"ShowSlowdown",true),ReadBool(section,L"ShowRequiredRepairs",true)};
+    t.showPosition=ReadBool(section,L"ShowPosition",true); t.showNumber=ReadBool(section,L"ShowNumber",true); t.showGap=ReadBool(section,L"ShowGap",true);
+    t.best=ReadBool(section,L"ShowBestLap",kind==StandingsKind); t.last=ReadBool(section,L"ShowLastLap",kind==StandingsKind);
     t.showDriver=ReadBool(section,L"ShowDriver",true);
     t.showStatus=ReadBool(section,L"ShowStatus",true);
     t.nameFormat=std::clamp(ReadInt(section,L"DriverNameFormat",0),0,2);
@@ -742,7 +755,6 @@ void ReadTable(const wchar_t* section,int kind,TableSettings& t) {
         t.rows=RelativeRowCount(ReadInt(section,L"Rows",7));
         t.hidePit=ReadBool(section,L"HideDriversInPit",false);
         t.lapColors=ReadBool(section,L"ShowLapColors",true);
-        t.best=ReadBool(section,L"ShowBestLap",false); t.last=ReadBool(section,L"ShowLastLap",false);
         t.classPositions=ReadBool(section,L"ClassPositions",true);
     } else {
         auto& standings=t.standings;
@@ -763,7 +775,10 @@ void ReadTable(const wchar_t* section,int kind,TableSettings& t) {
 }
 void CreateOverlayWindow(Overlay& o);
 void Fit(Overlay& o,bool recover=false);
-void DestroyOverlay(Overlay& o) { o.spout.reset(); if(o.window) DestroyWindow(o.window); o.window=nullptr; }
+void DestroyOverlay(Overlay& o) {
+    o.spout.reset(); if(o.window) DestroyWindow(o.window); o.window=nullptr;
+    if(o.coverBitmap) { DeleteObject(o.coverBitmap); o.coverBitmap=nullptr; o.coverKey.clear(); }
+}
 // Adds instance number of a kind after the kind's other instances, without settings or window yet.
 Overlay& AddInstance(int kind,int number,int layout=0) {
     if(!layout) layout=app.layout;
@@ -779,7 +794,8 @@ void ReadInstance(Overlay& o) {
     p.scale=NormalizeScale(ReadInt(section.c_str(),L"Scale",100)); p.opacity=std::clamp(ReadInt(section.c_str(),L"Opacity",90),40,100);
     const int rate=ReadInt(section.c_str(),L"RefreshHz",DefaultRates[kind]);
     p.rate=*std::find_if(std::begin(OverlayRates),std::end(OverlayRates)-1,[&](int choice){return choice>=rate;});
-    p.enabled=ReadBool(section.c_str(),L"Enabled",kind!=TrackMapKind && kind!=SideWarningKind && kind!=RadarKind && kind!=TrafficKind && kind!=AdjustmentsKind); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
+    p.enabled=ReadBool(section.c_str(),L"Enabled",kind!=TrackMapKind && kind!=SideWarningKind && kind!=RadarKind && kind!=TrafficKind && kind!=AdjustmentsKind && kind!=StreamCoverKind); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
+    p.lastShows=std::clamp(ReadInt(section.c_str(),L"LastShows",kind==StreamCoverKind?2:1),1,3); // The cover is for OBS.
     p.rounded=ReadBool(section.c_str(),L"RoundedCorners",false);
     p.spout=ReadBool(section.c_str(),L"SpoutOutput",false);
     wchar_t mode[32]{},overrideMode[32]{};
@@ -808,6 +824,11 @@ void ReadInstance(Overlay& o) {
         a.replace=std::find(std::begin(AdjustmentTargets),std::end(AdjustmentTargets),replace)!=std::end(AdjustmentTargets)?replace:-1;
         a.was=ReadBool(section.c_str(),L"ShowPrevious",false); a.timer=ReadBool(section.c_str(),L"ShowTimer",false);
         for(int g=0;g<static_cast<int>(a.groups.size());++g) a.groups[g]=ReadBool(section.c_str(),(L"Group"+std::to_wstring(g)).c_str(),true);
+    }
+    if(kind==StreamCoverKind) {
+        auto& c=o.cover; wchar_t image[MAX_PATH]{}; GetPrivateProfileStringW(section.c_str(),L"Picture",L"",image,MAX_PATH,app.config.c_str()); c.image=image;
+        c.width=std::clamp(ReadInt(section.c_str(),L"Width",1280),CoverMinWidth,CoverMaxWidth); c.height=std::clamp(ReadInt(section.c_str(),L"Height",720),CoverMinHeight,CoverMaxHeight);
+        c.fit=ReadBool(section.c_str(),L"FitPicture",false);
     }
     if(kind==RadarKind) {
         auto& r=o.radar; r.background=ReadBool(section.c_str(),L"ShowBackground",true); r.always=ReadBool(section.c_str(),L"AlwaysWhileDriving",false);
@@ -857,12 +878,12 @@ void LoadLayouts() {
 }
 // The active layout's overlays: instances added or dropped to its counts, then its settings.
 void LoadOverlays() {
-    // Each kind's section counts its instances; the Pit Assist and the Side Warning have only one.
+    // Each kind's section counts its instances, none when all were removed.
     for(auto it=app.overlays.begin();it!=app.overlays.end();) {
         if(std::none_of(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==it->layout;})) { DestroyOverlay(*it); it=app.overlays.erase(it); } else ++it;
     }
     for(const auto& layout:app.layouts) for(int kind=0;kind<OverlayCount;++kind) {
-        const int count=SingleInstance(kind)?1:std::clamp(ReadInt(KindSection(kind,layout.id).c_str(),L"Instances",1),1,99);
+        const int count=std::clamp(ReadInt(KindSection(kind,layout.id).c_str(),L"Instances",1),0,99);
         for(int number=1;number<=count;++number)
             if(std::none_of(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return o.layout==layout.id && o.kind==kind && o.number==number;})) AddInstance(kind,number,layout.id);
         for(auto it=app.overlays.begin();it!=app.overlays.end();) {
@@ -938,14 +959,14 @@ void Save() {
         write(L"Layouts",L"Order",ids); number(L"Layouts",L"Count",static_cast<int>(app.layouts.size())); number(L"Layouts",L"Active",app.layout);
         for(const auto& l:app.layouts) { const auto section=L"Layout "+std::to_wstring(l.id); write(section.c_str(),L"Name",l.name); number(section.c_str(),L"Condition",l.condition); number(section.c_str(),L"Session",l.session); }
     }
-    for(const auto& layout:app.layouts) for(int kind=0;kind<OverlayCount;++kind) if(!SingleInstance(kind)) number(KindSection(kind,layout.id).c_str(),L"Instances",InstanceCount(kind,layout.id));
+    for(const auto& layout:app.layouts) for(int kind=0;kind<OverlayCount;++kind) number(KindSection(kind,layout.id).c_str(),L"Instances",InstanceCount(kind,layout.id));
     for(const auto& o:app.overlays) {
         const auto name=Section(o); const auto* section=name.c_str(); const auto& p=o.place;
         write(section,L"DisplayName",o.customName);
         number(section,L"BackgroundOpacityOnly",p.backgroundOnly);
         write(section,L"SpoutAlphaMode",p.spoutPremultiplied?L"premultiplied":L"straight");
         number(section,L"X",p.x); number(section,L"Y",p.y); number(section,L"Scale",p.scale); number(section,L"Opacity",p.opacity);
-        number(section,L"RefreshHz",p.rate); number(section,L"Enabled",p.enabled); number(section,L"GrowLeft",p.growLeft); number(section,L"GrowUp",p.growUp); number(section,L"RoundedCorners",p.rounded); number(section,L"SpoutOutput",p.spout);
+        number(section,L"RefreshHz",p.rate); number(section,L"Enabled",p.enabled); number(section,L"GrowLeft",p.growLeft); number(section,L"GrowUp",p.growUp); number(section,L"RoundedCorners",p.rounded); number(section,L"SpoutOutput",p.spout); number(section,L"LastShows",p.lastShows);
         {
             const auto& b=o.bands; number(section,L"ShowHeader",b.header); number(section,L"ShowFooter",b.footer.enabled);
             for(int i=0;i<SlotCount;++i) { number(section,HeaderKeys[i],b.headerMetrics[i]); number(section,FooterKeys[i],b.footer.metrics[i]); }
@@ -958,12 +979,14 @@ void Save() {
             for(int i=0;i<ExtraColumnCount;++i) number(section,ExtraColumnKeys[i],t.extraColumns[i]);
             number(section,L"ShowClassColor",t.classColors); number(section,L"ShowCarLogo",t.brandLogo); number(section,L"ShowCarName",t.brandName);
             number(section,L"ShowBlackFlag",t.driverFlags[0]); number(section,L"ShowSlowdown",t.driverFlags[1]); number(section,L"ShowRequiredRepairs",t.driverFlags[2]);
+            number(section,L"ShowPosition",t.showPosition); number(section,L"ShowNumber",t.showNumber); number(section,L"ShowGap",t.showGap);
+            number(section,L"ShowBestLap",t.best); number(section,L"ShowLastLap",t.last);
             number(section,L"ShowDriver",t.showDriver); number(section,L"ShowStatus",t.showStatus); number(section,L"DriverNameFormat",t.nameFormat);
-            number(section,L"ShowColumnHeaders",t.columnHeaders); number(section,L"ShowGapSigns",t.gapSigns); number(section,L"SectorParts",t.sectorParts);
+            number(section,L"ShowColumnHeaders",t.columnHeaders); number(section,L"ShowGapSigns",t.gapSigns); number(section,L"SectorParts",t.sectorParts); number(section,L"TopSpeedSession",t.topSpeedSession);
             number(section,L"ShowInterval",t.interval); number(section,L"GapDecimals",t.gapDecimals);
             if(o.kind==RelativeKind) {
                 number(section,L"Rows",t.rows); number(section,L"HideDriversInPit",t.hidePit);
-                number(section,L"ShowLapColors",t.lapColors); number(section,L"ShowBestLap",t.best); number(section,L"ShowLastLap",t.last);
+                number(section,L"ShowLapColors",t.lapColors);
                 number(section,L"ClassPositions",t.classPositions);
             } else {
                 const auto& standings=t.standings;
@@ -991,6 +1014,7 @@ void Save() {
             const auto& a=o.adjust; number(section,L"ShowTenths",a.tenths); number(section,L"InPlaceOf",a.replace); number(section,L"ShowPrevious",a.was); number(section,L"ShowTimer",a.timer);
             for(int g=0;g<static_cast<int>(a.groups.size());++g) number(section,(L"Group"+std::to_wstring(g)).c_str(),a.groups[g]);
         }
+        if(o.kind==StreamCoverKind) { const auto& c=o.cover; write(section,L"Picture",c.image); number(section,L"Width",c.width); number(section,L"Height",c.height); number(section,L"FitPicture",c.fit); }
         if(o.kind==RadarKind) { const auto& r=o.radar; number(section,L"ShowBackground",r.background); number(section,L"AlwaysWhileDriving",r.always); number(section,L"ShowDistances",r.distances); number(section,L"Range",r.range); }
         if(o.kind==SideWarningKind) { number(section,L"ShowCarPosition",o.sideCar); number(section,L"BarsApart",o.sideApart); }
         if(o.kind==PitLimiterKind) { number(section,L"ShowSetupChanges",o.setupChanges); number(section,L"ShowPitLaneProgress",o.pitStrip); number(section,L"CountdownInSeconds",o.pitSeconds); }
@@ -1025,7 +1049,6 @@ void DeleteSection(const std::wstring& section) {
 }
 // Removes an added instance with its settings section; the first instance of a kind stays.
 void RemoveInstance(Overlay& o) {
-    if(o.number==1) return;
     DeleteSection(Section(o));
     // Later instances move up a number, so their sections are written again under the new names.
     const int layout=o.layout, kind=o.kind, number=o.number;
@@ -1361,6 +1384,7 @@ int HeightWithTitle(const Overlay& o) {
     if(o.kind==RadarKind) return 32+RadarHeight;
     if(o.kind==TrafficKind) return 32+6+o.traffic.cars*TrafficRow;
     if(o.kind==AdjustmentsKind) return 32+AdjustmentsHeight;
+    if(o.kind==StreamCoverKind) return 32+o.cover.height;
     const auto& t=o.table;
     if(o.kind==RelativeKind) return TableRowsTop(o)+t.rows*27+FooterHeight(o);
     if(o.kind==StandingsKind) {
@@ -1523,7 +1547,12 @@ const CellRenderer CellRenderers[]={
         if(r.driver.ai) { c.box=Cell::Filled; c.boxColor=Ink::NeutralBadge; c.ink=RGB(255,255,255); c.font=SmallBold; return; }
         c.box=Cell::Filled; c.boxColor=r.driver.license.empty()?Ink::NeutralBadge:LicenseFill(r.driver); c.ink=RGB(255,255,255); c.font=SmallBold; },
     +[](const Row&,const Overlay&,Cell&) {}, // Sector cells are drawn individually in BuildScene.
-    +[](const Row& r,const Overlay&,Cell& c) { if(r.driver.team.empty()) { c.text=L"—"; c.ink=Ink::Muted; return; } c.text=Wide(r.driver.team); c.ink=Ink::Value; }
+    +[](const Row& r,const Overlay&,Cell& c) { if(r.driver.team.empty()) { c.text=L"—"; c.ink=Ink::Muted; return; } c.text=Wide(r.driver.team); c.ink=Ink::Value; },
+    // Top speed in km/h, over the last lap or the session.
+    +[](const Row& r,const Overlay& o,Cell& c) {
+        const double speed=o.table.topSpeedSession?r.car.sessionTopSpeed:r.car.lapTopSpeed;
+        if(speed<=0 || r.driver.paceCar) { c.text=L"—"; c.ink=Ink::Muted; return; }
+        c.text=std::to_wstring(std::lround(speed*3.6)); c.ink=Ink::Value; }
 };
 static_assert(std::size(CellRenderers)==ColumnCount);
 // The pace car's row has its name with a PACE badge and its distance; it has no number, position, rating or laps.
@@ -1535,7 +1564,7 @@ void RenderCell(int id,const Row& r,const Overlay& o,Cell& c) {
 bool Editing(const Overlay& o); // Its own page is open in the visible main window.
 #ifdef RACEMATE_DIAGNOSTICS
 // Time per draw command type and overlay kind, GDI flushed after each so batched work lands on its command.
-constexpr int CommandTypes=DrawCommand::MapLabel+1;
+constexpr int CommandTypes=DrawCommand::Picture+1;
 std::array<std::array<LONGLONG,CommandTypes>,OverlayCount> commandTicks{};
 std::array<std::array<long long,CommandTypes>,OverlayCount> commandCalls{};
 bool commandTiming=false;
@@ -1654,6 +1683,12 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
     // The Adjustments, in their own window or for a moment in place of this overlay, on their group's color: the
     // dial's name in that color, its value big beneath, the car's steps under it; the value before and a bar running
     // down the time left when chosen. Sizes follow the overlay's, so it fills a wide Relative as a tall Standings.
+    // The Stream Cover: its picture over the whole overlay, or the panel with what it is for.
+    if(o.kind==StreamCoverKind) {
+        if(!o.cover.image.empty()) out.push_back({DrawCommand::Picture,Regular,o.cover.fit?1u:0u,{0,0,width,height},0,{},o.cover.image});
+        else out.push_back({DrawCommand::Text,Bold,DT_CENTER,{0,0,width,height},Ink::Muted,{},L"Setup hidden"});
+        return;
+    }
     const AdjustmentSettings* inPlace=o.kind==AdjustmentsKind?nullptr:AdjustmentInPlaceOf(o);
     if(o.kind==AdjustmentsKind || inPlace) {
         const auto& a=inPlace?*inPlace:o.adjust; auto s=CurrentAdjustment(a);
@@ -2507,6 +2542,33 @@ void DrawWind(HDC dc,const DrawCommand& c) {
 }
 // Replays the scene into the back buffer, limited to the dirty region when one is given.
 // The logo atlas (resource 102) is decoded only while logos are missing at some overlay's size, then released.
+// The Stream Cover's picture drawn at w x h: filling it and cut to it, or whole and centred (fit) on a transparent
+// rest that shows the panel. Kept until the picture, the size or the fitting changes; none for a missing file.
+HBITMAP CoverBitmap(const Overlay& constOverlay,const std::wstring& path,int w,int h,bool fit) {
+    auto& o=const_cast<Overlay&>(constOverlay);
+    const std::wstring key=path+L"|"+std::to_wstring(w)+L"x"+std::to_wstring(h)+(fit?L"|fit":L"|fill");
+    if(key==o.coverKey) return o.coverBitmap;
+    if(o.coverBitmap) { DeleteObject(o.coverBitmap); o.coverBitmap=nullptr; }
+    o.coverKey=key;
+    if(w<=0 || h<=0) return nullptr;
+    std::unique_ptr<Gdiplus::Bitmap> image(Gdiplus::Bitmap::FromFile(path.c_str()));
+    if(!image || image->GetLastStatus()!=Gdiplus::Ok || !image->GetWidth() || !image->GetHeight()) return nullptr;
+    BITMAPINFO info{}; info.bmiHeader={sizeof(BITMAPINFOHEADER),w,-h,1,32,BI_RGB};
+    void* bits=nullptr; HBITMAP bitmap=CreateDIBSection(nullptr,&info,DIB_RGB_COLORS,&bits,nullptr,0);
+    if(!bitmap) return nullptr;
+    {
+        Gdiplus::Bitmap target(w,h,w*4,PixelFormat32bppPARGB,static_cast<BYTE*>(bits));
+        Gdiplus::Graphics graphics(&target);
+        graphics.Clear(Gdiplus::Color(0,0,0,0));
+        graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic); graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+        const double iw=image->GetWidth(), ih=image->GetHeight();
+        const double scale=fit?std::min(w/iw,h/ih):std::max(w/iw,h/ih);
+        const float dw=static_cast<float>(iw*scale), dh=static_cast<float>(ih*scale);
+        Gdiplus::ImageAttributes clamp; clamp.SetWrapMode(Gdiplus::WrapModeTileFlipXY); // No light seam at the edges.
+        graphics.DrawImage(image.get(),Gdiplus::RectF((w-dw)/2,(h-dh)/2,dw,dh),0,0,static_cast<Gdiplus::REAL>(iw),static_cast<Gdiplus::REAL>(ih),Gdiplus::UnitPixel,&clamp);
+    }
+    o.coverBitmap=bitmap; return bitmap;
+}
 struct LogoAtlas { IStream* stream=nullptr; Gdiplus::Bitmap* bitmap=nullptr; } logoAtlas;
 void ReleaseLogoAtlas() { delete logoAtlas.bitmap; if(logoAtlas.stream) logoAtlas.stream->Release(); logoAtlas={}; }
 HBITMAP LogoBitmap(Overlay& o,int index,int size,COLORREF tint) {
@@ -2615,6 +2677,15 @@ void PaintScene(Overlay& o,HRGN dirty) {
             const int x=static_cast<int>(std::lround(c.r.left+w/2-glyph.abcB/2.f-glyph.abcA));
             const int y=static_cast<int>(std::lround(c.r.top+h/2-(metrics.otmTextMetrics.tmAscent-metrics.otmsCapEmHeight/2.f)));
             SetTextColor(dc,c.color); ExtTextOutW(dc,x,y,0,nullptr,c.text.c_str(),1,nullptr); break;
+        }
+        case DrawCommand::Picture: {
+            const int w=c.r.right-c.r.left, h=c.r.bottom-c.r.top;
+            if(HBITMAP picture=CoverBitmap(o,c.text,w,h,c.align!=0)) {
+                HDC source=CreateCompatibleDC(dc); const auto old=SelectObject(source,picture);
+                AlphaBlend(dc,c.r.left,c.r.top,w,h,source,0,0,w,h,{AC_SRC_OVER,0,255,AC_SRC_ALPHA});
+                SelectObject(source,old); DeleteDC(source);
+            }
+            break;
         }
         case DrawCommand::Logo: {
             const int size=c.r.right-c.r.left;
@@ -3391,6 +3462,10 @@ void UpdateOverlays(bool force=true) {
             // Its own window: for a moment after you change a dial; never while it shows in place of other overlays.
             shown=visible=visible && o.adjust.replace<0 && (app.preview || app.edit || CurrentAdjustment(o.adjust).dial>=0);
         }
+        if(o.kind==StreamCoverKind) {
+            // While the garage screen is open, where the setup is, and for placing it.
+            shown=visible=visible && (app.preview || app.edit || app.frame.garage);
+        }
         if(o.kind==RadarKind) {
             // While you drive: with a car in range and 2 s after the last one left it, or always if so chosen.
             if(visible) UpdateRadar(o);
@@ -3474,6 +3549,7 @@ void PreviewData(double time) {
         // A stop each one to six laps before lap 8, the third car in the pits now; one car joined late.
         const int stint=i==2?0:(i==6?-1:1+(i*3)%6);
         c.lastPitLap=stint>=0?8-stint:-1; c.stintLaps=stint>=0?c.lap-c.lastPitLap:-1; c.stops=i==6?-1:1;
+        c.lapTopSpeed=(231.4-i*1.3-(i%3)*.8)/3.6; c.sessionTopSpeed=c.lapTopSpeed+(2.2+i%4*.6)/3.6;
     }
     const auto& own=f.cars[3]; f.lapCompleted=own.completed; f.lapPct=own.pct; f.fuel=27.4-3.12*laps;
     f.cars[1].outLap=true; f.cars[2].pit=true; f.cars[2].pitStationary=8.4; f.cars[5].surface=-1;
@@ -3487,17 +3563,18 @@ void UpdateStatus();
 void RefreshPage();
 void PollUpdates();
 // Posted to the main window when the banner and the current page should show new state.
-constexpr UINT RefreshUiMessage=WM_APP+2;
+constexpr UINT RefreshUiMessage=WM_APP+2, RemoveOverlayMessage=WM_APP+4; // lParam: the Overlay*
 // Posted by the telemetry thread when iRacing has a new frame.
 constexpr UINT TelemetryMessage=WM_APP+3;
 void ProcessFrame(bool connected) {
     if(!connected && app.sectors.Count()) app.sectors.Reset();
     if(!connected) app.passing.Update(app.session,Frame{});
     if(app.frame.yawNorth!=app.lastYaw && std::isfinite(app.frame.yawNorth)) { app.lastYaw=app.frame.yawNorth; app.yawChanged=app.now; }
-    if(!connected) { SaveBraking(); app.frame={}; app.events.Update(app.session,app.frame); app.session={}; app.pitLane.Reset(); app.refuel.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.weatherHistory.Reset(); }
+    if(!connected) { SaveBraking(); app.frame={}; app.events.Update(app.session,app.frame); app.session={}; app.pitLane.Reset(); app.refuel.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.topSpeeds.Reset(); app.weatherHistory.Reset(); }
     else {
         if(app.frame.time!=app.lastFrameTime) { app.lastFrameTime=app.frame.time; ++app.framesProcessed; }
         { ProfileScope p("analysis: pit history"); app.pitHistory.Update(app.session,app.frame); }
+        { ProfileScope p("analysis: top speeds"); app.topSpeeds.Update(app.session,app.frame); }
         // Always, about 2 us a frame: records stay complete when a sector view is opened mid-session.
         { ProfileScope p("analysis: sector timing"); app.sectors.Update(app.session,app.frame); }
         { ProfileScope p("analysis: passing times"); app.passing.Update(app.session,app.frame); LoadPaceProfiles(app.session); SavePaceProfiles(app.session); }
@@ -3554,9 +3631,10 @@ void WriteProfile() {
     profiler.sessionStart=app.pump.ParseTicks(); profiler.parsesStart=app.pump.Parses();
 }
 void ShowSettings() { ShowWindow(app.main,IsIconic(app.main)?SW_RESTORE:SW_SHOW); SetForegroundWindow(app.main); UpdateOverlays(); }
-void ToggleEdit() { app.edit=!app.edit; Tick(); UpdateOverlays(); RefreshPage(); }
-void ToggleHidden() { app.hidden=!app.hidden; UpdateOverlays(); RefreshPage(); }
-void ToggleObsPaused() { app.obsPaused=!app.obsPaused; UpdateOverlays(); RefreshPage(); }
+// Each also lights its button in the status bar.
+void ToggleEdit() { app.edit=!app.edit; Tick(); UpdateOverlays(); RefreshPage(); UpdateStatus(); }
+void ToggleHidden() { app.hidden=!app.hidden; UpdateOverlays(); RefreshPage(); UpdateStatus(); }
+void ToggleObsPaused() { app.obsPaused=!app.obsPaused; UpdateOverlays(); RefreshPage(); UpdateStatus(); }
 #include "Snapping.inc"
 LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     auto* o=reinterpret_cast<Overlay*>(GetWindowLongPtrW(w,GWLP_USERDATA));
@@ -3622,6 +3700,7 @@ LRESULT CALLBACK OverlayProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
 #include "Updates.inc"
 #include "Bands.inc"
 #include "OverlaysPage.inc"
+#include "OverlayPane.inc"
 #include "TablePage.inc"
 #include "ElementsPage.inc"
 #include "TrackMapPage.inc"
@@ -3665,21 +3744,21 @@ LRESULT CALLBACK MainProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
         return 0;
     case WM_EXITSIZEMOVE: RememberWindowPlacement(); Save(); return 0;
     case WM_GETMINMAXINFO: {
-        const UINT dpi=GetDpiForWindow(w); RECT minimum{0,0,MulDiv(900,dpi,96),MulDiv(600,dpi,96)};
+        const UINT dpi=GetDpiForWindow(w); RECT minimum{0,0,MulDiv(1000,dpi,96),MulDiv(600,dpi,96)};
         AdjustWindowRectExForDpi(&minimum,WS_OVERLAPPEDWINDOW,FALSE,WS_EX_CONTROLPARENT,dpi);
         reinterpret_cast<MINMAXINFO*>(lp)->ptMinTrackSize={minimum.right-minimum.left,minimum.bottom-minimum.top}; return 0;
     }
     case TrayMessage: if(lp==WM_LBUTTONDBLCLK || lp==WM_LBUTTONUP) ShowSettings(); else if(lp==WM_RBUTTONUP || lp==WM_CONTEXTMENU) TrayMenu(); return 0;
     case WM_HOTKEY: if(wp==1) ToggleEdit(); if(wp==2) ToggleHidden(); if(wp==3) ShowSettings(); if(wp==4 || wp==5) StepRaceEventByHotkey(wp==5?1:-1); if(wp==6) ToggleObsPaused(); return 0;
     case RefreshUiMessage: UpdateStatus(); RefreshPage(); return 0;
+    case RemoveOverlayMessage: RemoveOverlayNow(reinterpret_cast<Overlay*>(lp)); return 0;
     case TelemetryMessage: Tick(); return 0;
     case WM_COMMAND:
         switch(LOWORD(wp)) {
-        case NavOverlaysId: ShowPage(Page::Overlays); break;
+        case NavOverlaysId: OpenOverlays(); break;
         case NavSettingsId: ShowPage(Page::Settings); break;
         case NavRaceControlId: ShowPage(Page::RaceControl); break;
-        case StatusButtonId: StatusButton(); break;
-        case BackId: ShowPage(Page::Overlays); break;
+        case StatusButtonId: StatusButton(HIWORD(wp)); break;
         }
         return 0;
     case WM_CTLCOLORSTATIC: {
@@ -3767,7 +3846,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
     app.brush=UiTheme::BackgroundBrush();
     WNDCLASSEXW cls{sizeof(cls)}; cls.lpfnWndProc=MainProc; cls.hInstance=instance; cls.hCursor=LoadCursorW(nullptr,IDC_ARROW); cls.hIcon=LoadIconW(instance,MAKEINTRESOURCEW(101)); cls.hbrBackground=app.brush; cls.lpszClassName=L"RaceMate.Settings"; RegisterClassExW(&cls);
     constexpr DWORD style=WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN;
-    const UINT dpi=GetDpiForSystem(); RECT size{0,0,MulDiv(1000,dpi,96),MulDiv(720,dpi,96)}; AdjustWindowRectExForDpi(&size,style,FALSE,WS_EX_CONTROLPARENT,dpi);
+    const UINT dpi=GetDpiForSystem(); RECT size{0,0,MulDiv(1320,dpi,96),MulDiv(760,dpi,96)}; AdjustWindowRectExForDpi(&size,style,FALSE,WS_EX_CONTROLPARENT,dpi);
     app.main=CreateWindowExW(WS_EX_CONTROLPARENT,cls.lpszClassName,L"RaceMate",style,CW_USEDEFAULT,CW_USEDEFAULT,size.right-size.left,size.bottom-size.top,nullptr,nullptr,instance,nullptr);
     if(!app.main) { DeleteObject(app.brush); if(mutex) CloseHandle(mutex); return 1; }
     CreateMainUi();

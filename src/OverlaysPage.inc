@@ -1,229 +1,131 @@
-// Expandable layout groups own their overlay instances and editing controls.
+// The open layout's own page, right of the overlay list: its name, when it is active, its preview, its overlays'
+// places, sharing and removing it. Layouts are added and ordered in the list.
+Layout* FindLayout(int id) { for(auto& l:app.layouts) if(l.id==id) return &l; return nullptr; }
+// A layout file to write or read; empty when cancelled.
+std::wstring LayoutFile(bool save,std::wstring name) {
+    for(wchar_t& c:name) if(wcschr(L"\\/:*?\"<>|",c)) c=L'-';
+    wchar_t file[MAX_PATH]{}; if(save) wcsncpy_s(file,name.c_str(),_TRUNCATE);
+    OPENFILENAMEW dialog{sizeof(dialog)}; dialog.hwndOwner=app.main; dialog.lpstrFile=file; dialog.nMaxFile=MAX_PATH;
+    dialog.lpstrFilter=L"RaceMate layouts (*.racemate-layout)\0*.racemate-layout\0All files\0*.*\0"; dialog.lpstrDefExt=L"racemate-layout";
+    dialog.Flags=OFN_NOCHANGEDIR|OFN_PATHMUSTEXIST|(save?OFN_OVERWRITEPROMPT:OFN_FILEMUSTEXIST);
+    return (save?GetSaveFileNameW(&dialog):GetOpenFileNameW(&dialog))?std::wstring(file):std::wstring();
+}
+void ExportLayoutChoice(int id) {
+    const Layout* layout=FindLayout(id); if(!layout) return;
+    const auto path=LayoutFile(true,layout->name); if(path.empty()) return;
+    if(!ExportLayout(id,path)) MessageBoxW(app.main,(L"The layout could not be written to "+path+L".").c_str(),L"RaceMate",MB_OK|MB_ICONWARNING);
+}
+// A layout from a file, opened; 0 when cancelled or unreadable.
+int ImportLayoutChoice() {
+    const auto path=LayoutFile(false,L""); if(path.empty()) return 0;
+    // Another monitor can make the old places wrong; the overlays can also start where new ones do.
+    const int answer=MessageBoxW(app.main,L"Place the overlays where they were when the layout was exported?\n\nNo puts them at their default places, as for new overlays.",L"RaceMate",MB_YESNOCANCEL|MB_ICONQUESTION);
+    if(answer==IDCANCEL) return 0;
+    const int id=ImportLayout(path,answer==IDYES);
+    if(!id) MessageBoxW(app.main,L"This file is not a layout exported from RaceMate.",L"RaceMate",MB_OK|MB_ICONWARNING);
+    return id;
+}
+// After RemoveOverlayChoice: its page goes first, as it works on the overlay; an open one then opens the next.
+void RemoveOverlayNow(Overlay* target) {
+    if(std::none_of(app.overlays.begin(),app.overlays.end(),[&](const Overlay& o){return &o==target;})) return;
+    const bool open=ui.page==Page::Overlay && ui.overlay==target;
+    if(open) { ShowPage(Page::Overlays); ui.overlay=nullptr; }
+    RemoveInstance(*target); SettingChanged();
+    if(open) OpenOverlays(); else RefreshPage();
+}
+// Asks first; afterwards the next layout's first overlay opens, or the empty layouts page.
+void RemoveLayoutChoice(int id) {
+    const Layout* layout=FindLayout(id); if(!layout) return;
+    const auto question=L"Remove the layout "+layout->name+L" with its overlays and their settings?";
+    if(MessageBoxW(app.main,question.c_str(),L"RaceMate",MB_OKCANCEL|MB_ICONQUESTION)!=IDOK) return;
+    if(ui.page==Page::Overlay) ShowPage(Page::Overlays);
+    RemoveLayout(id); OpenOverlays();
+}
 class OverlaysPage : public PageWindow {
 public:
     OverlaysPage() : PageWindow(ui.heading,ui.text) {}
 private:
-    enum class Key { None, Instance, Add, Move, Reset, Export, Layout, AddLayout, ImportLayout };
-    static constexpr int ListId=100, LayoutNameId=220, LayoutConditionId=221, LayoutSessionId=222;
+    enum class Key { None, Name, Condition, Session, Preview, Reset, Export, Remove };
+    static constexpr int ListId=100, NameEditId=200;
+    static constexpr const wchar_t* SessionChoices[]={L"Any",L"Practice",L"Qualifying",L"Race"};
 
-    void OnCreate() override {
-        list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont());
-        editors_.Attach(list_,Instance(),TextFont());
-        // Layouts start open; the ones closed stay closed while RaceMate runs.
-        Refresh();
-    }
-    void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
-
-    // Only what differs from a new overlay: the defaults need no reading.
-    static std::wstring Summary(const Overlay& o) {
-        std::wstring text;
-        auto add=[&](const std::wstring& part) { text+=(text.empty()?L"":L"  ·  ")+part; };
-        if(o.place.scale!=100) add(std::to_wstring(o.place.scale)+L" %");
-        if(o.place.opacity!=90) add(L"opacity "+std::to_wstring(o.place.opacity)+L" %");
-        if(o.place.backgroundOnly) add(L"background only");
-        if(CornerIndex(o.place)) add(L"grows from "+std::wstring(OverlayCorners[CornerIndex(o.place)]));
-        if(o.place.rate!=DefaultRates[o.kind]) add(std::to_wstring(o.place.rate)+L" Hz");
-        if(o.place.rounded) add(L"rounded");
-        return text;
-    }
-    Layout* FindLayout(int id) { for(auto& l:app.layouts) if(l.id==id) return &l; return nullptr; }
+    void OnCreate() override { list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont()); editors_.Attach(list_,Instance(),TextFont()); Refresh(); }
+    void OnSize(int width,int height) override { Place(list_.Handle(),0,0,width,height); }
     void Refresh() {
-        if(expandedLayout_ && !FindLayout(expandedLayout_)) { expandedLayout_=0; editors_.Clear(); }
-        std::vector<RowList::Row> rows; keys_.clear(); overlays_.clear(); layouts_.clear();
-        auto push=[&](RowList::Row row,Key key,Overlay* o=nullptr,int layout=0) { rows.push_back(std::move(row)); keys_.push_back(key); overlays_.push_back(o); layouts_.push_back(layout); };
-        auto header=[&](std::wstring title) { RowList::Row row; row.header=true; row.title=std::move(title); push(std::move(row),Key::None); };
-        // Moving, hiding and pausing OBS in one bar, first so it stays in view however many overlays follow.
-        {
-            RowList::Row bar; bar.title=L"All overlays"; bar.choiceFlags=true; bar.choices={L"Move",L"Hide",L"Pause OBS"};
-            bar.choice=(app.edit?1:0)|(app.hidden?2:0)|(app.obsPaused?4:0);
-            bar.detail=app.edit?L"Drag them with the mouse":(app.hidden?L"Hidden on your screen; OBS keeps its output":(app.obsPaused?L"OBS gets nothing; your screen is unchanged":L"Shortcuts: "+HotkeyText(app.hotkeys[0])+L", "+HotkeyText(app.hotkeys[1])+L", "+HotkeyText(app.hotkeys[5])));
-            push(std::move(bar),Key::Move);
+        std::vector<RowList::Row> rows; keys_.clear();
+        auto push=[&](RowList::Row row,Key key) { rows.push_back(std::move(row)); keys_.push_back(key); };
+        auto header=[&](const wchar_t* title) { RowList::Row row; row.header=true; row.title=title; push(std::move(row),Key::None); };
+        const Layout* l=FindLayout(app.layout);
+        if(!l) {
+            RowList::Row none; none.title=L"No layouts"; none.detail=L"Add one with Add layout in the list."; push(std::move(none),Key::None);
+            list_.SetRows(std::move(rows)); return;
         }
-        header(L"Layouts");
-        for(const auto& l:app.layouts) {
-            const bool open=std::find(app.openLayoutGroups.begin(),app.openLayoutGroups.end(),l.id)!=app.openLayoutGroups.end();
-            RowList::Row row; row.title=l.name;
-            row.detail=std::wstring(ConditionNames[l.condition])+(l.session?L" · "+std::wstring(SessionNames[l.session]):L"")+L": "+ConditionDetails[l.condition]+(l.session?L", "+std::wstring(SessionPhrases[l.session]):L"");
-            if(LayoutPreviewing(l.id)) { row.pill=L"Preview"; row.pillTone=RowList::Tone::Warning; }
-            else if(LayoutLive(l.id)) { row.pill=L"Active"; row.pillTone=RowList::Tone::Active; }
-            row.button=LayoutPreviewRequested(l.id)?L"Stop preview":L"Preview";
-            row.buttonEnabled=!LayoutLive(l.id) || LayoutPreviewRequested(l.id);
-            row.iconButtons={open?Glyph::Collapse:Glyph::Expand,Glyph::Remove};
-            row.expandHeight=l.id==expandedLayout_?120:0; row.dragGroup=1;
-            push(std::move(row),Key::Layout,nullptr,l.id);
-            if(!open) continue;
-            for(auto& o:app.overlays) if(o.layout==l.id) {
-                RowList::Row child; child.title=Name(o); child.detail=Summary(o); child.indent=40;
-                if(!o.customName.empty()) child.detail=std::wstring(Titles[o.kind])+L"  ·  "+child.detail;
-                // The switch is your screen; the pill says where it appears, OBS being set on its page.
-                child.toggle=o.place.enabled?1:0; child.button=L"Settings";
-                // The switch is your screen; OBS, set on its page, shows as a pill.
-                child.pill=o.place.spout?(o.place.enabled?L"Screen + OBS":L"OBS"):L""; child.pillTone=RowList::Tone::Accent;
-                // Size, opacity, OBS and the rest are on its page, under Window.
-                child.iconButtons={o.number>1?Glyph::Remove:wchar_t{0}};
-                push(std::move(child),Key::Instance,&o,l.id);
-            }
-            RowList::Row add; add.title=L"Add overlay"; add.indent=40;
-            add.detail=L"Add an overlay with its own name and settings to "+l.name+L"."; add.button=L"Add...";
-            push(std::move(add),Key::Add,nullptr,l.id);
-            RowList::Row reset; reset.title=L"Reset positions"; reset.indent=40;
-            reset.detail=L"Restore overlay positions in "+l.name+L"."; reset.button=L"Reset";
-            push(std::move(reset),Key::Reset,nullptr,l.id);
-            RowList::Row share; share.title=L"Export layout"; share.indent=40;
-            share.detail=L"Save "+l.name+L" to a file, to share it or take it to another computer."; share.button=L"Export...";
-            push(std::move(share),Key::Export,nullptr,l.id);
-        }
-        RowList::Row addLayout; addLayout.title=L"Add layout";
-        addLayout.detail=L"An independent layout, copied or starting with defaults."; addLayout.button=L"Add...";
-        push(std::move(addLayout),Key::AddLayout);
-        RowList::Row load; load.title=L"Import layout";
-        load.detail=L"A layout exported from RaceMate, added as a new layout; your other layouts stay as they are."; load.button=L"Import...";
-        push(std::move(load),Key::ImportLayout);
+        // The name first, as on an overlay's page; its field opens under it.
+        RowList::Row name; name.title=L"Name"; name.detail=l->name; name.iconButtons={naming_?Glyph::Collapse:Glyph::Expand}; name.expandHeight=naming_?WindowNameHeight:0;
+        push(std::move(name),Key::Name);
+        header(L"When it shows");
+        RowList::Row when; when.title=L"Active when"; when.detail=ConditionDetails[l->condition]; when.choices.assign(std::begin(ConditionNames),std::end(ConditionNames)); when.choice=l->condition;
+        push(std::move(when),Key::Condition);
+        RowList::Row session; session.title=L"Session"; session.choices.assign(std::begin(SessionChoices),std::end(SessionChoices)); session.choice=l->session;
+        session.detail=l->session?L"Only "+std::wstring(SessionPhrases[l->session]):L"In every kind of session";
+        push(std::move(session),Key::Session);
+        RowList::Row preview; preview.title=L"Preview";
+        preview.detail=LayoutLive(l->id)?L"Active now, with live telemetry":L"Its overlays with sample data, while iRacing is not running it";
+        preview.button=LayoutPreviewRequested(l->id)?L"Stop preview":L"Preview"; preview.buttonEnabled=!LayoutLive(l->id) || LayoutPreviewRequested(l->id);
+        push(std::move(preview),Key::Preview);
+        header(L"Overlays");
+        RowList::Row reset; reset.title=L"Reset positions"; reset.detail=L"Every overlay of "+l->name+L" back to its default place."; reset.button=L"Reset";
+        push(std::move(reset),Key::Reset);
+        header(L"Layout");
+        RowList::Row share; share.title=L"Export"; share.detail=L"Save it to a file, to share it or take it to another computer."; share.button=L"Export...";
+        push(std::move(share),Key::Export);
+        RowList::Row remove; remove.title=L"Remove layout"; remove.detail=L"With its overlays and their settings."; remove.button=L"Remove..."; remove.buttonDanger=true;
+        push(std::move(remove),Key::Remove);
         list_.SetRows(std::move(rows));
     }
-    int ExpandedRow() const {
-        for(size_t i=0;i<keys_.size();++i) {
-            if(keys_[i]==Key::Layout && expandedLayout_ && layouts_[i]==expandedLayout_) return static_cast<int>(i);
-        }
-        return -1;
-    }
-    void BuildEditors() {
-        syncing_=true;
+    // The name field in the first row.
+    void BuildEditor() {
         editors_.Clear();
-        const int row=ExpandedRow(); if(row<0) { syncing_=false; return; }
-        editors_.Begin(row);
-        if(const Layout* layout=expandedLayout_?FindLayout(expandedLayout_):nullptr) {
-            editors_.Label(L"Name",0,10,84); editors_.Edit(LayoutNameId,layout->name,88,10,230);
-            editors_.Label(L"Active when",0,46,84);
-            editors_.Combo(LayoutConditionId,std::vector<std::wstring>(std::begin(ConditionNames),std::end(ConditionNames)),layout->condition,88,46,230);
-            editors_.Label(L"Session",0,82,84);
-            editors_.Combo(LayoutSessionId,std::vector<std::wstring>(std::begin(SessionNames),std::end(SessionNames)),layout->session,88,82,230);
-            syncing_=false; editors_.Position(); return;
-        }
+        const Layout* l=FindLayout(app.layout); if(!naming_ || !l) return;
+        syncing_=true; editors_.Begin(0);
+        editors_.Label(L"Name",0,10,84); SendMessageW(editors_.Edit(NameEditId,l->name,88,10,410),EM_SETLIMITTEXT,127,0);
         syncing_=false; editors_.Position();
     }
-    void ExpandLayout(int id) {
-        const bool open=std::find(app.openLayoutGroups.begin(),app.openLayoutGroups.end(),id)!=app.openLayoutGroups.end();
-        if(open) { std::erase(app.openLayoutGroups,id); expandedLayout_=0; }
-        else { app.openLayoutGroups.push_back(id); expandedLayout_=id; Save(); app.layout=id; UpdateOverlays(); }
-        Refresh(); BuildEditors();
-        if(const int row=ExpandedRow(); row>=0) list_.ScrollIntoView(row);
-    }
-    void Add(int layout) {
-        static constexpr int kinds[]={RelativeKind,StandingsKind,FuelKind,WeatherKind,TrackMapKind};
-        std::vector<std::wstring> items; for(int kind:kinds) items.push_back(Titles[kind]);
-        const int choice=ChooseFromMenu(items,-1); if(choice<0) return;
-        Save(); app.layout=layout; NewInstance(kinds[choice]); Refresh();
-    }
-    void Remove(Overlay& o) {
-        const auto question=L"Remove "+Name(o)+L" and its settings?";
-        if(MessageBoxW(app.main,question.c_str(),L"RaceMate",MB_OKCANCEL|MB_ICONQUESTION)!=IDOK) return;
-        RemoveInstance(o); UpdateOverlays(); Refresh();
-    }
-    // A layout file to write or read; empty when cancelled.
-    static std::wstring LayoutFile(bool save,std::wstring name) {
-        for(wchar_t& c:name) if(wcschr(L"\\/:*?\"<>|",c)) c=L'-';
-        wchar_t file[MAX_PATH]{}; if(save) wcsncpy_s(file,name.c_str(),_TRUNCATE);
-        OPENFILENAMEW dialog{sizeof(dialog)}; dialog.hwndOwner=app.main; dialog.lpstrFile=file; dialog.nMaxFile=MAX_PATH;
-        dialog.lpstrFilter=L"RaceMate layouts (*.racemate-layout)\0*.racemate-layout\0All files\0*.*\0"; dialog.lpstrDefExt=L"racemate-layout";
-        dialog.Flags=OFN_NOCHANGEDIR|OFN_PATHMUSTEXIST|(save?OFN_OVERWRITEPROMPT:OFN_FILEMUSTEXIST);
-        return (save?GetSaveFileNameW(&dialog):GetOpenFileNameW(&dialog))?std::wstring(file):std::wstring();
-    }
-    void Export(int id) {
-        const Layout* layout=FindLayout(id); if(!layout) return;
-        const auto path=LayoutFile(true,layout->name); if(path.empty()) return;
-        if(!ExportLayout(id,path)) MessageBoxW(app.main,(L"The layout could not be written to "+path+L".").c_str(),L"RaceMate",MB_OK|MB_ICONWARNING);
-    }
-    void Import() {
-        const auto path=LayoutFile(false,L""); if(path.empty()) return;
-        // Another monitor can make the old places wrong; the overlays can also start where new ones do.
-        const int answer=MessageBoxW(app.main,L"Place the overlays where they were when the layout was exported?\n\nNo puts them at their default places, as for new overlays.",L"RaceMate",MB_YESNOCANCEL|MB_ICONQUESTION);
-        if(answer==IDCANCEL) return;
-        const int id=ImportLayout(path,answer==IDYES);
-        if(!id) { MessageBoxW(app.main,L"This file is not a layout exported from RaceMate.",L"RaceMate",MB_OK|MB_ICONWARNING); return; }
-        if(std::find(app.openLayoutGroups.begin(),app.openLayoutGroups.end(),id)==app.openLayoutGroups.end()) app.openLayoutGroups.push_back(id);
-        Refresh();
-    }
-    void AddLayoutChoice() {
-        const Layout* active=ActiveLayout();
-        const int choice=active?ChooseFromMenu({L"Copy of "+active->name,L"Default overlays"},-1):1;
-        if(choice<0) return;
-        AddLayout(choice==0);
-        if(std::find(app.openLayoutGroups.begin(),app.openLayoutGroups.end(),app.layout)==app.openLayoutGroups.end()) app.openLayoutGroups.push_back(app.layout);
-        Refresh();
-    }
-    void RemoveLayoutChoice(int id) {
-        const Layout* layout=FindLayout(id); if(!layout) return;
-        const auto question=L"Remove the layout "+layout->name+L" with its overlays and their settings?";
-        if(MessageBoxW(app.main,question.c_str(),L"RaceMate",MB_OKCANCEL|MB_ICONQUESTION)!=IDOK) return;
-        if(expandedLayout_==id) { expandedLayout_=0; editors_.Clear(); }
-        RemoveLayout(id); Refresh();
-    }
-    // A layout dragged to where another stands in the display order.
-    void DropLayout(int id,int place) {
-        const auto from=std::find_if(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==id;});
-        const auto to=std::find_if(app.layouts.begin(),app.layouts.end(),[&](const Layout& l){return l.id==place;});
-        if(from==app.layouts.end() || to==app.layouts.end() || from==to) return;
-        if(from<to) std::rotate(from,from+1,to+1); else std::rotate(to,from,from+1);
-        ReconsiderLayout(); Save(); Refresh(); BuildEditors();
+    // Typed names show at once, in the title and the list; an empty one keeps the last.
+    void NameCommand(int code) {
+        Layout* l=FindLayout(app.layout); if(!l || syncing_) return;
+        if(code==EN_CHANGE) {
+            auto name=editors_.Text(NameEditId);
+            const auto first=name.find_first_not_of(L" \t"); if(first==std::wstring::npos) return;
+            l->name=name.substr(first,name.find_last_not_of(L" \t")-first+1).substr(0,127); Save();
+            SetWindowTextW(ui.title,l->name.c_str());
+            if(ui.pane) SendMessageW(ui.pane,WM_COMMAND,MAKEWPARAM(PageRefreshId,0),0);
+        }
+        if(code==EN_KILLFOCUS) Refresh();
     }
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); return true; }
-        if(id==LayoutNameId) {
-            // The name is saved as typed; the list shows it once the field is left.
-            if(Layout* layout=FindLayout(expandedLayout_); layout && !syncing_) {
-                if(code==EN_CHANGE) {
-                    wchar_t name[128]{}; GetWindowTextW(editors_.Get(id),name,128);
-                    if(name[0]) { layout->name=name; Save(); }
-                } else if(code==EN_KILLFOCUS) Refresh();
-            }
-            return true;
-        }
-        if(id==LayoutConditionId || id==LayoutSessionId) {
-            if(Layout* layout=FindLayout(expandedLayout_); layout && !syncing_ && code==CBN_SELCHANGE && editors_.Selection(id)>=0) {
-                (id==LayoutSessionId?layout->session:layout->condition)=editors_.Selection(id); ReconsiderLayout(); Save(); Refresh();
-            }
-            return true;
-        }
+        if(id==NameEditId) { NameCommand(code); return true; }
         if(id!=ListId) return false;
         if(code==RowList::kLayoutChanged) { editors_.Position(); return true; }
         const int row=list_.NotifiedRow();
         if(row<0 || static_cast<size_t>(row)>=keys_.size()) return true;
-        const Key key=keys_[row]; Overlay* o=overlays_[row]; const int layout=layouts_[row];
-        const bool on=list_.Rows()[row].toggle==1, pressed=code==RowList::kButton || code==RowList::kActivated;
-        const int icon=code==RowList::kIconButton?list_.NotifiedIconButton():-1;
-        const wchar_t glyph=icon>=0 && icon<static_cast<int>(list_.Rows()[row].iconButtons.size())?list_.Rows()[row].iconButtons[icon]:0;
-        switch(key) {
-        case Key::Instance:
-            if(code==RowList::kToggled) { o->place.enabled=on; SettingChanged(); Refresh(); }
-            else if(code==RowList::kButton || code==RowList::kActivated) OpenOverlay(*o);
-            else if(glyph==Glyph::Remove) Remove(*o);
-            break;
-        case Key::Layout:
-            if(code==RowList::kMoved) DropLayout(layout,layouts_[list_.DropRow()]);
-            else if(code==RowList::kButton) { ToggleLayoutPreview(layout); Refresh(); }
-            else if(glyph==Glyph::Remove) RemoveLayoutChoice(layout);
-            else if(glyph==Glyph::Expand || glyph==Glyph::Collapse || code==RowList::kActivated) ExpandLayout(layout);
-            break;
-        case Key::AddLayout: if(pressed) AddLayoutChoice(); break;
-        case Key::Add: if(pressed) Add(layout); break;
-        case Key::Move:
-            if(code==RowList::kChoice) {
-                const int picked=list_.NotifiedChoice();
-                if(picked==0) ToggleEdit(); else if(picked==1) ToggleHidden(); else ToggleObsPaused();
-                Refresh();
-            }
-            break;
-        case Key::Reset: if(pressed) { Save(); app.layout=layout; ResetPositions(); } break;
-        case Key::Export: if(pressed) Export(layout); break;
-        case Key::ImportLayout: if(pressed) Import(); break;
+        Layout* l=FindLayout(app.layout); if(!l) return true;
+        const bool pressed=code==RowList::kButton;
+        // Each choice below may rebuild the pages, this one included: nothing of it is used afterwards.
+        switch(keys_[row]) {
+        case Key::Name: if(code==RowList::kIconButton || code==RowList::kActivated) { naming_=!naming_; Refresh(); BuildEditor(); } break;
+        case Key::Condition: if(code==RowList::kChoice) { l->condition=list_.NotifiedChoice(); ReconsiderLayout(); Save(); RefreshPage(); } break;
+        case Key::Session: if(code==RowList::kChoice) { l->session=list_.NotifiedChoice(); ReconsiderLayout(); Save(); RefreshPage(); } break;
+        case Key::Preview: if(pressed) ToggleLayoutPreview(l->id); break;
+        case Key::Reset: if(pressed) ResetPositions(); break;
+        case Key::Export: if(pressed) ExportLayoutChoice(l->id); break;
+        case Key::Remove: if(pressed) RemoveLayoutChoice(l->id); break;
         default: break;
         }
         return true;
     }
-
-    RowList list_; RowEditors editors_;
-    std::vector<Key> keys_; std::vector<Overlay*> overlays_; std::vector<int> layouts_;
-    int expandedLayout_=0; bool syncing_=false;
+    RowList list_; RowEditors editors_; std::vector<Key> keys_;
+    bool naming_=false, syncing_=false;
 };
 HWND CreateOverlaysPage(HWND parent) { return PageWindow::Show(std::make_unique<OverlaysPage>(),app.instance,parent,560,360); }

@@ -7,7 +7,7 @@ public:
     explicit ElementsPage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
     enum class Key { None, Window, Layout, Rounded, Module, Band, Info, SetupChanges, PitStrip, Countdown, SideCar, SideApart, RadarBackground, RadarRange, RadarShows, RadarDistances, TrafficBackground, TrafficCars, TrafficGapKey, TrafficFaster,
-        AdjustPlace, AdjustTime, AdjustWas, AdjustTimer, AdjustGroup, AdjustSample };
+        AdjustPlace, AdjustTime, AdjustWas, AdjustTimer, AdjustGroup, AdjustSample, CoverPicture, CoverFit, CoverWidth, CoverHeight, CoverPictureSize };
     static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210, HumidityEditId=212, HistoryPartEditId=213, CautionEditId=220, TargetRefuelEditId=221, ClassLeaderEditId=222, SlotEditId=230, HeaderRow=1000, FooterRow=1001, NameRow=1002;
 
     void OnCreate() override {
@@ -15,7 +15,7 @@ private:
         editors_.Attach(list_,Instance(),TextFont());
         Refresh();
     }
-    void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
+    void OnSize(int width,int height) override { Place(list_.Handle(),0,0,width,height); }
 
     bool Fuel() const { return o_.kind==FuelKind; }
     const ModuleInfo* Modules() const { return Fuel()?FuelModules:WeatherModules; }
@@ -38,6 +38,8 @@ private:
         auto info=[&](const wchar_t* title,const wchar_t* detail,const wchar_t* pill=L"",RowList::Tone tone=RowList::Tone::Neutral) {
             RowList::Row row; row.title=title; row.detail=detail; row.pill=pill; row.pillTone=tone; push(std::move(row),Key::Info);
         };
+        // Removing it comes last, whichever kind's rows come before.
+        auto done=[&] { header(L"Overlay"); push(RemoveOverlayRow(),Key::Window,WindowRemove); list_.SetRows(std::move(rows)); };
         auto bands=[&] {
             header(L"Header and footer");
             for(int id:{HeaderRow,FooterRow}) {
@@ -46,9 +48,10 @@ private:
                 push(std::move(row),Key::Band,id);
             }
         };
-        // Where it shows first; its window last, under what it shows.
+        // Where it shows first, its window right under it, then what it shows.
+        push(OverlayNameRow(o_,expanded_==NameRow),Key::Window,WindowName);
         push(ShowsRow(o_),Key::Window,WindowShows);
-        auto window=[&] { header(L"Window"); for(auto& [item,row]:WindowRows(o_,expanded_==NameRow)) push(std::move(row),Key::Window,item); };
+        header(L"Window"); for(auto& [item,row]:WindowRows(o_)) push(std::move(row),Key::Window,item);
         if(o_.kind==AdjustmentsKind) {
             const auto& a=o_.adjust;
             header(L"Where it shows");
@@ -78,7 +81,7 @@ private:
                 group.detail=std::wstring(members[g])+L"; in "+(g==0?L"red":g==1?L"yellow":g==2?L"violet":g==3?L"teal":L"blue")+L". Each car has only some.";
                 push(std::move(group),Key::AdjustGroup,g);
             }
-            window(); list_.SetRows(std::move(rows)); return;
+            done(); return;
         }
         if(o_.kind==TrafficKind) {
             const auto& t=o_.traffic;
@@ -101,7 +104,7 @@ private:
             header(L"Colors");
             info(L"Box",L"The car's class colour; it pulses within 1.5 s",L"Class");
             info(L"Bar",L"Fills as the car closes in, from green to red",L"Green to red");
-            window(); list_.SetRows(std::move(rows)); return;
+            done(); return;
         }
         if(o_.kind==RadarKind) {
             const auto& r=o_.radar;
@@ -125,11 +128,33 @@ private:
             header(L"Colors");
             info(L"Cars",L"In their class color; yours outlined",L"Class");
             info(L"Spotter",L"Where it reports cars beside you",L"Red",RowList::Tone::Warning);
-            window(); list_.SetRows(std::move(rows)); return;
+            done(); return;
+        }
+        if(o_.kind==StreamCoverKind) {
+            const auto& c=o_.cover;
+            header(L"Picture");
+            RowList::Row picture; picture.title=L"Picture"; picture.button=L"Choose...";
+            picture.detail=c.image.empty()?L"None: a dark panel":std::filesystem::path(c.image).filename().wstring();
+            if(!c.image.empty()) { picture.iconButtons={Glyph::Remove}; if(GetFileAttributesW(c.image.c_str())==INVALID_FILE_ATTRIBUTES) { picture.pill=L"Not found"; picture.pillTone=RowList::Tone::Warning; } }
+            push(std::move(picture),Key::CoverPicture);
+            RowList::Row fit; fit.title=L"Fitting"; fit.choices={L"Fill",L"Whole"}; fit.choice=c.fit?1:0; fit.muted=c.image.empty();
+            fit.detail=c.fit?L"The whole picture, on the panel where it is narrower":L"Fills the cover, cut at the edges where the shapes differ";
+            push(std::move(fit),Key::CoverFit);
+            header(L"Size");
+            auto size=[&](const wchar_t* title,int value,int from,int to,Key key) {
+                RowList::Row row; row.title=title; row.slider=value; row.sliderMin=from; row.sliderMax=to; row.sliderStep=10; row.sliderUnit=L" px"; push(std::move(row),key);
+            };
+            size(L"Width",c.width,CoverMinWidth,CoverMaxWidth,Key::CoverWidth);
+            size(L"Height",c.height,CoverMinHeight,CoverMaxHeight,Key::CoverHeight);
+            if(!c.image.empty()) { RowList::Row own; own.title=L"Picture's shape"; own.detail=L"Height to the picture's proportions at this width"; own.button=L"Match"; push(std::move(own),Key::CoverPictureSize); }
+            header(L"When it shows");
+            info(L"On the garage screen",L"While the setup screen is open, and while overlays are moved or previewed.");
+            info(L"In OBS",L"Add its Spout2 source over your game capture, then place and size it there to cover the setup.");
+            done(); return;
         }
         if(o_.kind==SideWarningKind) {
             header(L"Style");
-            RowList::Row apart; apart.title=L"Distance apart"; apart.button=MenuButton(std::to_wstring(o_.sideApart)+L" %");
+            RowList::Row apart; apart.title=L"Distance apart"; apart.slider=o_.sideApart; apart.sliderMin=20; apart.sliderMax=100; apart.sliderStep=10; apart.sliderUnit=L" %";
             apart.detail=o_.sideApart==100?L"Of the screen width: at its edges":L"Of the screen width, centred on it";
             push(std::move(apart),Key::SideApart);
             push(RoundedRow(o_),Key::Rounded);
@@ -144,7 +169,7 @@ private:
             info(L"One car beside you",L"The whole bar",L"Red",RowList::Tone::Warning);
             info(L"Two cars on one side",L"Two stripes",L"Red",RowList::Tone::Warning);
             info(L"Where the car is",L"The block on the bar",L"Amber");
-            window(); list_.SetRows(std::move(rows)); return;
+            done(); return;
         }
         if(o_.kind==PitLimiterKind) {
             header(L"Style");
@@ -168,7 +193,7 @@ private:
             info(L"Limiter off",L"PIT LIMITER NOT ACTIVE",L"Red",RowList::Tone::Warning);
             info(L"Limiter on after pit exit",L"TURN OFF PIT LIMITER",L"Flashing red",RowList::Tone::Warning);
             info(L"Status unknown",L"iRacing doesn't report the limiter",L"Gray");
-            window(); list_.SetRows(std::move(rows)); return;
+            done(); return;
         }
         header(L"Style");
         RowList::Row layout; layout.title=L"Arrangement"; layout.choices={L"Panel",L"Strip"}; layout.choice=Strip()?1:0;
@@ -206,7 +231,26 @@ private:
             header(L"Learning");
             info(L"Which laps count",L"Whole laps at racing speed: caution laps, pit and out laps, refuels and the first partial lap never count. The 10-lap average drives range, pit window, refuel and targets.");
         }
-        window(); list_.SetRows(std::move(rows));
+        done();
+    }
+    // A picture file for the Stream Cover; the cover takes its proportions at its width.
+    void ChooseCoverPicture() {
+        wchar_t file[MAX_PATH]{};
+        OPENFILENAMEW dialog{sizeof(dialog)}; dialog.hwndOwner=app.main; dialog.lpstrFile=file; dialog.nMaxFile=MAX_PATH;
+        dialog.lpstrFilter=L"Pictures (*.png;*.jpg;*.jpeg;*.bmp;*.gif)\0*.png;*.jpg;*.jpeg;*.bmp;*.gif\0All files\0*.*\0";
+        dialog.Flags=OFN_NOCHANGEDIR|OFN_PATHMUSTEXIST|OFN_FILEMUSTEXIST;
+        if(!GetOpenFileNameW(&dialog)) return;
+        o_.cover.image=file;
+        if(!MatchPictureShape()) MessageBoxW(app.main,L"This file could not be read as a picture.",L"RaceMate",MB_OK|MB_ICONWARNING);
+        Fit(o_); Changed();
+    }
+    // The height for the picture's proportions at the cover's width; false when it cannot be read.
+    bool MatchPictureShape() {
+        std::unique_ptr<Gdiplus::Bitmap> image(Gdiplus::Bitmap::FromFile(o_.cover.image.c_str()));
+        if(!image || image->GetLastStatus()!=Gdiplus::Ok || !image->GetWidth() || !image->GetHeight()) return false;
+        const int height=static_cast<int>(std::lround(o_.cover.width*static_cast<double>(image->GetHeight())/image->GetWidth()/10.0))*10;
+        o_.cover.height=std::clamp(height,CoverMinHeight,CoverMaxHeight);
+        return true;
     }
     int ExpandedRow() const {
         for(size_t i=0;i<keys_.size();++i) {
@@ -266,7 +310,7 @@ private:
         const bool on=list_.Rows()[row].toggle==1, pressed=code==RowList::kButton || code==RowList::kActivated;
         const int icon=code==RowList::kIconButton?list_.NotifiedIconButton():-1;
         const wchar_t glyph=icon>=0 && icon<static_cast<int>(list_.Rows()[row].iconButtons.size())?list_.Rows()[row].iconButtons[icon]:0;
-        const int element=ids_[row], picked=code==RowList::kChoice?list_.NotifiedChoice():-1;
+        const int element=ids_[row], picked=code==RowList::kChoice?list_.NotifiedChoice():(code==RowList::kSlider?list_.Rows()[row].slider:-1);
         switch(keys_[row]) {
         case Key::Window:
             if(element==WindowName) { if(glyph==Glyph::Expand || glyph==Glyph::Collapse || code==RowList::kActivated) Expand(NameRow); }
@@ -316,13 +360,15 @@ private:
         case Key::RadarShows:
             if(code==RowList::kChoice) { o_.radar.always=picked==1; Changed(); }
             break;
-        case Key::SideApart:
-            if(code==RowList::kButton) {
-                std::vector<std::wstring> items; for(int percent=100;percent>=20;percent-=10) items.push_back(std::to_wstring(percent)+(percent==100?L" %  ·  at the screen edges":L" %"));
-                const int choice=ChooseFromMenu(items,(100-o_.sideApart)/10);
-                if(choice>=0) { o_.sideApart=100-10*choice; Fit(o_); Changed(); }
-            }
+        case Key::SideApart: if(code==RowList::kSlider) { o_.sideApart=picked; Fit(o_); Changed(); } break;
+        case Key::CoverPicture:
+            if(code==RowList::kIconButton) { o_.cover.image.clear(); Fit(o_); Changed(); }
+            else if(pressed) ChooseCoverPicture();
             break;
+        case Key::CoverFit: if(code==RowList::kChoice) { o_.cover.fit=picked==1; Changed(); } break;
+        case Key::CoverWidth: if(code==RowList::kSlider) { o_.cover.width=picked; Fit(o_); Changed(); } break;
+        case Key::CoverHeight: if(code==RowList::kSlider) { o_.cover.height=picked; Fit(o_); Changed(); } break;
+        case Key::CoverPictureSize: if(pressed) { MatchPictureShape(); Fit(o_); Changed(); } break;
         case Key::Countdown:
             if(code==RowList::kChoice) { o_.pitSeconds=picked==1; Changed(); }
             break;

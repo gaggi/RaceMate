@@ -16,10 +16,11 @@
 | [Radar](#radar) | The cars around yours from above, lanes beside you estimated | 20 Hz |
 | [Traffic](#traffic) | Faster cars close behind you, with their gap | 10 Hz |
 | [Adjustments](#adjustments) | An in-car adjustment you make, big for a moment | 20 Hz |
+| [Stream Cover](#stream-cover) | Your picture over the garage screen in OBS, so viewers don't see your setup | 5 Hz |
 
 Also on this page: [Position in the Relative](#position-in-the-relative) · [Table columns](#table-columns) · [Status badges](#status-badges) · [Header and footer metrics](#header-and-footer-metrics)
 
-Choose an overlay's **Settings** button on the Overlays page to customize it. Appearance, placement and rates are explained in [Layouts and settings](layouts-and-settings.md).
+Click an overlay in the list on the Overlays page to customize it. Appearance, placement and rates are explained in [Layouts and settings](layouts-and-settings.md).
 
 ## Relative
 
@@ -44,7 +45,7 @@ The **gap** is an estimated driving time: how long the car behind needs to get t
 
 | Setting | What it does |
 | --- | --- |
-| Rows | How many rows the table shows, your own included: an odd number from 1 to 127. The default 7 shows three cars ahead, your car and three behind. Even numbers are rounded up. |
+| Drivers ahead and behind | A slider from 0 to 15: how many cars the table shows on each side of your car, which stays in the middle. The default 3 shows seven rows. |
 | Gap decimals | Decimal places of the gap, 0 to 3; default 1 (`1.4`). |
 | Show + and − before gaps | Off by default, because the row order already tells: rows above you are ahead, rows below are behind. |
 | Hide drivers in the pit lane | Leaves out cars in the pit lane; your own row always stays. |
@@ -72,15 +73,15 @@ The Standings show the race order. In races, cars are ranked by their progress; 
 
 | Setting | What it does |
 | --- | --- |
-| Rows in your class | **Leaders**, **Ahead** and **Behind**, 0 to 128 each: how many cars from the top of your class, and how many directly ahead of and behind the reference car, are listed. In the combined view the same numbers apply to the whole field. A dotted line marks where positions are skipped, so a short table still shows the leaders and your surroundings. |
-| Rows in other classes | With separate classes: how many cars every other class shows from its leader, at least; default 3. With 0 a class shows only its header, so you still see how many cars it has. |
+| Leaders, Drivers ahead, Drivers behind | Three sliders: how many cars from the top of your class (0 to 10), and how many directly ahead of and behind the reference car (0 to 20 each), are listed. In the combined view the same numbers apply to the whole field. A dotted line marks where positions are skipped, so a short table still shows the leaders and your surroundings. |
+| Other classes | A slider, with separate classes: how many cars every other class shows from its leader, at least; default 3. With 0 a class shows only its header, so you still see how many cars it has. |
 | Classes | **Separate classes**: one section per class with its own leader, positions counted within the class, and a header with the number of cars and the class strength of field (**SOF**). **Combined overall standings**: one list for the whole field with overall positions. |
 | Only my class | Shows only the class of your car, or of the car you watch. |
 | Gap decimals | Decimal places of the gap and the interval, 0 to 3; default 1. For thousandths in qualifying and tenths in races, use a layout for each [session](layouts-and-settings.md#automatic-layouts). |
 | Live positions and gaps | Updates positions, gaps and intervals continuously from track position, with measured gaps: how long ago the car ahead was where the car behind is now, as on Formula 1 timing screens; a lapped car adds whole laps at the leader's pace. Off: they change only when cars cross the start/finish line, as iRacing reports them. |
 | Show + before gaps and intervals | Off by default; both always count behind the leader or the car ahead. |
 | Drivers without a lap time | Ordered by car number (default) or by iRating, highest first. |
-| Class header | With separate classes, each class starts with a band in its darkened color, the class name on the full color. Expand to choose the values beside it: **Cars**, **SOF**, **Average iRating** (on by default) and **Class best lap** (off). SOF is iRacing's weighted strength of field, which counts strong drivers more; the average is the plain mean of the class's iRatings. |
+| Class header | With separate classes, each class starts with a band in its darkened color, the class name on the full color. Where the session leaves a class without a name, as hosted and league sessions can, RaceMate takes iRacing's short name for its class ID, else a name from its cars, else **Class** and its number; classes always stay apart by their ID. Expand to choose the values beside it: **Cars**, **SOF**, **Average iRating** (on by default) and **Class best lap** (off). SOF is iRacing's weighted strength of field, which counts strong drivers more; the average is the plain mean of the class's iRatings. |
 | Class colors | As in the Relative. |
 | Session progress | A thin bar under the header that fills by elapsed time or completed laps. |
 | Pit exit row | Off by default. In races, a faded copy of your row where you would rejoin if you pitted now. |
@@ -89,11 +90,11 @@ The fastest lap in each class is shown in purple. A last lap that equals that ca
 
 ![Standings with a faded pit exit prediction and surrounding cars](images/standings-pit-exit.png)
 
-Expand **Pit exit row** to choose how many cars ahead of and behind the rejoin position stay visible, even cars the normal row selection would leave out; the default is two each. How the rejoin position is estimated, and its limits, is explained under [Pit exit estimate](fuel-and-pit-strategy.md#pit-exit-estimate).
+The sliders **Drivers ahead of the pit exit row** and **Drivers behind the pit exit row** below it choose how many cars around the rejoin position stay visible, even cars the normal row selection would leave out; the default is two each. How the rejoin position is estimated, and its limits, is explained under [Pit exit estimate](fuel-and-pit-strategy.md#pit-exit-estimate).
 
 ## Table columns
 
-Relative and Standings use the same set of columns. Each overlay has its own choice of columns, order and formats. In the column list, columns marked **Always** cannot be hidden; all others have a switch. Drag a column up or down by the six dots at its left to change the order; a hidden column keeps its place. **Copy to another table** gives another Relative or Standings the same columns in the same order with their options; columns only that table has keep their setting and place. Between a Relative and a Standings, the Relative keeps its own Best and Last switches and Position option, and the Standings their Laps and Gained switches; between two of a kind these go too. Rows, gap decimals and other settings outside the columns stay. Columns with an arrow on the right have further options when expanded.
+Relative and Standings use the same set of columns. Each overlay has its own choice of columns, order and formats. In the column list, every column has a switch, Position and Gap included. Drag a column up or down by the six dots at its left to change the order; a hidden column keeps its place. **Copy to another table** gives another Relative or Standings the same columns in the same order with their options; columns only that table has keep their setting and place. Between a Relative and a Standings, the Relative keeps its own Best and Last switches and Position option, and the Standings their Best, Last, Laps and Gained switches; between two of a kind these go too. Rows, gap decimals and other settings outside the columns stay. Columns with an arrow on the right have further options when expanded.
 
 | Column (heading) | What it shows | Options when expanded |
 | --- | --- | --- |
@@ -103,6 +104,7 @@ Relative and Standings use the same set of columns. Each overlay has its own cho
 | Gap (GAP) | Relative: time to the reference car. Standings: time behind the class leader, or laps (`1 L`) when lapped. Decimals under **Gap decimals** on each table's page. | – |
 | Interval (INT) | Time to the car directly ahead, also when that car is not listed. Standings only; decimals as for the gap. | – |
 | Best lap / Last lap | Fastest lap of this session and the most recent lap. | – |
+| Top speed (TOP) | Each car's top speed in km/h. iRacing reports only your own car's speed, so the others' is worked out from how far they get around the track in half a second; expect it a few km/h off. A lap counts only when RaceMate saw all of it, so after joining, a tow or a reset it shows `—` until the next whole lap. Off by default. | **Top speed of**: **The last lap** (default) or **The session**. |
 | License | License class and safety rating, for example `A 3.45`. | Short view: safety rating only (`3,45`). |
 | iRating | The driver's iRating. | Short view in thousands (`2,4K`). |
 | Safety and iRating (RATING) | iRating in a badge colored like the license class. | Short view in thousands. |
@@ -214,7 +216,7 @@ Two narrow bars, by default at the left and right edge of the screen, light up w
 
 The spotter tells the side, but not which car is there. RaceMate takes the nearest car within 10 m along the lap as the one beside you. With cars on both sides their lap distance cannot tell which is where, so neither bar shows a block then. **Where the car beside you is** switches the block off.
 
-The bars stay centred on their monitor. **Distance apart** sets how far apart their outer edges are, as a share of the screen width: 100 % puts them at its edges, down to 20 % for bars close beside the middle of the screen. Drag either bar up or down, or onto another monitor: they go over as soon as the mouse is on it, and the other bar follows at the same height. Size, opacity and rounded corners apply to both, and both get the same frame while overlays are moved or the page is open. Both bars show while overlays are moved, in grey when nobody is beside you. The Side Warning has no header or footer, and only one instance.
+The bars stay centred on their monitor. **Distance apart** sets how far apart their outer edges are, as a share of the screen width: 100 % puts them at its edges, down to 20 % for bars close beside the middle of the screen. Drag either bar up or down, or onto another monitor: they go over as soon as the mouse is on it, and the other bar follows at the same height. Size, opacity and rounded corners apply to both, and both get the same frame while overlays are moved or the page is open. Both bars show while overlays are moved, in grey when nobody is beside you. The Side Warning has no header or footer.
 
 ## Radar
 
@@ -238,7 +240,7 @@ It shows only while you drive your own car, not while spotting or in replays; bo
 - A car keeps its lane for 3 s after it was last beside you, and as long as it is within 8 m of you or beside another car. Only then does it count as in your lane, so cars don't jump into your lane while overtaking or being overtaken.
 - Two cars in your lane, ahead or behind, that overlap each other must be side by side: they are drawn half a lane to either side, and stay so until they no longer overlap at all. Each keeps the side it was last on, beside you or beside another car; otherwise the one ahead goes left. A third car in such a row goes beside its neighbour.
 
-A car that changes lane glides across in about a quarter of a second. Cars in the pit lane appear only while you are in it too. Like the Side Warning, the Radar has no header or footer and only one instance.
+A car that changes lane glides across in about a quarter of a second. Cars in the pit lane appear only while you are in it too. Like the Side Warning, the Radar has no header or footer.
 
 ## Traffic
 
@@ -255,7 +257,7 @@ After irdashies' *faster cars from behind*: the cars of faster classes close beh
 
 A car counts as behind by its position on track. The gap is the Relative's: the time that car needs to reach you, at its own pace on its last clean lap, so a faster class shows when it is there. Before it or its class has a clean lap, the Relative's first-lap gap. Traffic takes no car length off. Cars in the pits are left out, and nothing shows while you are in them.
 
-It shows while you drive your own car and a car is within the gap, and half a second after, so it doesn't flicker at the edge. While overlays are moved or previewed it always shows. Like the Side Warning and the Radar, Traffic has no header or footer and only one instance.
+It shows while you drive your own car and a car is within the gap, and half a second after, so it doesn't flicker at the edge. While overlays are moved or previewed it always shows. Like the Side Warning and the Radar, Traffic has no header or footer.
 
 ## Adjustments
 
@@ -282,7 +284,19 @@ When you change an in-car adjustment while you drive, such as ABS, traction cont
 
 iRacing reports a dial's value but not its lowest and highest step. RaceMate learns them per car as you drive and keeps them for its next session. The steps appear once three or more of them have been seen, so the first sessions in a new car may show the value without them. Brake bias shows no steps.
 
-For the first 2 s after you get in, the dials settle to the setup and nothing shows. Nothing shows in replays or while you watch another car. Like Traffic, Adjustments has no header or footer and only one instance.
+For the first 2 s after you get in, the dials settle to the setup and nothing shows. Nothing shows in replays or while you watch another car. Like Traffic, Adjustments has no header or footer.
+
+## Stream Cover
+
+Covers the garage screen in your stream while you work on the setup. It shows only while iRacing's garage (setup) screen is open, and while overlays are moved or previewed so you can see it. A new Stream Cover goes to OBS only: on your own screen it would hide the setup you are working on. Switch on **Screen** under **Shows on** if you want to see it there too.
+
+| Setting | Effect |
+| --- | --- |
+| Picture | **Choose...** a PNG, JPG, BMP or GIF; the cover then takes its proportions at its width. The cross removes it. Without a picture the cover is a dark panel reading *Setup hidden*. A moved or deleted file is marked **Not found**. |
+| Fitting | **Fill** covers the whole area and cuts the picture at the edges where the shapes differ; **Whole** shows all of it on the dark panel. |
+| Width, Height | Its size in pixels, 160 to 3840 by 90 to 2160; **Match** sets the height to the picture's proportions again. **Size** under Window scales it further. |
+
+In OBS, add its Spout2 source (see [OBS output](#obs-output-spout2)) above your game capture, then move and size it there over whatever the setup shows. While the garage screen is closed the source sends nothing, so the game shows through. It has no header or footer.
 
 ## Weather
 
@@ -339,7 +353,7 @@ replace the desktop renderer.
 
 1. Install the [OBS Spout2 plugin](https://github.com/Off-World-Live/obs-spout2-plugin)
    matching your OBS installation and restart OBS.
-2. In RaceMate's Overlays page, click **Settings** on an overlay and set
+2. In RaceMate's Overlays page, click an overlay in the list and set
    **Shows on** to **OBS** or **Both**. The sender name appears below it. Layout previews are for the screen only; OBS output requires live SIM data.
 3. In OBS, add a **Spout2 Capture** source and select **RaceMate - Default - Relative**
    (or **RaceMate - your layout name - your overlay name**). Every sender includes
@@ -358,7 +372,7 @@ Each instance has its own source and shares its content, size, opacity, refresh
 rate and visibility conditions with RaceMate. To use different content in the
 stream, add a second overlay instance where the overlay type supports instances,
 configure it separately and set its **Shows on** to **OBS**.
-All currently matching layouts are exported independently. Layouts selected for editing do not replace running stream layouts. **Hide** under **All overlays** clears your screen only; OBS keeps its sources. **Pause OBS** (Overlays page, tray menu or Ctrl + Alt + Shift + O) stops every OBS source and leaves your screen as it is. In the overlay list a pill marks the overlays that go to OBS: **OBS** or **Screen + OBS**.
+All currently matching layouts are exported independently. Layouts selected for editing do not replace running stream layouts. **Hide** in the status bar clears your screen only; OBS keeps its sources. **Pause OBS** (status bar, tray menu or Ctrl + Alt + Shift + O) stops every OBS source and leaves your screen as it is. In the overlay list a pill marks the overlays that go to OBS: **OBS** or **Screen + OBS**.
 Conditional overlays disappear when their conditions no longer apply.
 Side Warning exports both bars next to each other in one image; crop/duplicate
 the source in OBS to place the bars separately.

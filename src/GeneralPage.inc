@@ -3,9 +3,9 @@ class GeneralPage : public PageWindow {
 public:
     GeneralPage() : PageWindow(ui.heading,ui.text) {}
 private:
-    enum class Key { None, Theme, StartWithWindows, StartMinimized, TitleBar, FuelReserve, OpponentFuel, PitLane, PitService, Hotkey, CheckUpdates, Version, SnapToGrid, SnapToOverlays };
-    static constexpr int ListId=100, HotkeyId=200, LaneEditId=202, TiresEditId=203, RateEditId=204, GridEditId=205;
-    static constexpr int LaneRow=10, ServiceRow=11, GridRow=12;
+    enum class Key { None, Theme, StartWithWindows, StartMinimized, TitleBar, FuelReserve, OpponentFuel, PitLane, PitService, Hotkey, CheckUpdates, Version, SnapToGrid, GridSize, SnapToOverlays };
+    static constexpr int ListId=100, HotkeyId=200, LaneEditId=202, TiresEditId=203, RateEditId=204;
+    static constexpr int LaneRow=10, ServiceRow=11;
     // Below 5 Hz short offtracks and pit timing get lost.
 
     void OnCreate() override {
@@ -46,7 +46,7 @@ private:
         capturing_=-1; SetFocus(list_.Handle()); // Registers the shortcuts again.
         Refresh(); UpdateStatus();
     }
-    void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
+    void OnSize(int width,int height) override { Place(list_.Handle(),0,0,width,height); }
 
     void Refresh() {
         std::vector<RowList::Row> rows; keys_.clear(); hotkeys_.clear();
@@ -67,8 +67,11 @@ private:
         toggle(Key::StartMinimized,L"Start minimized",L"In the tray; overlays work as usual",app.startMinimized);
         header(L"Overlays");
         toggle(Key::TitleBar,L"Headers on all overlays",L"Every overlay at once; each page also has its own",app.showTitleBar);
-        toggle(Key::SnapToGrid,L"Snap to grid while moving",L"Every "+std::to_wstring(app.gridSize)+L" px; hold Alt to place freely",app.snapToGrid);
-        rows.back().iconButtons={expanded_==GridRow?Glyph::Collapse:Glyph::Expand}; rows.back().expandHeight=expanded_==GridRow?48:0;
+        toggle(Key::SnapToGrid,L"Snap to grid while moving",L"Hold Alt to place freely",app.snapToGrid);
+        {
+            RowList::Row grid; grid.title=L"Grid size"; grid.detail=L"Pixels between grid lines"; grid.muted=!app.snapToGrid;
+            grid.slider=app.gridSize; grid.sliderMin=2; grid.sliderMax=100; grid.sliderUnit=L" px"; push(std::move(grid),Key::GridSize);
+        }
         toggle(Key::SnapToOverlays,L"Snap to other overlays",L"Edges and centre lines, shown by a magenta line",app.snapToOverlays);
         header(L"Fuel strategy");
         RowList::Row reserve; reserve.title=L"Reserve at the finish"; reserve.button=MenuButton(ReserveText());
@@ -76,7 +79,7 @@ private:
         push(std::move(reserve),Key::FuelReserve);
         header(L"Opponent fuel estimate");
         RowList::Row fuel; fuel.title=L"Additional laps with fuel saving";
-        fuel.detail=L"Yellow SAVE in the Relative and Standings; green END uses your full-tank range"; fuel.button=MenuButton(L"+"+std::to_wstring(app.opponentFuelExtraLaps)+(app.opponentFuelExtraLaps==1?L" lap":L" laps"));
+        fuel.detail=L"Yellow SAVE in the Relative and Standings; green END uses your full-tank range"; fuel.slider=app.opponentFuelExtraLaps; fuel.sliderMin=0; fuel.sliderMax=10; fuel.sliderUnit=L" laps";
         push(std::move(fuel),Key::OpponentFuel);
         RowList::Row assumption; assumption.title=L"Full tank assumed at the last observed stop";
         assumption.detail=L"With your class's tank, consumption and pace; blank without enough data";
@@ -125,7 +128,7 @@ private:
     }
     int ExpandedRow() const {
         for(size_t i=0;i<keys_.size();++i) {
-            if((keys_[i]==Key::PitLane && expanded_==LaneRow) || (keys_[i]==Key::PitService && expanded_==ServiceRow) || (keys_[i]==Key::SnapToGrid && expanded_==GridRow)) return static_cast<int>(i);
+            if((keys_[i]==Key::PitLane && expanded_==LaneRow) || (keys_[i]==Key::PitService && expanded_==ServiceRow)) return static_cast<int>(i);
         }
         return -1;
     }
@@ -133,10 +136,6 @@ private:
         editors_.Clear();
         const int row=ExpandedRow(); if(row<0) return;
         editors_.Begin(row);
-        if(expanded_==GridRow) {
-            editors_.Label(L"Grid size",0,10,84); editors_.Edit(GridEditId,std::to_wstring(app.gridSize),88,10,64); editors_.Label(L"px  \u00B7  2 to 100",158,10,0);
-            editors_.Position();
-        }
         if(expanded_==LaneRow || expanded_==ServiceRow) {
             // Empty means learned (lane) or not set; times are per track and per car.
             auto seconds=[](double value){ return value>0?Format(value,1):std::wstring(); };
@@ -173,14 +172,6 @@ private:
             if(code==EN_CHANGE && capturing_>=0 && LOBYTE(hotkey)) { app.hotkeys[capturing_]=hotkey; Save(); EndCapture(); }
             return true;
         }
-        if(id==GridEditId) {
-            if(code==EN_KILLFOCUS) {
-                const int size=_wtoi(editors_.Text(GridEditId).c_str());
-                if(size>0) { app.gridSize=std::clamp(size,2,100); Save(); }
-                Refresh(); BuildEditors();
-            }
-            return true;
-        }
         if(id==LaneEditId || id==TiresEditId || id==RateEditId) {
             if(code==EN_KILLFOCUS) { ApplyPitTime(id); Refresh(); }
             return true;
@@ -212,13 +203,7 @@ private:
                 if(choice>=0) { app.reserveTenths=choices[choice].tenths; app.reserveInLaps=choices[choice].laps; InvalidateModel(); SettingChanged(); Refresh(); }
             }
             break;
-        case Key::OpponentFuel:
-            if(pressed) {
-                std::vector<std::wstring> items; for(int i=0;i<=10;++i) items.push_back(L"+"+std::to_wstring(i)+(i==1?L" lap":L" laps"));
-                const int choice=ChooseFromMenu(items,app.opponentFuelExtraLaps);
-                if(choice>=0) { app.opponentFuelExtraLaps=choice; SettingChanged(); Refresh(); }
-            }
-            break;
+        case Key::OpponentFuel: if(code==RowList::kSlider) { app.opponentFuelExtraLaps=list_.Rows()[row].slider; SettingChanged(); Refresh(); } break;
         case Key::Hotkey:
             if(code==RowList::kIconButton) { app.hotkeys[hotkeys_[row]]=DefaultHotkeys[hotkeys_[row]]; RegisterHotkeys(); Save(); Refresh(); UpdateStatus(); }
             else if(pressed) StartCapture(hotkeys_[row]);
@@ -226,10 +211,8 @@ private:
         case Key::PitLane: if(code==RowList::kIconButton || code==RowList::kActivated) Expand(LaneRow); break;
         case Key::PitService: if(code==RowList::kIconButton || code==RowList::kActivated) Expand(ServiceRow); break;
         case Key::CheckUpdates: if(code==RowList::kToggled) { SetCheckUpdates(on); Refresh(); } break;
-        case Key::SnapToGrid:
-            if(code==RowList::kToggled) { app.snapToGrid=on; Save(); Refresh(); }
-            else if(code==RowList::kIconButton || code==RowList::kActivated) Expand(GridRow);
-            break;
+        case Key::SnapToGrid: if(code==RowList::kToggled) { app.snapToGrid=on; Save(); Refresh(); } break;
+        case Key::GridSize: if(code==RowList::kSlider) { app.gridSize=list_.Rows()[row].slider; Save(); } break;
         case Key::SnapToOverlays: if(code==RowList::kToggled) { app.snapToOverlays=on; Save(); Refresh(); } break;
         case Key::Version:
             if(code==RowList::kIconButton) UpdateChecker::OpenReleasePage(updates.release.releasePageUrl);

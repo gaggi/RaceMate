@@ -3,16 +3,19 @@ public:
     explicit TrackMapPage(Overlay& overlay) : PageWindow(ui.heading,ui.text), o_(overlay) {}
 private:
     enum Key { Info, WindowKey, LayoutKey, WhiteTrackKey, SurroundingsKey, AllConfigsKey, NorthUpKey, Numbers, OwnClass, Pit, PitExitKey, Details, Rounded, Header, Footer, Retry, NorthKey, StartKey, Cache, Background, PitLane, StartFinish, CornerNumbers, CornerNames, LabelSize, LabelContrast, SectorsKey, SectorPartsKey, SectorMarksKey, SectorLabelsKey, DirectionKey };
-    static constexpr int ListId=100, SlotEditId=230, LabelSizeId=240;
+    static constexpr int ListId=100, SlotEditId=230;
     void OnCreate() override { list_.Create(Instance(),Handle(),ListId,HeadingFont(),TextFont()); editors_.Attach(list_,Instance(),TextFont()); Refresh(); }
-    void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
+    void OnSize(int width,int height) override { Place(list_.Handle(),0,0,width,height); }
     void Refresh() {
         std::vector<RowList::Row> rows; keys_.clear(); items_.clear();
         auto push=[&](RowList::Row row,Key key,int item=-1) { rows.push_back(std::move(row)); keys_.push_back(key); items_.push_back(item); };
         auto heading=[&](const wchar_t* title) { RowList::Row row; row.header=true; row.title=title; push(std::move(row),Info); };
         auto toggle=[&](const wchar_t* title,const wchar_t* detail,bool on,Key key) { RowList::Row row; row.title=title; row.detail=detail; row.toggle=on?1:0; push(std::move(row),key); };
-        // Where it shows first; its window last, under what it shows.
+        // Where it shows first, its window right under it, then what it shows.
+        push(OverlayNameRow(o_,expanded_==WindowKey),WindowKey,WindowName);
         push(ShowsRow(o_),WindowKey,WindowShows);
+        heading(L"Window");
+        for(auto& [item,row]:WindowRows(o_)) push(std::move(row),WindowKey,item);
         heading(L"Display");
         {
             // Circle and line need no SVG: for any track, and the line for wide monitors.
@@ -31,7 +34,7 @@ private:
         toggle(L"Direction arrow",L"An arrow beside the track just past the line, in the driving direction, where there is room.",o_.map.directionArrow,DirectionKey);
         {
             static constexpr const wchar_t* texts[]={L"Car numbers",L"Position in class",L"Overall position"};
-            RowList::Row row; row.title=L"Text in markers"; row.toggle=o_.map.numbers?1:0; row.button=MenuButton(texts[o_.map.markerText]);
+            RowList::Row row; row.title=L"Text in markers"; row.toggle=o_.map.numbers?1:0; row.choices={L"Number",L"Class",L"Overall"}; row.choice=o_.map.markerText;
             row.detail=std::wstring(texts[o_.map.markerText])+L"  \u00B7  off for smaller dots. Cars use their class color; the car you drive or watch is yellow with a white ring.";
             push(std::move(row),Numbers);
         }
@@ -53,8 +56,8 @@ private:
         toggle(L"Corner numbers",L"Numbers at their official SVG positions. Also available with a transparent background.",o_.map.cornerNumbers,CornerNumbers);
         toggle(L"Corner names",L"Official names where iRacing supplies them. Tracks with numbers only do not get invented names.",o_.map.cornerNames,CornerNames);
         toggle(L"Label contrast outline",L"Dark outline around the text for readability over the circuit or other windows.",o_.map.labelContrast,LabelContrast);
-        RowList::Row size; size.title=L"Label size"; size.detail=std::to_wstring(o_.map.labelScale)+L"% of the official SVG text size; follows the overlay scale.";
-        size.iconButtons={expanded_==LabelSize?Glyph::Collapse:Glyph::Expand}; size.expandHeight=expanded_==LabelSize?52:0; push(std::move(size),LabelSize);
+        RowList::Row size; size.title=L"Label size"; size.detail=L"Of the official SVG text size; follows the overlay scale.";
+        size.slider=o_.map.labelScale; size.sliderMin=75; size.sliderMax=200; size.sliderStep=25; size.sliderUnit=L" %"; push(std::move(size),LabelSize);
         heading(L"Header and footer");
         for(Key key:{Header,Footer}) {
             RowList::Row row=BandRow(o_,key==Footer); row.iconButtons={expanded_==key?Glyph::Collapse:Glyph::Expand}; row.expandHeight=expanded_==key?BandEditorHeight:0;
@@ -87,30 +90,22 @@ private:
         }
         RowList::Row cache; cache.title=L"Map cache"; cache.detail=TrackMapCache().wstring(); cache.button=L"Open folder"; push(std::move(cache),Cache);
         RowList::Row note; note.title=L"Car positions"; note.detail=L"Start/finish and direction come from the official SVG; where iRacing starts the lap is measured once per layout, as above. Lap percentages follow the drawing's path length. SVGs download once per layout while this overlay is enabled."; push(std::move(note),Info);
-        heading(L"Window");
-        for(auto& [item,row]:WindowRows(o_,expanded_==WindowKey)) push(std::move(row),WindowKey,item);
+        heading(L"Overlay"); push(RemoveOverlayRow(),WindowKey,WindowRemove);
         list_.SetRows(std::move(rows));
     }
     void BuildEditors() {
         editors_.Clear();
-        if(expanded_!=Header && expanded_!=Footer && expanded_!=LabelSize && expanded_!=WindowKey) return;
+        if(expanded_!=Header && expanded_!=Footer && expanded_!=WindowKey) return;
         for(size_t i=0;i<keys_.size();++i) if(keys_[i]==expanded_ && (expanded_!=WindowKey || items_[i]==WindowName)) {
             syncing_=true; editors_.Begin(static_cast<int>(i));
             if(expanded_==WindowKey) WindowNameEditor(editors_,o_);
-            else if(expanded_==LabelSize) {
-                editors_.Label(L"Text size",24,12,100);
-                editors_.Combo(LabelSizeId,{L"75%",L"100%",L"125%",L"150%",L"175%",L"200%"},std::clamp((o_.map.labelScale-75)/25,0,5),132,12,120);
-            } else BandEditors(editors_,o_,expanded_==Footer,SlotEditId);
+            else BandEditors(editors_,o_,expanded_==Footer,SlotEditId);
             syncing_=false; editors_.Position(); return;
         }
     }
     bool OnCommand(int id,int code,HWND) override {
         if(id==PageRefreshId) { Refresh(); BuildEditors(); return true; }
         if(id==WindowNameEditId) { if(!syncing_ && WindowNameCommand(o_,editors_,code)) Refresh(); return true; }
-        if(id==LabelSizeId) {
-            if(!syncing_ && code==CBN_SELCHANGE) { o_.map.labelScale=75+25*std::clamp(editors_.Selection(id),0,5); SettingChanged(); Refresh(); }
-            return true;
-        }
         if(id>=SlotEditId && id<SlotEditId+SlotCount) {
             if(!syncing_ && code==CBN_SELCHANGE) { ApplyBandEditor(editors_,o_,expanded_==Footer,id,SlotEditId); SettingChanged(); Refresh(); }
             return true;
@@ -120,7 +115,7 @@ private:
         const int index=list_.NotifiedRow(); if(index<0 || static_cast<size_t>(index)>=keys_.size()) return true;
         const Key key=keys_[index]; const bool on=list_.Rows()[index].toggle==1;
         if(key==WindowKey) {
-            if(items_[index]!=WindowName) { WindowCommand(o_,items_[index],code,on,code==RowList::kChoice?list_.NotifiedChoice():-1,[this](const std::vector<std::wstring>& items,int checked){ return ChooseFromMenu(items,checked); }); Refresh(); }
+            if(items_[index]!=WindowName) { WindowCommand(o_,items_[index],code,on,code==RowList::kChoice?list_.NotifiedChoice():(code==RowList::kSlider?list_.Rows()[index].slider:-1),[this](const std::vector<std::wstring>& items,int checked){ return ChooseFromMenu(items,checked); }); Refresh(); }
             else if(code==RowList::kIconButton || code==RowList::kActivated) { expanded_=expanded_==WindowKey?Info:WindowKey; Refresh(); BuildEditors(); }
             return true;
         }
@@ -128,6 +123,11 @@ private:
             const int picked=list_.NotifiedChoice();
             if(key==LayoutKey && picked!=o_.map.layout) { o_.map.layout=picked; Fit(o_); SettingChanged(); Refresh(); }
             if(key==SectorPartsKey) { o_.map.sectorParts=picked?3:1; SettingChanged(); Refresh(); }
+            if(key==Numbers) { o_.map.markerText=picked; SettingChanged(); Refresh(); }
+            return true;
+        }
+        if(code==RowList::kSlider) {
+            if(key==LabelSize) { o_.map.labelScale=list_.Rows()[index].slider; SettingChanged(); Refresh(); }
             return true;
         }
         if(code==RowList::kToggled) {
@@ -155,14 +155,10 @@ private:
             SettingChanged(); Refresh(); return true;
         }
         if(code==RowList::kButton || code==RowList::kActivated || code==RowList::kIconButton) {
-            if(key==Header || key==Footer || key==LabelSize) { expanded_=expanded_==key?Info:key; Refresh(); BuildEditors(); if(key==LabelSize && expanded_==LabelSize) list_.ScrollIntoView(index); }
+            if(key==Header || key==Footer) { expanded_=expanded_==key?Info:key; Refresh(); BuildEditors(); }
             if(key==Retry) { RetryTrackMap(true); UpdateOverlays(); }
             if(key==NorthKey) { ForgetNorth(); ++trackMap.revision; UpdateOverlays(); Refresh(); }
             if(key==StartKey) { ForgetStart(); UpdateTrackMap(); UpdateOverlays(); Refresh(); }
-            if(key==Numbers) {
-                const int choice=ChooseFromMenu({L"Car numbers",L"Position in class",L"Overall position"},o_.map.markerText);
-                if(choice>=0 && choice!=o_.map.markerText) { o_.map.markerText=choice; SettingChanged(); Refresh(); }
-            }
             if(key==Cache) { std::error_code error; std::filesystem::create_directories(TrackMapCache(),error); if(!error) ShellExecuteW(Handle(),L"open",TrackMapCache().c_str(),nullptr,nullptr,SW_SHOWNORMAL); }
         }
         return true;

@@ -56,7 +56,7 @@ Use **Map cache → Open folder** to inspect the cache. **Retry loading this map
 | Hollow marker | Car in the pits |
 | Blue PIT ring | Your predicted pit exit position, if available and enabled |
 
-**Text in markers** can show car numbers, class positions or overall positions. Switch it off for smaller dots where numbers overlap. **Own class only** uses the reference car's class. **Cars in the pits** controls whether pit markers appear.
+**Text in markers** shows car numbers, class positions or overall positions, chosen side by side. Switch it off for smaller dots where numbers overlap. **Own class only** uses the reference car's class. **Cars in the pits** controls whether pit markers appear.
 
 With **Pit lane** enabled, pit markers sit on the drawn pit lane beside their lap position; otherwise they sit on the circuit. This is an approximate placement, not a measured position along the physical pit lane.
 
@@ -100,7 +100,7 @@ The result is used only when nearly the whole lap is covered, the headings agree
 
 ## Corner labels
 
-**Corner numbers** and **Corner names** are independent and disabled by default. **Label size** offers 75%, 100%, 125%, 150%, 175% and 200% of the official text size, then follows overlay scaling. **Label contrast outline** adds a dark outline.
+**Corner numbers** and **Corner names** are independent and disabled by default. **Label size** is a slider from 75% to 200% of the official text size, in steps of 25%, then follows overlay scaling. **Label contrast outline** adds a dark outline.
 
 Labels use official SVG positions and remain available in transparent mode. Missing names are not invented: some circuits provide only numbers. Label download failures do not disable the map. Failed label requests are cached for six hours; **Retry** bypasses that wait.
 

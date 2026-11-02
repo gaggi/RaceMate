@@ -37,6 +37,8 @@ std::string CarBrand(const std::string& carPath, const std::string& carName);
 // Classes without a short name, as in some league sessions, named after their cars: one model's name, or GT3 when
 // every car's name has it.
 void NameUnnamedClasses(std::vector<Driver>& drivers);
+// iRacing's short name for a CarClassID (CarClasses.h); empty for an unknown ID.
+std::string KnownClassName(int classId);
 struct SessionResult {
     int position = 0, classPosition = 0;
     double best = -1, last = -1;
@@ -88,6 +90,8 @@ struct Car {
     // Time of an observed race start or serviced pit exit; unknown after lost telemetry.
     double fuelStintStart = -1;
     double stintStartTime = -1; // Observed race start or pit exit, independently of a refill.
+    // Top speed in m/s over the last completed lap and over the session; -1 until known (TopSpeeds).
+    double lapTopSpeed = -1, sessionTopSpeed = -1;
 };
 struct Frame {
     bool connected = false, onTrack = false, pit = false, inStall = false, replay = false;
@@ -257,6 +261,19 @@ private:
     std::array<Visit,MaxCars> visits_{};
     std::string key_; int session_=-1; double time_=-1;
     int state_=-1;
+};
+// Every car's top speed. iRacing gives the speed of your own car only, so the others' comes from their
+// track position over time, averaged over half a second so that a jump of the position is no speed.
+// A lap counts only when it was seen whole; the session's top speed also counts the lap under way.
+class TopSpeeds {
+public:
+    static constexpr double Window = .5, MaxSpeed = 120; // Seconds averaged; m/s above which a reading is a jump.
+    void Reset() { *this={}; }
+    void Update(const Session&, Frame&);
+private:
+    struct Car { double pct=-1, from=-1, distance=0; int completed=-1; bool whole=false; double lap=-1, last=-1, session=-1; };
+    std::array<Car,MaxCars> cars_{};
+    std::string key_; int session_=-1; double time_=-1;
 };
 int ReferenceCar(const Frame&);
 // What the user is watching. IsReplayPlaying alone cannot tell: it is also set while

@@ -44,10 +44,58 @@ void PitHistoryTests() {
         drivers[4].paceCar=true; drivers.push_back(drivers[0]); drivers.back().classId=12; drivers.back().className="GT4";
         NameUnnamedClasses(drivers);
         Require(drivers[0].className=="GT3" && drivers[3].className=="GT3" && drivers[4].className.empty() && drivers[5].className=="GT4","unnamed class takes its cars' common class");
-        std::vector<Driver> cup(2); for(auto& d:cup) { d.classId=5; d.carName="Porsche 911 GT3 Cup (992)"; }
-        std::vector<Driver> mixed(2); mixed[0].carName="Mazda MX-5 Cup"; mixed[1].carName="Toyota GR86"; for(auto& d:mixed) d.classId=6;
+        // IDs iRacing does not list, so the cars name them.
+        std::vector<Driver> cup(2); for(auto& d:cup) { d.classId=900005; d.carName="Porsche 911 GT3 Cup (992)"; }
+        std::vector<Driver> mixed(2); mixed[0].carName="Mazda MX-5 Cup"; mixed[1].carName="Toyota GR86"; for(auto& d:mixed) d.classId=900006;
         NameUnnamedClasses(cup); NameUnnamedClasses(mixed);
         Require(cup[0].className=="Porsche 911 GT3 Cup (992)" && mixed[0].className.empty(),"one model names its class; nothing in common leaves it unnamed");
+    }
+    {
+        // Known CarClassIDs without a short name take iRacing's, before anything from the cars.
+        Require(KnownClassName(4029)=="GTP" && KnownClassName(4011)=="IMSA23" && KnownClassName(900001).empty(),"class names by CarClassID");
+        std::vector<Driver> drivers(3);
+        drivers[0].classId=4029; drivers[0].carName="Porsche 963 GTP";
+        drivers[1].classId=4011; drivers[1].carName="Ferrari 296 GT3";
+        drivers[2].classId=4029; drivers[2].carName="Acura ARX-06 GTP";
+        NameUnnamedClasses(drivers);
+        Require(drivers[0].className=="GTP" && drivers[2].className=="GTP" && drivers[1].className=="IMSA23","a missing name comes from the class list, not the cars");
+        // A name from the session stays, also for a known ID.
+        std::vector<Driver> named(2); for(auto& d:named) { d.classId=4029; d.carName="Porsche 963 GTP"; }
+        named[0].className=named[1].className="Hypercar";
+        NameUnnamedClasses(named);
+        Require(named[0].className=="Hypercar" && named[1].className=="Hypercar","the session's class name has priority");
+        // Pace car and spectators stay unnamed.
+        std::vector<Driver> pace(1); pace[0].classId=4029; pace[0].paceCar=true;
+        NameUnnamedClasses(pace); Require(pace[0].className.empty(),"the pace car takes no class name");
+    }
+    {
+        // Standings keep classes apart by CarClassID: known names, two unknown classes of the same name, and an
+        // unknown one with nothing to name it, shown by its number.
+        Session s=Race(); Frame f=RacingFrame();
+        s.drivers.clear();
+        const int ids[]={4029,4011,900001,900002,900003};
+        const char* cars[]={"Porsche 963 GTP","Ferrari 296 GT3","Ford Mustang GT3","BMW M4 GT3","Mystery Car"};
+        for(int i=0;i<5;++i) {
+            Driver d; d.index=i; d.classId=ids[i]; d.carName=cars[i]; d.name="Driver "+std::to_string(i); d.number=std::to_string(i+1);
+            s.drivers.push_back(d); Progress(f.cars[i],10-i); f.cars[i].position=i+1; f.cars[i].classPosition=1;
+        }
+        f.player=0;
+        NameUnnamedClasses(s.drivers);
+        StandingsOptions options; options.separateClasses=true;
+        const auto groups=SelectStandings(s,f,options);
+        auto named=[&](int id) { for(const auto& g:groups) if(g.classId==id) return g.name; return std::string("missing"); };
+        Require(groups.size()==5,"every CarClassID is its own group");
+        Require(named(4029)=="GTP" && named(4011)=="IMSA23","known IDs show iRacing's class names");
+        Require(named(900001)=="Ford Mustang GT3" && named(900002)=="BMW M4 GT3","unknown IDs keep the names from their cars");
+        Require(named(900003)=="Mystery Car","one car names its class");
+        s.drivers[3].carName="Ford Mustang GT3"; s.drivers[3].className.clear(); s.drivers[2].className.clear();
+        NameUnnamedClasses(s.drivers);
+        const auto same=SelectStandings(s,f,options);
+        int sameName=0; for(const auto& g:same) if(g.name=="Ford Mustang GT3") ++sameName;
+        Require(same.size()==5 && sameName==2,"two classes of the same name stay apart");
+        s.drivers[4].className.clear(); s.drivers[4].carName.clear(); NameUnnamedClasses(s.drivers);
+        std::string unnamed="missing"; for(const auto& g:SelectStandings(s,f,options)) if(g.classId==900003) unnamed=g.name;
+        Require(unnamed=="Class 900003","a class with no name at all shows its number");
     }
     Require(CarBrand("rufrt12r","")=="RUF" && CarBrand("fordgt2017","Ford GT")=="Ford" && CarBrand("trucks\\silverado","")=="Chevrolet","short fragments match at the start only");
 
@@ -455,9 +503,32 @@ void OpponentFuelTests() {
 }
 // iRacing's estimate runs on the class reference lap: 60 s of a 120 s reference is half the lap, at a 100 s pace
 // 50 s to the line, not 40 s from dividing by the car's own 100 s lap.
+// Top speeds from the track position: a whole lap's, none for a lap with a jump, the session's and your own car's.
+void TopSpeedTests() {
+    auto s=Race(); s.trackMeters=4000; auto f=RacingFrame(); TopSpeeds speeds;
+    double progress=10.9; f.cars[1].speed=70;
+    // 50 m/s, 80 m/s for a stretch in the middle of each lap, 60 frames a second.
+    auto drive=[&](double until) {
+        while(progress<until) {
+            const double at=progress-std::floor(progress), speed=at>.4 && at<.6?80:50;
+            progress+=speed/60/s.trackMeters; f.time+=1.0/60; Progress(f.cars[0],progress); speeds.Update(s,f);
+        }
+    };
+    drive(11.5); Require(f.cars[0].lapTopSpeed<0,"no top speed before a whole lap");
+    drive(12.01);
+    Require(std::abs(f.cars[0].lapTopSpeed-80)<1,"top speed of a whole lap within 1 m/s");
+    Require(f.cars[0].sessionTopSpeed>=f.cars[0].lapTopSpeed,"session top speed at least the lap's");
+    Require(std::abs(f.cars[1].sessionTopSpeed-70)<.001,"your own car's top speed from iRacing's speed");
+    // A tow halfway: no reading of the jump, and that lap not whole.
+    drive(12.3); progress+=.4; drive(13.01);
+    Require(f.cars[0].lapTopSpeed<0 && f.cars[0].sessionTopSpeed<TopSpeeds::MaxSpeed && std::abs(f.cars[0].sessionTopSpeed-80)<1,"a jump is no speed and spoils its lap");
+    drive(14.01); Require(std::abs(f.cars[0].lapTopSpeed-80)<1,"the next whole lap counts again");
+    // A new session starts again.
+    f.session=2; speeds.Update(s,f); Require(f.cars[0].sessionTopSpeed<0 && f.cars[0].lapTopSpeed<0,"a new session starts without top speeds");
+}
 void SdkScaleTests() {
     auto s=Race(); s.drivers[1].estimatedLapTime=120; auto f=RacingFrame(); f.state=5; f.cars[1].estTime=60;
     RacePredictor predictor; const auto p=predictor.Predict(s,f);
     Near(p.finish.ownFinishIn,50,"SDK estimate divided by its class reference lap");
 }
-void PredictionTests() { SdkScaleTests(); PitWindowTests(); TimedTests(); LeaderChangeTests(); CrossingInvariantTests(); LimitAndStateTests(); HistoryTests(); MulticlassEnduranceTests(); FuelForecastTests(); OpponentFuelTests(); }
+void PredictionTests() { SdkScaleTests(); TopSpeedTests(); PitWindowTests(); TimedTests(); LeaderChangeTests(); CrossingInvariantTests(); LimitAndStateTests(); HistoryTests(); MulticlassEnduranceTests(); FuelForecastTests(); OpponentFuelTests(); }

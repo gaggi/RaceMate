@@ -93,15 +93,15 @@ int RunDiagnostics() {
     MONITORINFO monitor{sizeof(monitor)};
     GetMonitorInfoW(MonitorFromPoint({0,0},MONITOR_DEFAULTTOPRIMARY),&monitor);
     std::ofstream report("build/qa/controls.txt");
-    // The page as built at startup: its layouts open, one row per overlay, each with its own title.
+    // The overlay list as built at startup: one row per overlay, each with its own title.
     bool startupOk=false;
-    if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) {
+    if(const HWND list=ui.pane?FindWindowExW(ui.pane,nullptr,L"LaunchMateRowList",nullptr):nullptr) {
         auto* rows=reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA));
-        auto titles=[&]{ std::vector<std::wstring> found; for(const auto& row:rows->Rows()) if(row.button==L"Settings" && row.toggle>=0) found.push_back(row.title); return found; };
+        auto titles=[&]{ std::vector<std::wstring> found; for(const auto& row:rows->Rows()) if(row.toggle>=0) found.push_back(row.title); return found; };
         const auto shown=titles();
         startupOk=shown.size()>=OverlayCount; for(int kind=0;kind<OverlayCount && startupOk;++kind) startupOk=shown[kind]==Titles[kind];
     }
-    report<<"Overlays page at startup lists every overlay by its own name: "<<(startupOk?"PASS":"FAIL")<<"\n"; allOk=(startupOk) && allOk;
+    report<<"Overlay list at startup shows every overlay by its own name: "<<(startupOk?"PASS":"FAIL")<<"\n"; allOk=(startupOk) && allOk;
     app.preview=true; app.edit=false; PreviewData(0); UpdateStatus(); RefreshPage();
     SetWindowPos(app.main,nullptr,-30000,-30000,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
     ShowWindow(app.main,SW_SHOWNOACTIVATE); UpdateWindow(app.main);
@@ -159,10 +159,9 @@ int RunDiagnostics() {
                 if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) {
                     auto* rows=reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA));
                     for(size_t row=0;row<rows->Rows().size();++row) if(rows->Rows()[row].title==L"Label size") {
-                        rows->PressIconButton(static_cast<int>(row),0); rows->ScrollIntoView(static_cast<int>(row));
-                        const HWND combo=GetDlgItem(list,240);
-                        mapOk=combo && SendMessageW(combo,CB_GETCOUNT,0,0)==6 && mapOk;
-                        if(combo) { SendMessageW(combo,CB_SETCURSEL,3,0); SendMessageW(ui.host.Content(),WM_COMMAND,MAKEWPARAM(240,CBN_SELCHANGE),reinterpret_cast<LPARAM>(combo)); }
+                        rows->ScrollIntoView(static_cast<int>(row));
+                        mapOk=rows->Rows()[row].sliderMin==75 && rows->Rows()[row].sliderMax==200 && mapOk;
+                        rows->SlideTo(static_cast<int>(row),150);
                         mapOk=o.map.labelScale==150 && mapOk;
                         mapOk=Export(app.main,L"build\\qa\\trackmap-corner-settings.bmp") && mapOk;
                         break;
@@ -351,7 +350,7 @@ int RunDiagnostics() {
         app.fuelPlan=savedPlan;
         // One registry and renderer for both bands of every kind, including the Pit Assist.
         for(int kind=0;kind<OverlayCount;++kind) {
-            if(kind==SideWarningKind || kind==RadarKind || kind==TrafficKind || kind==AdjustmentsKind) continue; // They have no bands.
+            if(NoBands(First(kind))) continue;
             auto& o=First(kind); const Bands bands=o.bands;
             o.bands.header=true; o.bands.footer.enabled=true;
             o.bands.headerMetrics={LeaderDistanceMetric,WhiteFlagTimeMetric,NoMetric,NoMetric};
@@ -442,10 +441,10 @@ int RunDiagnostics() {
         bool pagesOk=ui.page==Page::Settings && ui.host.Content()!=nullptr;
         for(int kind=0;kind<OverlayCount;++kind) {
             OpenOverlay(First(kind)); UpdateWindow(app.main);
-            pagesOk=ui.page==Page::Overlay && ui.overlay==&First(kind) && IsWindowVisible(ui.back) && pagesOk;
+            pagesOk=ui.page==Page::Overlay && ui.overlay==&First(kind) && IsWindowVisible(ui.pane) && pagesOk;
             ok=Export(app.main,L"build\\qa\\main-"+std::to_wstring(kind)+L".bmp") && ok;
         }
-        ShowPage(Page::Overlays); UpdateWindow(app.main); pagesOk=!IsWindowVisible(ui.back) && pagesOk;
+        ShowPage(Page::Overlays); UpdateWindow(app.main); pagesOk=!IsWindowVisible(ui.hint) && IsWindowVisible(ui.pane) && pagesOk;
         report<<"Main window pages, banner and navigation: "<<(pagesOk && ui.page==Page::Overlays?"PASS":"FAIL")<<"\n"; allOk=(pagesOk && ui.page==Page::Overlays) && allOk;
     }
     const bool viewportOk=MainDpiDiagnostics(report);
@@ -532,7 +531,8 @@ int RunDiagnostics() {
         const auto best=std::find(columns.begin(),columns.end(),BestColumn);
         lapsOk=best!=columns.end() && best+1<columns.end() && best[1]==LastColumn && lapsOk;
         UpdateOverlays(); lapsOk=Export(First(RelativeKind).window,L"build\\qa\\relative-lap-times.bmp") && lapsOk;
-        SetColumnVisible(First(StandingsKind),BestColumn,false); lapsOk=ColumnVisible(First(StandingsKind),BestColumn) && lapsOk;
+        SetColumnVisible(First(StandingsKind),BestColumn,false); lapsOk=!ColumnVisible(First(StandingsKind),BestColumn) && lapsOk;
+        SetColumnVisible(First(StandingsKind),BestColumn,true);
         Load(); lapsOk=First(RelativeKind).table.best && First(RelativeKind).table.last && lapsOk;
         SetColumnVisible(First(RelativeKind),BestColumn,false); SetColumnVisible(First(RelativeKind),LastColumn,false);
         Load(); lapsOk=!First(RelativeKind).table.best && !First(RelativeKind).table.last && OverlayWidth(First(RelativeKind))==width && lapsOk;
@@ -792,7 +792,7 @@ int RunDiagnostics() {
         SwitchLayout(1); UpdateOverlays();
         previewLayoutsOk=previewFirst.window==firstPreviewWindow && previewSecond.window==secondPreviewWindow && LayoutRunning(second) && previewLayoutsOk;
         SwitchLayout(second); ShowPage(Page::Overlays);
-        if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) {
+        if(const HWND list=FindWindowExW(ui.pane,nullptr,L"LaunchMateRowList",nullptr)) {
             int active=0; for(const auto& row:reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA))->Rows()) if(row.dragGroup==1 && row.pill==L"Preview" && row.pillTone==RowList::Tone::Warning) ++active;
             previewLayoutsOk=active==2 && previewLayoutsOk;
         } else previewLayoutsOk=false;
@@ -836,7 +836,7 @@ int RunDiagnostics() {
         perLayoutPreviewOk=LayoutPreviewing(1) && LayoutPreviewing(second) && !LayoutLive(1) && !LayoutLive(second) &&
             IsWindowVisible(stream.window) && IsWindowVisible(car.window) && !stream.spout && !car.spout && !app.frame.connected && perLayoutPreviewOk;
         const auto openGroups=app.openLayoutGroups; app.openLayoutGroups.clear(); ShowPage(Page::Overlays);
-        if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) {
+        if(const HWND list=FindWindowExW(ui.pane,nullptr,L"LaunchMateRowList",nullptr)) {
             int yellow=0, green=0; for(const auto& row:reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA))->Rows()) if(row.dragGroup==1) {
                 yellow+=row.pill==L"Preview" && row.pillTone==RowList::Tone::Warning;
                 green+=row.pill==L"Active";
@@ -961,10 +961,7 @@ int RunDiagnostics() {
             auto* rows=list?reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA)):nullptr; int index=-1;
             if(rows) for(size_t i=0;i<rows->Rows().size() && index<0;++i) if(rows->Rows()[i].title==title) index=static_cast<int>(i);
             if(index<0) { fitOk=false; report<<"  no row "<<Ascii(title)<<"\n"; return; }
-            if(expected==6 && title==ActiveLayout()->name) {
-                if(std::find(app.openLayoutGroups.begin(),app.openLayoutGroups.end(),app.layout)!=app.openLayoutGroups.end()) rows->PressIconButton(index,0);
-                rows->PressIconButton(index,0);
-            } else rows->PressIconButton(index,0);
+            rows->PressIconButton(index,0);
             RECT visible{},host{}; GetClientRect(list,&visible); MapWindowPoints(list,nullptr,reinterpret_cast<POINT*>(&visible),2);
             GetClientRect(ui.host.Handle(),&host); MapWindowPoints(ui.host.Handle(),nullptr,reinterpret_cast<POINT*>(&host),2);
             visible.right=std::min(visible.right,host.right); int editors=0;
@@ -975,9 +972,9 @@ int RunDiagnostics() {
             if(editors!=expected) { fitOk=false; report<<"  "<<Ascii(title)<<": "<<editors<<" editors\n"; }
             rows->PressIconButton(index,0); // And collapsed again.
         };
-        // Each overlay's name under Window, and a layout with its name and both conditions.
+        // Each overlay's name and the layout's name.
         for(auto& o:app.overlays) if(o.number==1) { OpenOverlay(o); check(L"Name",2); }
-        app.openLayoutGroups={app.layout}; ShowPage(Page::Overlays); check(ActiveLayout()->name,6);
+        ShowPage(Page::Overlays); check(L"Name",2);
         for(int kind:{RelativeKind,FuelKind,WeatherKind}) { OpenOverlay(First(kind)); check(L"Header"); check(L"Footer"); }
         SetWindowPlacement(app.main,&saved); ShowPage(Page::Overlays);
         report<<"Expanded editors fit the narrowest window: "<<(fitOk?"PASS":"FAIL")<<"\n"; allOk=fitOk && allOk;
@@ -1075,7 +1072,7 @@ int RunDiagnostics() {
         };
         ShowPage(Page::Overlays); aligned("Overlays");
         ShowPage(Page::Settings); aligned("Settings");
-        constexpr const char* pages[]={"Relative","Standings","Fuel Calculator","Pit Assist","Weather","Track Map","Side Warning","Radar","Traffic","Adjustments"};
+        constexpr const char* pages[]={"Relative","Standings","Fuel Calculator","Pit Assist","Weather","Track Map","Side Warning","Radar","Traffic","Adjustments","Stream Cover"};
         static_assert(std::size(pages)==OverlayCount);
         for(int kind=0;kind<OverlayCount;++kind) { OpenOverlay(First(kind)); aligned(pages[kind]); }
         ShowPage(Page::Overlays);
@@ -1123,10 +1120,52 @@ int RunDiagnostics() {
         const int corner=find(L"Fixed corner"); if(corner>=0) { list()->PressChoice(corner,3); choiceOk=relative.place.growLeft && relative.place.growUp && choiceOk; } else choiceOk=false;
         relative.place=savedPlace; relative.table.gapDecimals=savedDecimals; Fit(relative); Save();
         ShowPage(Page::Overlays);
-        const int bar=find(L"All overlays"); const bool savedEdit=app.edit;
-        if(bar>=0) { list()->PressChoice(bar,0); choiceOk=app.edit!=savedEdit && choiceOk; if(app.edit!=savedEdit) ToggleEdit(); } else choiceOk=false;
+        const bool savedEdit=app.edit; SendMessageW(app.main,WM_COMMAND,MAKEWPARAM(StatusButtonId,0),0);
+        choiceOk=app.edit!=savedEdit && choiceOk; if(app.edit!=savedEdit) ToggleEdit();
         ShowPage(Page::Overlays);
-        report<<"Choices in rows: shows on, OBS alpha, gap decimals, fixed corner and the overlays bar: "<<(choiceOk?"PASS":"FAIL")<<"\n"; allOk=choiceOk && allOk;
+        report<<"Choices in rows: shows on, OBS alpha, gap decimals, fixed corner and the status bar's Move: "<<(choiceOk?"PASS":"FAIL")<<"\n"; allOk=choiceOk && allOk;
+    }
+    {
+        // Beside an overlay's page and the layouts, the list of its layout's overlays: the layout marked on the
+        // layouts, the open overlay on its page, the mark following when another opens; not on Settings.
+        bool paneOk=true; ShowPage(Page::Settings); paneOk=ui.pane && !IsWindowVisible(ui.pane) && paneOk;
+        ShowPage(Page::Overlays); paneOk=IsWindowVisible(ui.pane) && paneOk;
+        Overlay& first=First(RelativeKind); OpenOverlay(first); paneOk=ui.pane && IsWindowVisible(ui.pane) && paneOk;
+        const HWND handle=ui.pane?FindWindowExW(ui.pane,nullptr,L"LaunchMateRowList",nullptr):nullptr;
+        auto* rows=handle?reinterpret_cast<RowList*>(GetWindowLongPtrW(handle,GWLP_USERDATA)):nullptr;
+        int marked=-1,other=-1;
+        if(rows) for(int i=0;i<static_cast<int>(rows->Rows().size());++i) {
+            if(rows->Rows()[i].selected) marked=i;
+            if(rows->Rows()[i].title==Name(First(StandingsKind))) other=i;
+        }
+        paneOk=marked>=0 && rows->Rows()[marked].title==Name(first) && other>=0 && paneOk;
+        OpenOverlay(First(StandingsKind)); marked=-1;
+        if(rows) for(int i=0;i<static_cast<int>(rows->Rows().size());++i) if(rows->Rows()[i].selected) marked=i;
+        paneOk=marked==other && paneOk;
+        ShowPage(Page::Overlays); marked=-1;
+        if(rows) for(int i=0;i<static_cast<int>(rows->Rows().size());++i) if(rows->Rows()[i].selected) marked=i;
+        paneOk=marked>=0 && rows->Rows()[marked].title==ActiveLayout()->name && paneOk;
+        // Overlays in the sidebar opens the overlay open last, its name the only title.
+        SendMessageW(app.main,WM_COMMAND,MAKEWPARAM(NavOverlaysId,0),0);
+        paneOk=ui.page==Page::Overlay && ui.overlay==&First(StandingsKind) && !IsWindowVisible(ui.hint) && paneOk;
+        // Size and opacity are sliders, in steps of 5 and within their range.
+        {
+            Overlay& standings=First(StandingsKind); const int scale=standings.place.scale, opacity=standings.place.opacity;
+            const HWND page=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr);
+            auto* list=page?reinterpret_cast<RowList*>(GetWindowLongPtrW(page,GWLP_USERDATA)):nullptr;
+            int size=-1,fade=-1;
+            if(list) for(int i=0;i<static_cast<int>(list->Rows().size());++i) { if(list->Rows()[i].title==L"Size") size=i; if(list->Rows()[i].title==L"Opacity") fade=i; }
+            paneOk=list && size>=0 && fade>=0 && paneOk;
+            if(paneOk) {
+                list->SlideTo(size,125); paneOk=standings.place.scale==125 && paneOk;
+                list->SlideTo(size,400); paneOk=standings.place.scale==150 && paneOk;
+                list->SlideTo(fade,55); paneOk=standings.place.opacity==55 && paneOk;
+                list->SlideTo(size,scale); list->SlideTo(fade,opacity);
+            }
+            paneOk=standings.place.scale==scale && standings.place.opacity==opacity && paneOk;
+        }
+        ShowPage(Page::Overlays);
+        report<<"Overlay list beside overlay pages and layouts, the open one marked, Overlays opening the last: "<<(paneOk?"PASS":"FAIL")<<"\n"; allOk=paneOk && allOk;
     }
     {
         // The dark theme: chosen in its row, stored, the pages and Race Control drawn in it; then light again.
@@ -1559,6 +1598,16 @@ int RunDiagnostics() {
         leader.driver.team="Zeta Racing"; saver.driver.team="Alpha Motorsport"; unknown.driver.team.clear();
         extrasOk=RaceStandingCell(leader,RaceTeamField)==L"Zeta Racing" && RaceStandingCell(unknown,RaceTeamField)==L"\u2014" && extrasOk;
         overlay={{},Ink::White}; CellRenderers[TeamColumn](leader,First(RelativeKind),overlay); extrasOk=overlay.text==L"Zeta Racing" && extrasOk;
+        // Top speed in km/h of the last lap or, saved per overlay, of the session; a dash while unknown.
+        {
+            Overlay& relative=First(RelativeKind); const bool savedTopSpeed=relative.table.topSpeedSession;
+            leader.car.lapTopSpeed=60; leader.car.sessionTopSpeed=65; unknown.car.lapTopSpeed=unknown.car.sessionTopSpeed=-1;
+            relative.table.topSpeedSession=false; overlay={{},Ink::White}; CellRenderers[TopSpeedColumn](leader,relative,overlay); extrasOk=overlay.text==L"216" && extrasOk;
+            relative.table.topSpeedSession=true; Save(); relative.table.topSpeedSession=false; Load();
+            overlay={{},Ink::White}; CellRenderers[TopSpeedColumn](leader,relative,overlay); extrasOk=relative.table.topSpeedSession && overlay.text==L"234" && extrasOk;
+            overlay={{},Ink::White}; CellRenderers[TopSpeedColumn](unknown,relative,overlay); extrasOk=overlay.text==L"—" && extrasOk;
+            relative.table.topSpeedSession=savedTopSpeed; Save();
+        }
         app.ratingChanges.fill(NoRatingChange); app.ratingVersion=app.modelVersion;
         app.ratingChanges[leader.driver.index]=12; app.ratingChanges[saver.driver.index]=-10;
         extrasOk=RaceStandingCell(leader,RaceRatingChangeField)==L"+12" && RaceStandingCell(saver,RaceRatingChangeField)==L"-10" && RaceStandingCell(unknown,RaceRatingChangeField)==L"\u2014" && extrasOk;
@@ -1635,7 +1684,7 @@ int RunDiagnostics() {
         raceControl.showSectors=savedShowSectors;
         raceControl.sortColumn=savedSort; raceControl.sortDescending=savedDescending; raceControl.eventSortColumn=savedEventSort; raceControl.eventSortDescending=savedEventDescending;
         SetRaceSplit(savedSplit,false); SaveRaceFields(); LayoutRaceControl(); UpdateRaceControl(true);
-        report<<"Race Control extras: defaults off, independent settings, shared fuel badges and cache, stint time, signed rating, numeric/missing sorting, event lap, optional forecasts and persistence: "<<(extrasOk?"PASS":"FAIL")<<"\n";
+        report<<"Race Control extras: defaults off, independent settings, shared fuel badges and cache, stint time, signed rating, numeric/missing sorting, event lap, optional forecasts, persistence and the Top speed column: "<<(extrasOk?"PASS":"FAIL")<<"\n";
         allOk=extrasOk && allOk;
     }
     // Kept apart from ok, which later checks reuse for their own line; folded in at the end.
@@ -1772,7 +1821,7 @@ int RunDiagnostics() {
     }
     app.pitVisibility.Reset();
     app.preview=false; app.hidden=false; app.frame.pit=false; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind && i!=AdjustmentsKind))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind && i!=AdjustmentsKind && i!=StreamCoverKind))&&ok;
     const auto originalSurface=app.frame.cars[app.frame.player].surface;
     app.frame.cars[app.frame.player].surface=2; UpdateOverlays(); ok=IsWindowVisible(First(3).window) && ok;
     ok=Export(First(3).window,L"build\\qa\\pit-approach.bmp") && ok;
@@ -1835,13 +1884,13 @@ int RunDiagnostics() {
     app.frame.cars[app.frame.player].surface=originalSurface;
     app.frame.pit=true; UpdateOverlays(); ok=IsWindowVisible(First(3).window)&&ok;
     app.frame.onTrack=false; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind && i!=AdjustmentsKind))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind && i!=AdjustmentsKind && i!=StreamCoverKind))&&ok;
     app.frame.camera=4; app.frame.replay=true; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind && i!=AdjustmentsKind))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind && i!=AdjustmentsKind && i!=StreamCoverKind))&&ok;
     ok=ReferenceCar(app.frame)==4 && !Rows(First(0)).empty() && ok;
     ok=Export(First(0).window,L"build\\qa\\relative-replay.bmp")&&ok;
     app.frame.replay=false; UpdateOverlays();
-    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind && i!=AdjustmentsKind))&&ok;
+    for(int i=0;i<OverlayCount;++i) ok=(static_cast<bool>(IsWindowVisible(First(i).window))==(i!=3 && i!=SideWarningKind && i!=RadarKind && i!=TrafficKind && i!=AdjustmentsKind && i!=StreamCoverKind))&&ok;
     app.frame.connected=false; UpdateOverlays();
     for(auto& o:app.overlays) ok=!IsWindowVisible(o.window)&&ok;
     app.preview=true; app.hidden=true; UpdateOverlays();
@@ -2012,7 +2061,8 @@ int RunDiagnostics() {
     {
         // Dragging a row of a sortable list with the mouse: press on its grip, move past other rows' middles, release.
         bool dragOk=true;
-        auto rowList=[]{ const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr); return list?reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA)):nullptr; };
+        HWND listParent=nullptr; // The page's list unless set.
+        auto rowList=[&]{ const HWND list=FindWindowExW(listParent?listParent:ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr); return list?reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA)):nullptr; };
         auto drag=[&](int from,int to) {
             auto* list=rowList(); if(!list) return false;
             // Both rows in view, and the mouse released just past the middle of the row whose place it takes.
@@ -2054,7 +2104,7 @@ int RunDiagnostics() {
         standings.table.columnOrder=columns; SettingChanged();
         // Layouts: their priority order.
         const auto layouts=app.layouts;
-        AddLayout(true); AddLayout(true); ShowPage(Page::Overlays); UpdateWindow(app.main);
+        AddLayout(true); AddLayout(true); ShowPage(Page::Overlays); UpdateWindow(app.main); listParent=ui.pane;
         const int lastLayout=rowOf(app.layouts.back().name), firstLayout=rowOf(app.layouts.front().name), lastId=app.layouts.back().id;
         dragOk=lastLayout>=0 && firstLayout>=0 && drag(lastLayout,firstLayout) && app.layouts.front().id==lastId && dragOk;
         while(app.layouts.size()>layouts.size()) { for(const auto& l:app.layouts) if(std::none_of(layouts.begin(),layouts.end(),[&](const Layout& k){return k.id==l.id;})) { RemoveLayout(l.id); break; } }

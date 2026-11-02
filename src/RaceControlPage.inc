@@ -19,7 +19,7 @@ private:
         editors_.Attach(list_,Instance(),TextFont());
         Refresh();
     }
-    void OnSize(int width,int height) override { Place(list_.Handle(),0,0,std::min(width,760),height); }
+    void OnSize(int width,int height) override { Place(list_.Handle(),0,0,width,height); }
 
     void Refresh() {
         std::vector<RowList::Row> rows; keys_.clear(); ids_.clear();

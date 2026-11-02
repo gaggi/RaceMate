@@ -3,11 +3,13 @@
 #include "UiTheme.h"
 
 #include <string>
+#include <vector>
 #include <windows.h>
+#include <windowsx.h>
 
-// The colored monitoring banner at the top of the main window. It owns the
-// start/stop button so the button can be painted on the banner's color, and
-// forwards the button's WM_COMMAND to the main window.
+// The colored monitoring banner at the top of the main window, with a bar of toggle buttons at its right, drawn
+// like a row's segmented choices: each switches on its own. A click sends WM_COMMAND to the main window with the
+// button id and the segment as its notification code.
 class StatusPanel
 {
 public:
@@ -42,11 +44,9 @@ public:
         window_ = CreateWindowExW(WS_EX_CONTROLPARENT, kClassName, nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
             0, 0, 100, 56, parent, nullptr, instance, this);
         if (!window_) return false;
-        button_ = CreateWindowExW(0, L"BUTTON", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            0, 0, 100, 30, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(buttonId)), instance, nullptr);
-        SendMessageW(button_, WM_SETFONT, reinterpret_cast<WPARAM>(textFont), TRUE);
-        SetState(Tone::Neutral, L"", L"", L"", true);
-        return button_ != nullptr;
+        buttonId_ = buttonId;
+        SetState(Tone::Neutral, L"", L"");
+        return true;
     }
 
     HWND Handle() const noexcept { return window_; }
@@ -55,12 +55,19 @@ public:
     {
         titleFont_ = titleFont;
         textFont_ = textFont;
-        SendMessageW(button_, WM_SETFONT, reinterpret_cast<WPARAM>(textFont), TRUE);
         InvalidateRect(window_, nullptr, TRUE);
     }
 
-    void SetState(Tone tone, const std::wstring& title, const std::wstring& detail,
-        const std::wstring& buttonText, bool buttonEnabled)
+    // The toggle buttons, and a bit for each that is on.
+    void SetToggles(const std::vector<std::wstring>& labels, int on)
+    {
+        if (labels == labels_ && on == on_) return;
+        labels_ = labels;
+        on_ = on;
+        InvalidateRect(window_, nullptr, TRUE);
+    }
+
+    void SetState(Tone tone, const std::wstring& title, const std::wstring& detail)
     {
         const bool changed = tone != tone_ || title != title_ || detail != detail_;
         if (tone != tone_ || !brush_)
@@ -72,15 +79,15 @@ public:
         }
         title_ = title;
         detail_ = detail;
-        wchar_t current[64]{};
-        GetWindowTextW(button_, current, static_cast<int>(std::size(current)));
-        if (buttonText != current) SetWindowTextW(button_, buttonText.c_str());
-        EnableWindow(button_, buttonEnabled);
-        if (changed)
-        {
-            InvalidateRect(window_, nullptr, TRUE);
-            InvalidateRect(button_, nullptr, TRUE);
-        }
+        if (changed) InvalidateRect(window_, nullptr, TRUE);
+    }
+
+    // One action button instead of toggles, as Race Control's Go live; a disabled one is grey and ignores clicks.
+    void SetState(Tone tone, const std::wstring& title, const std::wstring& detail, const std::wstring& buttonText, bool buttonEnabled)
+    {
+        SetState(tone, title, detail);
+        if (buttonEnabled != enabled_) { enabled_ = buttonEnabled; InvalidateRect(window_, nullptr, TRUE); }
+        SetToggles(buttonText.empty() ? std::vector<std::wstring>{} : std::vector<std::wstring>{buttonText}, 0);
     }
 
 private:
@@ -110,13 +117,86 @@ private:
 
     int Scale(int value) const { return MulDiv(value, GetDpiForWindow(window_), 96); }
 
-    void Layout()
+    // The segments, as wide as their text, ending 12 DIPs from the right edge.
+    std::vector<RECT> Segments(HDC dc) const
     {
         RECT client{};
         GetClientRect(window_, &client);
-        const int width = Scale(150);
-        const int height = Scale(30);
-        MoveWindow(button_, client.right - Scale(12) - width, (client.bottom - height) / 2, width, height, TRUE);
+        const auto oldFont = SelectObject(dc, textFont_);
+        std::vector<int> widths;
+        int total = 0;
+        for (const auto& label : labels_)
+        {
+            SIZE size{};
+            GetTextExtentPoint32W(dc, label.c_str(), static_cast<int>(label.size()), &size);
+            widths.push_back(size.cx + Scale(24));
+            total += widths.back();
+        }
+        SelectObject(dc, oldFont);
+        std::vector<RECT> segments;
+        const int top = (client.bottom - Scale(30)) / 2;
+        int left = client.right - Scale(12) - total;
+        for (const int width : widths) { segments.push_back({left, top, left + width, top + Scale(30)}); left += width; }
+        return segments;
+    }
+
+    int SegmentAt(POINT point) const
+    {
+        const HDC dc = GetDC(window_);
+        const auto segments = Segments(dc);
+        ReleaseDC(window_, dc);
+        for (size_t index = 0; index < segments.size(); ++index)
+            if (PtInRect(&segments[index], point)) return static_cast<int>(index);
+        return -1;
+    }
+
+    static void FillRounded(HDC dc, const RECT& rect, int radius, COLORREF fill, COLORREF line)
+    {
+        const HBRUSH brush = CreateSolidBrush(fill);
+        const HPEN pen = CreatePen(PS_SOLID, 1, line);
+        const auto oldBrush = SelectObject(dc, brush);
+        const auto oldPen = SelectObject(dc, pen);
+        RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
+        SelectObject(dc, oldPen);
+        SelectObject(dc, oldBrush);
+        DeleteObject(pen);
+        DeleteObject(brush);
+    }
+
+    // One outline like a button's; the switched-on segments filled in the accent, hairlines between the others.
+    void PaintToggles(HDC dc)
+    {
+        const auto segments = Segments(dc);
+        if (segments.empty()) return;
+        const auto& colors = UiTheme::Colors;
+        const RECT bar{segments.front().left, segments.front().top, segments.back().right, segments.back().bottom};
+        FillRounded(dc, bar, Scale(8), UiTheme::Surface, colors.buttonBorder);
+        HRGN inside = CreateRoundRectRgn(bar.left + 1, bar.top + 1, bar.right, bar.bottom, Scale(8), Scale(8));
+        SelectClipRgn(dc, inside);
+        const auto oldFont = SelectObject(dc, textFont_);
+        auto lit = [this](size_t index) { return (on_ >> index & 1) != 0; };
+        for (size_t index = 0; index < segments.size(); ++index)
+        {
+            RECT segment = segments[index];
+            if (lit(index) || (enabled_ && hover_ == static_cast<int>(index)))
+            {
+                const HBRUSH brush = CreateSolidBrush(lit(index) ? colors.chosen : colors.buttonHover);
+                FillRect(dc, &segment, brush);
+                DeleteObject(brush);
+            }
+            if (index > 0 && !lit(index) && !lit(index - 1))
+            {
+                const RECT line{segment.left, segment.top + Scale(7), segment.left + 1, segment.bottom - Scale(7)};
+                const HBRUSH brush = CreateSolidBrush(colors.border);
+                FillRect(dc, &line, brush);
+                DeleteObject(brush);
+            }
+            SetTextColor(dc, lit(index) ? colors.chosenInk : enabled_ ? UiTheme::Text : colors.disabled);
+            DrawTextW(dc, labels_[index].c_str(), -1, &segment, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        }
+        SelectObject(dc, oldFont);
+        SelectClipRgn(dc, nullptr);
+        DeleteObject(inside);
     }
 
     void Paint(HDC dc)
@@ -146,9 +226,8 @@ private:
         const int dotY = (client.bottom - dot) / 2;
         Ellipse(dc, dotX, dotY, dotX + dot, dotY + dot);
 
-        RECT button{};
-        GetWindowRect(button_, &button);
-        MapWindowPoints(nullptr, window_, reinterpret_cast<POINT*>(&button), 2);
+        const auto segments = Segments(dc);
+        const RECT button{segments.empty() ? client.right : segments.front().left, 0, client.right, client.bottom};
         SetBkMode(dc, TRANSPARENT);
         const int textLeft = dotX + dot + Scale(12);
         const int middle = client.bottom / 2;
@@ -169,6 +248,7 @@ private:
         SelectObject(dc, oldPen);
         DeleteObject(dotBrush);
         DeleteObject(pen);
+        PaintToggles(dc);
     }
 
     static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
@@ -194,20 +274,44 @@ private:
             return 0;
         }
         case WM_SIZE:
-            self->Layout();
             InvalidateRect(window, nullptr, TRUE);
             return 0;
-        case WM_CTLCOLORBTN:
-            // The button's rounded corners show the banner color, not the window background.
-            return reinterpret_cast<LRESULT>(self->brush_);
-        case WM_COMMAND:
-            return SendMessageW(GetParent(window), WM_COMMAND, wParam, lParam);
+        case WM_MOUSEMOVE:
+        {
+            const int hover = self->SegmentAt({GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+            if (hover != self->hover_) { self->hover_ = hover; InvalidateRect(window, nullptr, FALSE); }
+            TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, window};
+            TrackMouseEvent(&track);
+            return 0;
+        }
+        case WM_MOUSELEAVE:
+            if (self->hover_ >= 0) { self->hover_ = -1; InvalidateRect(window, nullptr, FALSE); }
+            return 0;
+        case WM_SETCURSOR:
+            if (LOWORD(lParam) == HTCLIENT && self->hover_ >= 0 && self->enabled_) { SetCursor(LoadCursorW(nullptr, IDC_HAND)); return TRUE; }
+            break;
+        case WM_LBUTTONDOWN:
+            self->pressed_ = self->SegmentAt({GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+            return 0;
+        case WM_LBUTTONUP:
+        {
+            const int segment = self->SegmentAt({GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+            const bool clicked = segment >= 0 && segment == self->pressed_ && self->enabled_;
+            self->pressed_ = -1;
+            if (clicked) SendMessageW(GetParent(window), WM_COMMAND, MAKEWPARAM(self->buttonId_, segment), reinterpret_cast<LPARAM>(window));
+            return 0;
+        }
         }
         return DefWindowProcW(window, message, wParam, lParam);
     }
 
     HWND window_{};
-    HWND button_{};
+    int buttonId_{};
+    std::vector<std::wstring> labels_;
+    int on_{};
+    int hover_{-1};
+    int pressed_{-1};
+    bool enabled_{true};
     HFONT titleFont_{};
     HFONT textFont_{};
     HBRUSH brush_{};

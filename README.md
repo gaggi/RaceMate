@@ -25,11 +25,13 @@ RaceMate puts nearby traffic, standings, fuel planning, weather, pit-limiter war
 | **Pit Assist** | Limiter state, pit lane progress with your box and brake points, pit-exit warning and setup differences |
 | **Weather** | Current conditions, temperature history, trends and car-relative wind |
 | **Track Map — experimental** | Official circuit geometry or download-free Circle/Line layouts, optionally coloured by sector |
+| **Top speed** | Every car's top speed on the last lap or in the session, as a column in Relative and Standings |
 | **Sector times** | Each sector and mini-sector in its own column in Relative, Standings and Race Control, coloured like on F1 timing screens |
 | **Side Warning** | Bars at the screen edges while a car is beside you, from iRacing's spotter |
 | **Radar** | The cars around yours from above, with distances along the lap and lanes estimated from the spotter |
 | **Traffic** | Faster cars close behind you in multiclass races, with their gap |
 | **Adjustments** | ABS, TC, brake bias or another in-car adjustment you make, big for a moment, also in place of another overlay |
+| **Stream Cover** | Your own picture over the garage screen in OBS while you work on the setup |
 | **Race Control** | Observed incidents, pit visits and estimated passes, with camera/replay navigation |
 | **Layouts** | Independent arrangements that switch for driving, spectating or the garage |
 

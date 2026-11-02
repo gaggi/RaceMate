@@ -1,0 +1,46 @@
+// iRacing car classes by CarClassID and their short names, for sessions that leave CarClassShortName empty.
+// From iRacing's class data (data/carclass/get), as in ianhaycox/ir-standings model/fixtures/carclass.json
+// at cb99097f2e45e062598d21efe002fb4a8dc0c569. Sorted by ID for a binary search.
+#pragma once
+
+struct KnownCarClass { int id; const char* name; };
+inline constexpr KnownCarClass KnownCarClasses[]={
+    {0,"Hosted All Cars"},{1,"SBRS"},{2,"SK Modified"},{3,"Solstice"},{4,"Pro Mazda"},{5,"Legends"},
+    {12,"Rookie Legends"},{13,"Rookie Solstice"},{14,"[R] Late Model"},{15,"SR8"},{16,"Silver Crown"},{17,"Truck"},
+    {18,"Riley DP"},{19,"Cup"},{20,"SRF"},{21,"ARCA Series"},{22,"Lotus 79"},{23,"C6R GT1"},
+    {24,"Jetta TDI"},{25,"V8SC"},{26,"[L] DallaraIR05"},{28,"FR500S"},{29,"Whelen Modified"},{30,"Williams FW31"},
+    {31,"MX-5"},{32,"MX-5 Cup"},{33,"MX-5 Roadster"},{34,"StreetStock PC1"},{35,"Sprint Car"},{36,"Impala Class B"},
+    {40,"HPD ARX-01c"},{41,"Ford GT"},{45,"Cadillac CTS-VR"},{46,"Lotus 49"},{47,"MP4-12C"},{48,"Kia Optima"},
+    {49,"SS-Gen6"},{50,"NASCAR Cup"},{51,"Ford Fusion"},{52,"Ruf RT 12R"},{53,"Ruf RT 12R AWD"},{54,"Ruf RT 12R RWD"},
+    {55,"Ruf RT 12R Track"},{56,"Mustang Class B"},{57,"[L] Xfinity"},{58,"Ruf RT12R CSpec"},{59,"[L] GT3 Class 3"},{60,"Super Late Model"},
+    {61,"[L]  BMW Z4"},{62,"Camry-Gen6"},{63,"DW12"},{64,"Camaro Class B"},{65,"Ford GT GT3"},{66,"[L] Holden V8"},
+    {67,"[L] V8Supercars"},{68,"[L] Ford FG V8"},{69,"[Retired] Tundra"},{70,"[R] Chevy Silver"},{71,"NASCAR Trucks"},{72,"Aston Martin"},
+    {73,"GT1 Class"},{74,"MX5 Cup 2016"},{76,"Camry 2015"},{77,"C7 DP"},{78,"McLaren MP4-30"},{79,"[L] AMG GT3"},
+    {80,"[L] Audi R8 GT3"},{81,"Renault 2.0"},{82,"[L] GT3 German"},{83,"Audi 90 GTO"},{84,"Nissan GTP"},{85,"DLM Limited"},
+    {86,"Dirt StreetStock"},{87,"DSC 305"},{88,"Ford RS WRC"},{89,"Dirt Legends"},{90,"DLM Pro"},{91,"DLM Super"},
+    {92,"DSC 360"},{93,"DSC 410"},{94,"DSC 410W"},{95,"[L] Porsche 911"},{96,"DSC 360W"},{97,"VW Beetle GRC"},
+    {98,"Ford GT - 2017"},{99,"Ferrari 488 GTE"},{100,"GTE Class"},{101,"IMSA GT3"},{102,"[L]Ferrari488GT3"},{103,"Dirt UMP Mod"},
+    {104,"Dirt Midget"},{105,"Rallycross"},{107,"USAC Sprint"},{113,"Audi R18"},{114,"[L] GT3 Bathurst"},{115,"Porsche 919"},
+    {116,"LMP1 Class"},{117,"Dallara IR18"},{471,"Subaru WRX STI"},{472,"Porsche 911 RSR"},{473,"IMSA2 GT3"},{696,"Camaro ZL1"},
+    {870,"Dallara F3"},{871,"Renault 3.5"},{1105,"BMW M8 GTE"},{1275,"Ford Mustang"},{1276,"Silverado - 2019"},{1277,"Pro 2 Truck"},
+    {1278,"Pro 4 Truck"},{1279,"[L]  NASCAR Cup"},{1450,"Audi RS 3 LMS"},{1451,"Camaro 2019"},{1452,"Mustang 2019"},{1453,"Supra 2019"},
+    {1454,"Pro 2 Lite Truck"},{1455,"XFINITY Series"},{1613,"Holden - 2019"},{1614,"Ford GT - 2019"},{1615,"Supercars - 2019"},{1860,"Porsche 718"},
+    {2040,"GTE Class 2"},{2041,"GT3 Class 2"},{2070,"[L] GT3 Nurb"},{2264,"BMW M4 GT4"},{2265,"Pro 2000 PM-18"},{2266,"USF 2000"},
+    {2267,"Ford F150"},{2268,"GT4 Class"},{2269,"NASCAR 1987"},{2270,"1987 Monte Carlo"},{2271,"1987 Ford T-bird"},{2522,"Vette C8.R GTE"},
+    {2523,"Dallara P217"},{2524,"GTE IMSA"},{2525,"GTE Class 3"},{2704,"Dallara iR-01"},{2705,"Lambo Hurac\xC3""\xA1""n"},{2706,"Dirt BB Modified"},
+    {2707,"Dirt 358 Mod"},{2708,"GT3 Class"},{2709,"GTD Class"},{2742,"BMW M4 GT3"},{2916,"McLaren 570S GT4"},{2936,"GT3 Nurb 2"},
+    {2937,"GT3 Class 4"},{2974,"GT4 Nurb"},{2975,"Camaro ZL1 NGC"},{2976,"Mustang NGC"},{2977,"Toyota NGC"},{2978,"NASCAR 2022 NG"},
+    {3000,"[L] Porsche911"},{3001,"VW Beetle Lite"},{3002,"Formula Vee"},{3022,"GT3 Class 5"},{3104,"Porsche 992"},{3105,"Ferrari Evo GT3"},
+    {3185,"AMG W12 E"},{3186,"Elantra N TC"},{3187,"Civic Type R"},{3188,"FIA F4"},{3189,"Touring Car"},{3190,"IMSA22"},
+    {3239,"Aston Martin GT4"},{3240,"Chevrolet Cruze"},{3241,"Toyota Corolla"},{3242,"Veloster N TC"},{3243,"Buick LeSabre 87"},{3244,"Tundra TRD Pro"},
+    {3245,"Stock Car Brasil"},{3283,"Radical SR10"},{4000,"AMG GT3 2020"},{4001,"Nurb22 GT3"},{4002,"Nurb22 GT4"},{4003,"Nurb22 Touring"},
+    {4004,"AMG GT4"},{4005,"NECGT3"},{4006,"NECGT4 Class"},{4007,"NECTCR Class"},{4008,"IMPCGT4 Class"},{4009,"Porsche MissionR"},
+    {4010,"BMW M Hybrid V8"},{4011,"IMSA23"},{4012,"Toyota GR86"},{4013,"Mercedes-AMG W13"},{4014,"RoarTouringCar"},{4015,"Renault Clio"},
+    {4016,"Ray FF1600"},{4017,"Late Model Stock"},{4018,"Ligier JS P320"},{4020,"Crev23"},{4021,"Gen 4 Cup"},{4022,"NECGT323"},
+    {4023,"NECGT423"},{4024,"Cadillac VSRGTP"},{4025,"Porsche 992GT3R"},{4029,"GTP"},{4031,"Acura ARX-06 GTP"},{4032,"Super SF23T"},
+    {4033,"Super SF23"},{4034,"Super SF23H"},{4035,"RingMeister23"},{4036,"Ferrari 296 GT3"},{4037,"Porsche 963 GTP"},{4038,"Pontiac GP 1987"},
+    {4039,"RingMeister23S4"},{4040,"DraftMaster23S4"},{4042,"Shiny 2023S4"},{4043,"French Co 2023S4"},{4044,"Shake Up 2023S4"},{4046,"Audi R8 EVO2 GT3"},
+    {4047,"Special2024"},{4049,"SF Lights"},{4050,"SRX"},{4051,"Millbridge23"},{4052,"DMS Winged"},{4053,"DMS Non-Winged"},
+    {4054,"BMW M Power"},{4055,"NECGT324"},{4056,"NECGT424"},{4057,"NECTCR24"},{4058,"Outlaw - Winged"},{4059,"Outlaw NonWinged"},
+    {4060,"Corvette Z06GT3R"},{4061,"Ford Mustang GT3"},{4062,"StreetStock CM2"},{4063,"StreetStock ET3"},{4064,"Street Stocks"},{4065,"RingMeister24S3"},
+};

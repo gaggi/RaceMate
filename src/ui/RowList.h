@@ -3,6 +3,7 @@
 #include "UiTheme.h"
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <string>
 #include <vector>
@@ -30,6 +31,9 @@
 // choice among a few short values; clicking one sends kChoice with NotifiedChoice() the segment. With choiceFlags
 // each segment switches on its own and choice holds a bit per segment, as a bar of toggle buttons.
 //
+// A row with a slider (sliderMax above sliderMin) shows it in the same place, its value as text beside it;
+// dragging it, clicking its track or the arrow keys send kSlider with the row's slider the new value.
+//
 // Rows that share a dragGroup can be put in another order by dragging one by the grip at its left, six dots, up or
 // down: a line shows where it goes, and on release the parent gets kMoved with NotifiedRow() the dragged row and
 // DropRow() the row whose place it takes. A row of the group that is not draggable has no grip and stays put as
@@ -37,7 +41,7 @@
 // Row icon buttons, the same on every page (Segoe Fluent Icons / Segoe MDL2 Assets).
 namespace Glyph
 {
-    inline constexpr wchar_t Expand = L'\uE70D', Collapse = L'\uE70E', Up = L'\uE74A', Down = L'\uE74B', Remove = L'\uE74D', Reset = L'\uE7A7';
+    inline constexpr wchar_t Expand = L'\uE70D', Collapse = L'\uE70E', Up = L'\uE74A', Down = L'\uE74B', Remove = L'\uE74D', Reset = L'\uE7A7', More = L'\uE712';
 }
 
 class RowList
@@ -55,7 +59,9 @@ public:
         // A row was dragged to another place in its group.
         kMoved = 7,
         // A segment of a row's choices was clicked, or chosen with the arrow keys.
-        kChoice = 8
+        kChoice = 8,
+        // A row's slider moved to another value.
+        kSlider = 9
     };
 
     enum class Tone
@@ -82,10 +88,14 @@ public:
         bool toggleEnabled{true};
         std::wstring button;
         bool buttonEnabled{true};
+        bool buttonDanger{}; // Red, for what cannot be undone: removing.
         // Instead of a button: the selected one of these short values, or with choiceFlags a bit per value that is on.
         std::vector<std::wstring> choices;
         int choice{-1};
         bool choiceFlags{};
+        // Instead of a button: a slider from sliderMin to sliderMax in steps of sliderStep, at slider, with its unit.
+        int slider{}, sliderMin{}, sliderMax{}, sliderStep{1};
+        std::wstring sliderUnit;
         // Glyphs from Segoe Fluent Icons / Segoe MDL2 Assets; [0] is the rightmost:
         // expand first, then the others. Every row of a card with a toggle or icon
         // buttons reserves as many slots as the row with the most, so toggles and
@@ -93,7 +103,7 @@ public:
         // the same button in the same column when only some rows have, say, an arrow.
         std::vector<wchar_t> iconButtons;
         bool muted{};
-        bool selected{};
+        bool selected{}; // A light accent fill and a bold title.
         int indent{}; // DIPs: child rows inside an expandable group.
         // Height in DIPs of the expanded area below the row; 0 when collapsed.
         int expandHeight{};
@@ -177,7 +187,7 @@ public:
         return rect;
     }
 
-    // Client rectangle of a row's text button, or of its choices; empty without either.
+    // Client rectangle of a row's text button, its choices or its slider; empty without any.
     RECT ButtonRect(int index) const
     {
         const auto layouts = Compute();
@@ -196,6 +206,11 @@ public:
     void PressButton(int index)
     {
         if (index >= 0 && index < static_cast<int>(rows_.size())) Activate({index, PartKind::Button});
+    }
+    // Moves a row's slider to a value as dragging it does.
+    void SlideTo(int index, int value)
+    {
+        if (index >= 0 && index < static_cast<int>(rows_.size()) && HasSlider(rows_[static_cast<size_t>(index)])) SetSlider(index, value);
     }
     // Acts on one of a row's choices as a click on it does.
     void PressChoice(int index, int choice)
@@ -221,10 +236,20 @@ public:
         EnsureVisible(index);
     }
 
+    // Scrolls by the mouse wheel and the keyboard only, with no bar taking room at the right.
+    void HideScrollBar()
+    {
+        noScrollBar_ = true;
+        SetWindowLongPtrW(window_, GWL_STYLE, GetWindowLongPtrW(window_, GWL_STYLE) & ~WS_VSCROLL);
+        SetWindowPos(window_, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        UpdateScrollRange();
+        InvalidateRect(window_, nullptr, FALSE);
+    }
+
 private:
     static constexpr wchar_t kClassName[] = L"LaunchMateRowList";
 
-    enum class PartKind { None, Body, Toggle, Button, IconButton, Grip, Choice };
+    enum class PartKind { None, Body, Toggle, Button, IconButton, Grip, Choice, Slider };
     struct Part
     {
         int row{-1};
@@ -240,6 +265,7 @@ private:
         RECT button{};
         std::vector<RECT> iconButtons;
         std::vector<RECT> choices;
+        RECT slider{};      // the track, the value's text right of it
         RECT pill{};
         RECT text{};
         RECT icon{};
@@ -250,7 +276,8 @@ private:
     };
 
     int Scale(int value) const { return MulDiv(value, GetDpiForWindow(window_), 96); }
-    static bool HasButton(const Row& row) { return !row.button.empty() || !row.choices.empty(); }
+    static bool HasSlider(const Row& row) { return row.sliderMax > row.sliderMin; }
+    static bool HasButton(const Row& row) { return !row.button.empty() || !row.choices.empty() || HasSlider(row); }
     bool Chosen(const Row& row, size_t choice) const { return row.choiceFlags ? (row.choice >= 0 && (row.choice >> choice & 1)) : row.choice == static_cast<int>(choice); }
 
     void ReleaseResources()
@@ -388,6 +415,13 @@ private:
                 for (const int width : widths) { layout.choices.push_back({left, middle - Scale(15), left + width, middle + Scale(15)}); left += width; }
                 x -= total + Scale(10);
             }
+            else if (HasSlider(row))
+            {
+                const int width = Scale(220);
+                layout.button = {x - width, middle - Scale(15), x, middle + Scale(15)};
+                layout.slider = {x - width, middle - Scale(12), x - Scale(56), middle + Scale(12)};
+                x -= width + Scale(10);
+            }
             else if (!row.button.empty())
             {
                 const int width = TextWidth(dc, textFont_, row.button) + Scale(28);
@@ -435,6 +469,7 @@ private:
         GetClientRect(window_, &client);
         const int content = ContentHeight();
         scroll_ = std::clamp(scroll_, 0, std::max(0, content - static_cast<int>(client.bottom)));
+        if (noScrollBar_) return;
         SCROLLINFO info{sizeof(info), SIF_RANGE | SIF_PAGE | SIF_POS};
         info.nMax = std::max(0, content - 1);
         info.nPage = static_cast<UINT>(std::max<LONG>(0, client.bottom));
@@ -449,7 +484,7 @@ private:
         position = std::clamp(position, 0, std::max(0, ContentHeight() - static_cast<int>(client.bottom)));
         if (position == scroll_) return;
         scroll_ = position;
-        SetScrollPos(window_, SB_VERT, scroll_, TRUE);
+        if (!noScrollBar_) SetScrollPos(window_, SB_VERT, scroll_, TRUE);
         InvalidateRect(window_, nullptr, FALSE);
         NotifyLayout();
     }
@@ -487,6 +522,7 @@ private:
             for (size_t choice = 0; choice < layout.choices.size(); ++choice)
                 if (PtInRect(&layout.choices[choice], point)) return {static_cast<int>(index), PartKind::Choice, static_cast<int>(choice)};
             if (!row.button.empty() && PtInRect(&layout.button, point)) return {static_cast<int>(index), PartKind::Button};
+            if (HasSlider(row) && PtInRect(&layout.slider, point)) return {static_cast<int>(index), PartKind::Slider};
             RECT toggle = layout.toggle;
             InflateRect(&toggle, Scale(6), Scale(8));
             if (row.toggle >= 0 && PtInRect(&toggle, point)) return {static_cast<int>(index), PartKind::Toggle};
@@ -512,6 +548,26 @@ private:
             if (!above && y > middle && (target <= dragRow_ || static_cast<int>(index) > target)) target = static_cast<int>(index);
         }
         return target;
+    }
+
+    // The value at client x on a row's track, in its steps; the knob's middle travels the track inside its radius.
+    int SliderValue(int index, int x) const
+    {
+        const auto& row = rows_[static_cast<size_t>(index)];
+        const RECT& track = Compute()[static_cast<size_t>(index)].slider;
+        const int knob = Scale(9), span = std::max<int>(1, track.right - track.left - 2 * knob);
+        const double at = std::clamp(static_cast<double>(x - track.left - knob) / span, 0.0, 1.0);
+        const int steps = static_cast<int>(std::lround(at * (row.sliderMax - row.sliderMin) / std::max(1, row.sliderStep)));
+        return std::clamp(row.sliderMin + steps * std::max(1, row.sliderStep), row.sliderMin, row.sliderMax);
+    }
+    void SetSlider(int index, int value)
+    {
+        auto& row = rows_[static_cast<size_t>(index)];
+        value = std::clamp(value, row.sliderMin, row.sliderMax);
+        if (value == row.slider) return;
+        row.slider = value; // Show the change at once; the parent may refresh.
+        InvalidateRect(window_, nullptr, FALSE);
+        Notify(kSlider, index, value);
     }
 
     void Notify(Notification notification, int row, int iconButton = -1)
@@ -602,6 +658,7 @@ private:
         shift(layout.expansion);
         for (auto& rect : layout.iconButtons) shift(rect);
         for (auto& rect : layout.choices) shift(rect);
+        shift(layout.slider);
         SetBkMode(dc, TRANSPARENT);
 
         if (row.header)
@@ -686,10 +743,11 @@ private:
             title.bottom = middle + Scale(1);
             detail.top = middle + Scale(1);
         }
-        SelectObject(dc, textFont_);
+        SelectObject(dc, row.selected && titleFont_ ? titleFont_ : textFont_);
         SetTextColor(dc, titleColor);
         DrawTextW(dc, row.title.c_str(), -1, &title,
             (row.detail.empty() ? DT_VCENTER : DT_BOTTOM) | DT_LEFT | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+        SelectObject(dc, textFont_);
         if (!row.detail.empty())
         {
             SetTextColor(dc, UiTheme::Colors.muted);
@@ -724,9 +782,11 @@ private:
         if (!row.button.empty())
         {
             const bool buttonHover = hovered && hover_.kind == PartKind::Button && row.buttonEnabled;
-            FillRounded(dc, layout.button, Scale(8), buttonHover ? UiTheme::Colors.buttonHover : UiTheme::Surface,
-                row.buttonEnabled ? UiTheme::Colors.buttonBorder : UiTheme::Colors.buttonBorderDisabled);
-            SetTextColor(dc, row.buttonEnabled ? UiTheme::Text : UiTheme::Colors.disabled);
+            const auto& colors = UiTheme::Colors;
+            const bool danger = row.buttonDanger && row.buttonEnabled;
+            FillRounded(dc, layout.button, Scale(8), buttonHover ? (danger ? colors.pillDanger : colors.buttonHover) : UiTheme::Surface,
+                danger ? colors.pillDangerInk : row.buttonEnabled ? colors.buttonBorder : colors.buttonBorderDisabled);
+            SetTextColor(dc, danger ? colors.pillDangerInk : row.buttonEnabled ? UiTheme::Text : colors.disabled);
             DrawTextW(dc, row.button.c_str(), -1, &layout.button, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
 
@@ -750,6 +810,32 @@ private:
             }
             SelectClipRgn(dc, nullptr);
             DeleteObject(inside);
+        }
+
+        if (HasSlider(row))
+        {
+            // A thin track, filled in the accent up to the knob: a ring around an accent dot, larger under the mouse.
+            const RECT& track = layout.slider;
+            const int knob = Scale(9), mid = (track.top + track.bottom) / 2;
+            const double at = static_cast<double>(row.slider - row.sliderMin) / (row.sliderMax - row.sliderMin);
+            const int x = track.left + knob + static_cast<int>(std::lround(at * (track.right - track.left - 2 * knob)));
+            FillRounded(dc, {track.left + knob, mid - Scale(2), track.right - knob, mid + Scale(2)}, Scale(4), UiTheme::Colors.toggleOff, UiTheme::Colors.toggleOff);
+            FillRounded(dc, {track.left + knob, mid - Scale(2), x, mid + Scale(2)}, Scale(4), UiTheme::Colors.accent, UiTheme::Colors.accent);
+            const bool sliderHover = (hovered && hover_.kind == PartKind::Slider) || sliding_ == static_cast<int>(index);
+            const int dot = sliderHover ? Scale(6) : Scale(5);
+            const HBRUSH ring = CreateSolidBrush(UiTheme::Surface), dotBrush = CreateSolidBrush(UiTheme::Colors.accent);
+            const HPEN edge = CreatePen(PS_SOLID, 1, UiTheme::Colors.buttonBorder);
+            const auto oldBrush = SelectObject(dc, ring);
+            const auto oldPen = SelectObject(dc, edge);
+            Ellipse(dc, x - knob, mid - knob, x + knob + 1, mid + knob + 1);
+            SelectObject(dc, dotBrush); SelectObject(dc, GetStockObject(NULL_PEN));
+            Ellipse(dc, x - dot, mid - dot, x + dot + 1, mid + dot + 1);
+            SelectObject(dc, oldPen); SelectObject(dc, oldBrush);
+            DeleteObject(edge); DeleteObject(dotBrush); DeleteObject(ring);
+            SelectObject(dc, textFont_);
+            SetTextColor(dc, UiTheme::Text);
+            RECT text{track.right + Scale(4), layout.button.top, layout.button.right, layout.button.bottom};
+            DrawTextW(dc, (std::to_wstring(row.slider) + row.sliderUnit).c_str(), -1, &text, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
 
         SelectObject(dc, glyphFont_);
@@ -891,6 +977,11 @@ private:
             return 0;
         case WM_MOUSEMOVE:
         {
+            if (sliding_ >= 0)
+            {
+                if (sliding_ < static_cast<int>(rows_.size())) SetSlider(sliding_, SliderValue(sliding_, GET_X_LPARAM(lParam)));
+                return 0;
+            }
             if (dragRow_ >= 0 && (wParam & MK_LBUTTON))
             {
                 const int y = GET_Y_LPARAM(lParam);
@@ -945,11 +1036,24 @@ private:
             dragRow_ = pressed_.kind == PartKind::Grip && Draggable(pressed_.row) ? pressed_.row : -1;
             dragStart_ = GET_Y_LPARAM(lParam); dragging_ = false; dropRow_ = -1;
             SetFocus(window_);
+            // A slider follows the mouse from the press on, until it is released.
+            if (pressed_.kind == PartKind::Slider)
+            {
+                sliding_ = pressed_.row; SetCapture(window_);
+                SetSlider(sliding_, SliderValue(sliding_, GET_X_LPARAM(lParam)));
+            }
             InvalidateRect(window_, nullptr, FALSE);
             return 0;
         }
         case WM_LBUTTONUP:
         {
+            if (sliding_ >= 0)
+            {
+                sliding_ = -1; pressed_ = {};
+                ReleaseCapture();
+                InvalidateRect(window_, nullptr, FALSE);
+                return 0;
+            }
             if (dragging_)
             {
                 const int from = dragRow_, to = dropRow_;
@@ -961,12 +1065,15 @@ private:
                 return 0;
             }
             dragRow_ = -1;
+            // The action comes last: it may close the page, and this list with it.
             const auto part = HitTest({GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
-            if (part == pressed_) Activate(part);
+            const auto pressed = pressed_;
             pressed_ = {};
+            if (part == pressed) Activate(part);
             return 0;
         }
         case WM_CAPTURECHANGED:
+            if (sliding_ >= 0 && reinterpret_cast<HWND>(lParam) != window_) { sliding_ = -1; InvalidateRect(window_, nullptr, FALSE); }
             if (dragging_ && reinterpret_cast<HWND>(lParam) != window_) { dragging_ = false; dragRow_ = -1; dropRow_ = -1; InvalidateRect(window_, nullptr, FALSE); }
             return 0;
         case WM_GETDLGCODE:
@@ -979,9 +1086,10 @@ private:
             case VK_LEFT:
             case VK_RIGHT:
             {
-                // The next or previous choice of a row with one choice at a time.
+                // The next or previous choice of a row with one choice at a time, or the slider a step.
                 if (focused_ < 0) return 0;
                 const auto& row = rows_[static_cast<size_t>(focused_)];
+                if (HasSlider(row)) { SetSlider(focused_, row.slider + (wParam == VK_RIGHT ? row.sliderStep : -row.sliderStep)); return 0; }
                 if (row.choices.empty() || row.choiceFlags) return 0;
                 const int next = std::clamp(row.choice + (wParam == VK_RIGHT ? 1 : -1), 0, static_cast<int>(row.choices.size()) - 1);
                 if (next != row.choice) Activate({focused_, PartKind::Choice, next});
@@ -1041,6 +1149,7 @@ private:
 
     HWND window_{};
     int id_{};
+    bool noScrollBar_{};
     HFONT titleFont_{};
     HFONT textFont_{};
     HFONT glyphFont_{};
@@ -1058,4 +1167,6 @@ private:
     int dragStart_{};
     bool dragging_{};
     int dropRow_{-1};
+    // The row whose slider follows the mouse, -1 when none.
+    int sliding_{-1};
 };

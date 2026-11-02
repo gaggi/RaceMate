@@ -96,7 +96,7 @@ The optional **Fuel to finish (FUEL)** column is available independently in Rela
 | Yellow SAVE | Finishing falls within the configured additional fuel-saving allowance |
 | Blank | Insufficient modeled range or unavailable/unsupported evidence |
 
-**Settings → Additional laps with fuel saving** accepts 0–10 laps and defaults to **+3**. The allowance is converted to time using your pace. It affects yellow SAVE only; green END still uses normal full-tank range.
+**Settings → Additional laps with fuel saving** is a slider from 0 to 10 laps and defaults to **+3**. The allowance is converted to time using your pace. It affects yellow SAVE only; green END still uses normal full-tank range.
 
 This is not a measurement of another car's fuel. RaceMate assumes a full tank at an observed race start or the exit from a completely observed service visit with at least two stationary seconds. It combines your restricted tank capacity, at least three clean consumption samples and your pace to estimate a full-tank duration. It then subtracts that opponent's elapsed stint time and compares the remainder with its projected time to finish.
 

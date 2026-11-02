@@ -6,15 +6,17 @@
 
 Open **Overlays** and click **Settings** on an overlay's row, or double-click the row. The row's switch puts the overlay on your screen; a blue pill says when it also goes to OBS (**OBS** or **Screen + OBS**). The row's second line lists only what differs from a new overlay, such as `120 %  ·  grows from Bottom right`.
 
-An overlay's page starts with **Shows on**: **Off**, **Screen**, **OBS** or **Both**. What it shows follows, and the **Window** section at the end holds its name and placement; they belong to that overlay in its own layout.
+**Overlays** in the sidebar opens the overlay you had open last, beside the list: every layout at the top, then the open layout's overlays, each with its switch and where it shows. Click a layout to open it and its page, an overlay for its settings; the open one and its layout are marked, and the page's title names both, such as **Layout 2 › Relative**. An overlay's switch is on while it shows anywhere, on the screen or in OBS; switching it off and on again brings back where it showed. **Move**, **Hide** and **Pause OBS** sit in the status bar at the top of the window and act on all overlays. Its page renames it, with **Name** at the top, and removes it at the bottom. **Add layout** and **Add overlay** add one.
+
+An overlay's page starts with **Shows on**: **Off**, **Screen**, **OBS** or **Both**. The **Window** section right under it holds its name and placement, then follows what it shows; they belong to that overlay in its own layout.
 
 | Setting | Available choices | Effect |
 | --- | --- | --- |
 | Rounded corners | On or off | Square corners are the default |
-| Size | 50–150%, in 10% steps | Scales the overlay |
-| Opacity | 40–100%, in 10% steps | Controls the overlay's opacity; **Background only** keeps text, badges and foreground at full opacity |
+| Size | Slider, 50–150% in 5% steps | Scales the overlay |
+| Opacity | Slider, 40–100% in 5% steps | Controls the overlay's opacity; **Background only** keeps text, badges and foreground at full opacity |
 | Fixed corner | The four arrows: top left, top right, bottom left, bottom right | Keeps that corner in place when content changes size |
-| Updates | 1, 2, 5, 10, 15 or 20 Hz | Controls that overlay's refresh rate |
+| Updates | 1, 2, 5, 10, 15 or 20 Hz, side by side | Controls that overlay's refresh rate |
 | OBS alpha | Premultiplied or Straight; only while it goes to OBS | Matches OBS's alpha mode; see [OBS output](overlays.md#obs-output-spout2) |
 
 A setting with a few short values shows them side by side in its row; click one to choose it. Buttons such as **100 % ▾** show the current value and open a menu of the others.
@@ -27,17 +29,15 @@ The fixed corner is useful for standings near the right edge or a panel above th
 
 ![Layout list with independent arrangements and activation conditions](images/layouts.png)
 
-*Each layout is an expandable group with its own overlays and activation condition.*
+*Each layout has its own overlays and activation condition.*
 
-The Overlays page starts with **All overlays**: **Move**, **Hide** and **Pause OBS**, each switching on and off by itself. Below it, every layout's group is open when RaceMate starts, so its overlays are listed at once; the arrow folds a group away.
-
-A layout owns its overlays, their names, placement, size, opacity, refresh rates and content settings. Two Relatives in different layouts can look completely different. Click its header or arrow to open or close its settings and overlay group. The header settings contain its name, **Active when** and **Session**. The layout you edit does not determine which layouts run.
+A layout owns its overlays, their names, placement, size, opacity, refresh rates and content settings. Two Relatives in different layouts can look completely different. Click a layout in the list to open it: its overlays follow below it, and its page shows **Active when**, **Session**, **Preview**, **Reset positions**, **Export** and **Remove layout**. The layout you edit does not determine which layouts run.
 
 ### Creating a layout
 
-1. Select **Add layout** and choose a copy of the layout being edited or default overlays.
-2. Click its header to expand the group and set its name and activation condition.
-3. Configure the overlays inside that group. Dragging layout rows changes their display order, not their activation priority.
+1. Select **Add layout** and choose a copy of the open layout, default overlays, or a layout file.
+2. On its page, give it a name under **Name** and set **Active when** and **Session**.
+3. Configure its overlays below it in the list. Dragging layout rows changes their display order, not their activation priority.
 
 | Active when | Applies |
 | --- | --- |
@@ -63,17 +63,17 @@ When **no condition matches**, no layout is activated as a fallback. Overlay win
 
 Opening an overlay's **Settings**, or expanding its inline placement controls, automatically shows that overlay on screen with a red editing frame. If it would otherwise be inactive or hidden, it uses isolated sample data, without activating its layout or publishing those sample images to OBS. Closing the editor removes that temporary preview. Live overlays continue to use the live data. A map preview uses a circle when no official map geometry is available.
 
-Each layout has its own **Preview** / **Stop preview** button in its title row. Several layouts can be previewed independently, including layouts whose conditions do not currently match. Sample previews use a yellow **Preview** badge; the green **Active** badge is reserved for matching layouts using real SIM data. Previews remain on screen and never publish sample images to OBS. Live telemetry continues throughout. If a previewed layout becomes live, its live data takes priority; stopping its preview does not hide its live overlays.
+Each layout has its own **Preview** / **Stop preview** on its page. Several layouts can be previewed independently, including layouts whose conditions do not currently match. Sample previews use a yellow **Preview** badge; the green **Active** badge is reserved for matching layouts using real SIM data. Previews remain on screen and never publish sample images to OBS. Live telemetry continues throughout. If a previewed layout becomes live, its live data takes priority; stopping its preview does not hide its live overlays.
 
-**Move** under **All overlays** lets you arrange the currently displayed overlays. While you drag one, its edges and centre lines snap to those of the other overlays and of the screen within 8 px, shown by a magenta guide line; otherwise the corner it grows from snaps to a 10 px grid counted from the corner of the screen. Hold **Alt** while dragging to place it freely. **Settings → Snap to grid while moving** (expand it for the grid size, 2–100 px) and **Snap to other overlays** switch these off. Any layout can be removed, including Default and the last remaining layout. An empty layout list remains empty after restarting; no fallback layout is recreated. The original Default layout initially retains older settings, but its name gives it no special activation behavior.
+**Move** in the status bar lets you arrange the currently displayed overlays. While you drag one, its edges and centre lines snap to those of the other overlays and of the screen within 8 px, shown by a magenta guide line; otherwise the corner it grows from snaps to a 10 px grid counted from the corner of the screen. Hold **Alt** while dragging to place it freely. **Settings → Snap to grid while moving** (expand it for the grid size, 2–100 px) and **Snap to other overlays** switch these off. Any layout can be removed, including Default and the last remaining layout. An empty layout list remains empty after restarting; no fallback layout is recreated. The original Default layout initially retains older settings, but its name gives it no special activation behavior.
 
 ## Sharing layouts
 
-**Export layout** in a layout's group saves it to a `.racemate-layout` file: its name, both conditions and every overlay with its settings. **Import layout** below **Add layout** adds such a file as a new layout; your own layouts stay unchanged. RaceMate asks whether to place the overlays where they were when the layout was exported. On another monitor arrangement, choose **No** to start them at their default places. Only overlay settings are imported, never general settings such as shortcuts or pit stop times. OBS sources follow the overlays' names; select them again in OBS if needed.
+**Export** on a layout's page saves it to a `.racemate-layout` file: its name, both conditions and every overlay with its settings. **Add layout → From a file...** adds such a file as a new layout; your own layouts stay unchanged. RaceMate asks whether to place the overlays where they were when the layout was exported. On another monitor arrangement, choose **No** to start them at their default places. Only overlay settings are imported, never general settings such as shortcuts or pit stop times. OBS sources follow the overlays' names; select them again in OBS if needed.
 
 ## Multiple instances
 
-**Add overlay** creates another **Relative**, **Standings**, **Fuel Calculator**, **Weather** or **Track Map**. Each has independent settings and placement, and an initial numbered name such as **Weather 2**. Expand **Name** under **Window** on its page to rename it. An empty name restores the default. Renaming preserves its settings but updates its Spout sender label; select the new sender name in OBS afterward. Pit Assist, Side Warning, Radar, Traffic and Adjustments are not offered as additional instances.
+**Add overlay** creates another overlay of any kind. Each has independent settings and placement, and an initial numbered name such as **Weather 2**. Expand **Name** at the top of its page to rename it. An empty name restores the default. Renaming preserves its settings but updates its Spout sender label; select the new sender name in OBS afterward. **Remove overlay** at the bottom of its page deletes it with its settings, the first of its kind too.
 
 Useful arrangements include a second Weather overlay showing only the wind rose, a compact Relative beside a fuller Standings table, or an official Map alongside a wide Line map.
 
@@ -99,10 +99,10 @@ See the [metric reference](overlays.md#header-and-footer-metrics) for which valu
 | Start with Windows | Adds RaceMate to the current user's Windows Run key; administrator rights are not needed |
 | Start minimized | Starts in the tray when the tray icon is available |
 | Headers on all overlays | Changes header visibility across overlays |
-| Snap to grid while moving | On by default; grid size 10 px, adjustable from 2 to 100 px |
+| Snap to grid while moving | On by default; **Grid size** below it, a slider from 2 to 100 px, default 10 px |
 | Snap to other overlays | On by default; edges and centre lines line up with other overlays and the screen |
 | Reserve at the finish | None by default; litres or laps kept in the tank at the flag, see [Fuel reserve](fuel-and-pit-strategy.md#fuel-reserve) |
-| Additional laps with fuel saving | 0–10, default +3; shared opponent SAVE allowance |
+| Additional laps with fuel saving | A slider from 0 to 10 laps, default 3; shared opponent SAVE allowance |
 | Pit lane loss | Learned or manually fixed per track |
 | Service times | Four-tire time and refuel rate per car and rule set |
 | Check for updates on startup | Checks GitHub and reports availability in the interface |
