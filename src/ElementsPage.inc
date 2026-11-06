@@ -134,7 +134,7 @@ private:
             const auto& c=o_.cover;
             header(L"Picture");
             RowList::Row picture; picture.title=L"Picture"; picture.button=L"Choose...";
-            picture.detail=c.image.empty()?L"None: a dark panel":std::filesystem::path(c.image).filename().wstring();
+            picture.detail=c.image.empty()?L"None: our lettering on a dark panel":std::filesystem::path(c.image).filename().wstring();
             if(!c.image.empty()) { picture.iconButtons={Glyph::Remove}; if(GetFileAttributesW(c.image.c_str())==INVALID_FILE_ATTRIBUTES) { picture.pill=L"Not found"; picture.pillTone=RowList::Tone::Warning; } }
             push(std::move(picture),Key::CoverPicture);
             RowList::Row fit; fit.title=L"Fitting"; fit.choices={L"Fill",L"Whole"}; fit.choice=c.fit?1:0; fit.muted=c.image.empty();

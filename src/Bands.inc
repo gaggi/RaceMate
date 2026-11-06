@@ -91,9 +91,7 @@ void WindowNameEditor(RowEditors& editors,const Overlay& o) {
 bool WindowNameCommand(Overlay& o,RowEditors& editors,int code) {
     if(code==EN_CHANGE) { o.customName=editors.Text(WindowNameEditId).substr(0,127); Save(); return false; }
     if(code!=EN_KILLFOCUS) return false;
-    auto& text=o.customName;
-    const auto first=text.find_first_not_of(L" \t\r\n");
-    text=first==std::wstring::npos?std::wstring():text.substr(first,text.find_last_not_of(L" \t\r\n")-first+1);
+    o.customName=CustomName(o,o.customName);
     const auto title=Name(o);
     if(o.window) SetWindowTextW(o.window,title.c_str());
     if(o.mirror) SetWindowTextW(o.mirror,title.c_str());

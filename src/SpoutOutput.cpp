@@ -3,6 +3,7 @@
 #undef WIN32_LEAN_AND_MEAN
 #endif
 #include "third_party/spout/SpoutDX.h"
+#include <dxgi1_6.h>
 #include <wrl/client.h>
 #include <condition_variable>
 #include <map>
@@ -44,7 +45,18 @@ private:
     };
     std::thread thread; bool stopping=false;
     static double Now() { LARGE_INTEGER t{},f{}; QueryPerformanceCounter(&t); QueryPerformanceFrequency(&f); return t.QuadPart*1e6/f.QuadPart; }
+    // A receiver opens the shared textures only on the GPU they were made on. Windows lists the power-saving
+    // GPU first for an app without a graphics preference, while OBS and iRacing usually run on the fastest:
+    // the textures are made there. Null where Windows cannot say, and Spout picks its default.
+    static Microsoft::WRL::ComPtr<ID3D11Device> FastestDevice() {
+        Microsoft::WRL::ComPtr<IDXGIFactory6> factory; Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter; Microsoft::WRL::ComPtr<ID3D11Device> device;
+        if(FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))) || FAILED(factory->EnumAdapterByGpuPreference(0,DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,IID_PPV_ARGS(&adapter)))) return {};
+        const D3D_FEATURE_LEVEL levels[]={D3D_FEATURE_LEVEL_11_1,D3D_FEATURE_LEVEL_11_0};
+        if(FAILED(D3D11CreateDevice(adapter.Get(),D3D_DRIVER_TYPE_UNKNOWN,nullptr,D3D11_CREATE_DEVICE_BGRA_SUPPORT,levels,2,D3D11_SDK_VERSION,&device,nullptr,nullptr))) return {};
+        return device;
+    }
     void Run() {
+        Microsoft::WRL::ComPtr<ID3D11Device> fastest; // Outlives the spoutDX objects that use it.
         std::unique_ptr<spoutDX> device;
         std::map<SpoutChannel::State*,Output> outputs;
         for(;;) {
@@ -81,7 +93,7 @@ private:
                         for(const auto r:dirty) converted+=static_cast<std::uint64_t>(r.right-r.left)*(r.bottom-r.top);
                     }
                     if(!out.pixels.Image().empty() && Clock::now()>=out.retry) {
-                        if(!device) { auto candidate=std::make_unique<spoutDX>(); if(candidate->OpenDirectX11()) device=std::move(candidate); }
+                        if(!device) { fastest=FastestDevice(); auto candidate=std::make_unique<spoutDX>(); if(candidate->OpenDirectX11(fastest.Get())) device=std::move(candidate); }
                         if(device) {
                             const auto begin=Now();
                             const unsigned w=out.pixels.Width(),h=out.pixels.Height();
@@ -108,7 +120,7 @@ private:
                             if(FAILED(device->GetDX11Device()->GetDeviceRemovedReason())) {
                                 // Keep the CPU export images, invalidate every GPU texture/sender.
                                 for(auto& pair:outputs) { pair.second.sender.reset(); pair.second.texture.Reset(); pair.second.retry=Clock::now()+std::chrono::seconds(2); }
-                                device.reset(); ok=false;
+                                device.reset(); fastest.Reset(); ok=false;
                             }
                         }
                         if(ok) out.retry={}; else { out.sender.reset(); out.texture.Reset(); out.retry=Clock::now()+std::chrono::seconds(2); }
@@ -123,9 +135,9 @@ private:
                 s->status=ok?L"Spout source ready":L"Spout unavailable; retrying (use the same GPU as OBS)";
                 wake.notify_all();
             }
-            if(channels.empty()) { lock.unlock(); outputs.clear(); device.reset(); }
+            if(channels.empty()) { lock.unlock(); outputs.clear(); device.reset(); fastest.Reset(); }
         }
-        outputs.clear(); device.reset();
+        outputs.clear(); device.reset(); fastest.Reset();
     }
 };
 SpoutChannel::SpoutChannel(std::string name):state_(std::make_shared<State>()),worker_(SpoutWorker::Get()) { state_->name=std::move(name); worker_->Add(state_); }

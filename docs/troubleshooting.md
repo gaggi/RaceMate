@@ -124,6 +124,10 @@ Include the RaceMate version/architecture, Windows version, monitor arrangement/
 
 A screenshot and the relevant setting names are often enough. A profile is useful for performance reports. Developers can use `--live-summary` or `--dump-vars` as described in [Development](development.md#live-telemetry-inspection); inspect telemetry dumps before sharing because session information can contain driver and session identifiers.
 
+## OBS lists the source but shows nothing
+
+OBS and RaceMate run on different GPUs. OBS's log (**Help → Log Files → View Current Log**) then reports that it *could not open the shared texture* of the sender. RaceMate makes its OBS images on the fastest GPU, where OBS usually runs. If OBS runs on the other one, check the adapter OBS reports at the top of its log, and in Windows **Settings → System → Display → Graphics** set OBS to **High performance**. Then restart OBS.
+
 ## OBS output has black corners or dark edges
 
 Match the overlay's **OBS alpha**, under **Window** on its page, to the Spout2 Capture

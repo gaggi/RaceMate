@@ -258,9 +258,9 @@ int RadarRange(int metres) { return ((std::clamp(metres,10,40)+5)/10)*10; }
 // Adjustments: the in-car adjustment you make, big, for tenths/10 seconds after its last change. In its own window,
 // or in place of every shown overlay of the kind replace names (-1: its own window). groups: which dials it shows,
 // by DialGroup; was: the value before; timer: a bar running down the time left.
-// The Stream Cover: a picture, or a dark panel without one, that hides the garage screen from the stream. Its size is
+// The Stream Cover: a picture, or a dark panel with our lettering without one, that hides the garage screen from the stream. Its size is
 // in logical pixels; fit shows the whole picture, else it fills the cover and is cut at the sides or top and bottom.
-struct CoverSettings { std::wstring image; int width=1280, height=720; bool fit=false; };
+struct CoverSettings { std::wstring image; int width=1220, height=630; bool fit=false; };
 constexpr int CoverMinWidth=160, CoverMaxWidth=3840, CoverMinHeight=90, CoverMaxHeight=2160;
 struct AdjustmentSettings { int tenths=30, replace=-1; bool was=false, timer=false; std::array<bool,5> groups{true,true,true,true,true}; };
 constexpr int AdjustmentsWidth=280, AdjustmentsHeight=160;
@@ -472,6 +472,13 @@ ULONGLONG ProcessCpuMicroseconds() {
     return value(kernel)+value(user);
 }
 std::wstring Numbered(const wchar_t* name,int number) { return number>1?std::wstring(name)+L" "+std::to_wstring(number):std::wstring(name); }
+// A typed name without its outer spaces; none when that is the overlay's own default name anyway.
+std::wstring CustomName(const Overlay& o,const std::wstring& text) {
+    const auto first=text.find_first_not_of(L" \t\r\n");
+    if(first==std::wstring::npos) return {};
+    auto name=text.substr(first,text.find_last_not_of(L" \t\r\n")-first+1);
+    return name==Numbered(Titles[o.kind],o.number)?std::wstring():name;
+}
 std::wstring Name(const Overlay& o) { return o.customName.empty()?Numbered(Titles[o.kind],o.number):o.customName; }
 // Sections of the active layout: "Layout 3: Relative 2"; layout 1 keeps the plain names.
 std::wstring LayoutPrefix(int id) { return id==1?std::wstring():L"Layout "+std::to_wstring(id)+L": "; }
@@ -786,12 +793,20 @@ Overlay& AddInstance(int kind,int number,int layout=0) {
     auto& o=*app.overlays.emplace(next); o.layout=layout; o.kind=kind; o.number=number;
     return o;
 }
+// Where an overlay starts; later instances a little below and to the right. The Stream Cover covers the
+// middle of the main monitor, so its place follows that monitor's size and scaling and its own size.
+POINT DefaultOrigin(const Overlay& o) {
+    const int offset=(o.number-1)*30;
+    if(o.kind!=StreamCoverKind) return {DefaultPositions[o.kind].x+offset,DefaultPositions[o.kind].y+offset};
+    const int factor=static_cast<int>(GetDpiForSystem())*o.place.scale;
+    return {(GetSystemMetrics(SM_CXSCREEN)-MulDiv(o.cover.width,factor,9600))/2+offset,(GetSystemMetrics(SM_CYSCREEN)-MulDiv(o.cover.height,factor,9600))/2+offset};
+}
 void ReadInstance(Overlay& o) {
     const auto section=Section(o); const int kind=o.kind;
-    wchar_t displayName[128]{}; GetPrivateProfileStringW(section.c_str(),L"DisplayName",L"",displayName,128,app.config.c_str()); o.customName=displayName;
+    wchar_t displayName[128]{}; GetPrivateProfileStringW(section.c_str(),L"DisplayName",L"",displayName,128,app.config.c_str()); o.customName=CustomName(o,displayName);
     auto& p=o.place; const int offset=(o.number-1)*30; // Later instances start a little below and to the right.
     p.x=ReadInt(section.c_str(),L"X",DefaultPositions[kind].x+offset); p.y=ReadInt(section.c_str(),L"Y",DefaultPositions[kind].y+offset);
-    p.scale=NormalizeScale(ReadInt(section.c_str(),L"Scale",100)); p.opacity=std::clamp(ReadInt(section.c_str(),L"Opacity",90),40,100);
+    p.scale=NormalizeScale(ReadInt(section.c_str(),L"Scale",100)); p.opacity=std::clamp(ReadInt(section.c_str(),L"Opacity",kind==StreamCoverKind?100:90),40,100); // The cover hides what is behind it.
     const int rate=ReadInt(section.c_str(),L"RefreshHz",DefaultRates[kind]);
     p.rate=*std::find_if(std::begin(OverlayRates),std::end(OverlayRates)-1,[&](int choice){return choice>=rate;});
     p.enabled=ReadBool(section.c_str(),L"Enabled",kind!=TrackMapKind && kind!=SideWarningKind && kind!=RadarKind && kind!=TrafficKind && kind!=AdjustmentsKind && kind!=StreamCoverKind); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
@@ -827,8 +842,9 @@ void ReadInstance(Overlay& o) {
     }
     if(kind==StreamCoverKind) {
         auto& c=o.cover; wchar_t image[MAX_PATH]{}; GetPrivateProfileStringW(section.c_str(),L"Picture",L"",image,MAX_PATH,app.config.c_str()); c.image=image;
-        c.width=std::clamp(ReadInt(section.c_str(),L"Width",1280),CoverMinWidth,CoverMaxWidth); c.height=std::clamp(ReadInt(section.c_str(),L"Height",720),CoverMinHeight,CoverMaxHeight);
+        c.width=std::clamp(ReadInt(section.c_str(),L"Width",1220),CoverMinWidth,CoverMaxWidth); c.height=std::clamp(ReadInt(section.c_str(),L"Height",630),CoverMinHeight,CoverMaxHeight);
         c.fit=ReadBool(section.c_str(),L"FitPicture",false);
+        const POINT middle=DefaultOrigin(o); p.x=ReadInt(section.c_str(),L"X",middle.x); p.y=ReadInt(section.c_str(),L"Y",middle.y);
     }
     if(kind==RadarKind) {
         auto& r=o.radar; r.background=ReadBool(section.c_str(),L"ShowBackground",true); r.always=ReadBool(section.c_str(),L"AlwaysWhileDriving",false);
@@ -1282,6 +1298,7 @@ PitWindow FuelWindow() {
 }
 #include "Footer.inc"
 #include "BrandLogos.inc"
+#include "CoverLogo.h"
 int BrandLogo(const std::string& brand) {
     for(int i=0;i<static_cast<int>(std::size(BrandLogoNames));++i) if(brand==BrandLogoNames[i]) return i;
     return -1;
@@ -1683,10 +1700,9 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
     // The Adjustments, in their own window or for a moment in place of this overlay, on their group's color: the
     // dial's name in that color, its value big beneath, the car's steps under it; the value before and a bar running
     // down the time left when chosen. Sizes follow the overlay's, so it fills a wide Relative as a tall Standings.
-    // The Stream Cover: its picture over the whole overlay, or the panel with what it is for.
+    // The Stream Cover: its picture over the whole overlay, or without one the lettering on the panel.
     if(o.kind==StreamCoverKind) {
-        if(!o.cover.image.empty()) out.push_back({DrawCommand::Picture,Regular,o.cover.fit?1u:0u,{0,0,width,height},0,{},o.cover.image});
-        else out.push_back({DrawCommand::Text,Bold,DT_CENTER,{0,0,width,height},Ink::Muted,{},L"Setup hidden"});
+        out.push_back({DrawCommand::Picture,Regular,o.cover.fit?1u:0u,{0,0,width,height},0,{},o.cover.image});
         return;
     }
     const AdjustmentSettings* inPlace=o.kind==AdjustmentsKind?nullptr:AdjustmentInPlaceOf(o);
@@ -2544,6 +2560,45 @@ void DrawWind(HDC dc,const DrawCommand& c) {
 // The logo atlas (resource 102) is decoded only while logos are missing at some overlay's size, then released.
 // The Stream Cover's picture drawn at w x h: filling it and cut to it, or whole and centred (fit) on a transparent
 // rest that shows the panel. Kept until the picture, the size or the fitting changes; none for a missing file.
+// An SVG path's commands as figures of a GDI+ path, in the file's coordinates.
+void AddSvgPath(Gdiplus::GraphicsPath& path,const char* d) {
+    double x=0,y=0,startX=0,startY=0,controlX=0,controlY=0; char command=0;
+    auto skip=[&]{ while(*d==' ' || *d==',') ++d; };
+    auto number=[&]{ skip(); char* end=nullptr; const double value=std::strtod(d,&end); d=end; return value; };
+    auto point=[](double px,double py){ return Gdiplus::PointF(static_cast<float>(px),static_cast<float>(py)); };
+    for(skip();*d;skip()) {
+        if(std::isalpha(static_cast<unsigned char>(*d))) command=*d++;
+        const bool relative=std::islower(static_cast<unsigned char>(command))!=0;
+        const double ox=relative?x:0, oy=relative?y:0, fromX=x, fromY=y;
+        switch(std::tolower(static_cast<unsigned char>(command))) {
+        case 'm': x=ox+number(); y=oy+number(); startX=x; startY=y; path.StartFigure(); command=relative?'l':'L'; controlX=x; controlY=y; continue;
+        case 'l': x=ox+number(); y=oy+number(); break;
+        case 'h': x=ox+number(); break;
+        case 'v': y=oy+number(); break;
+        case 'z': path.CloseFigure(); x=startX; y=startY; controlX=x; controlY=y; continue;
+        case 'c': case 's': {
+            const bool smooth=std::tolower(static_cast<unsigned char>(command))=='s';
+            const double x1=smooth?2*x-controlX:ox+number(), y1=smooth?2*y-controlY:oy+number();
+            const double x2=ox+number(), y2=oy+number(); x=ox+number(); y=oy+number();
+            path.AddBezier(point(fromX,fromY),point(x1,y1),point(x2,y2),point(x,y));
+            controlX=x2; controlY=y2; continue;
+        }
+        default: return;
+        }
+        path.AddLine(point(fromX,fromY),point(x,y)); controlX=x; controlY=y;
+    }
+}
+// The lettering in the middle of the cover, over at most 60 % of its width and height.
+void DrawCoverLogo(Gdiplus::Graphics& graphics,int w,int h) {
+    const float scale=std::min(w*.6f/CoverLogoWidth,h*.6f/CoverLogoHeight);
+    graphics.SetSmoothingMode(Gdiplus::SmoothingModeHighQuality);
+    graphics.TranslateTransform((w-CoverLogoWidth*scale)/2,(h-CoverLogoHeight*scale)/2); graphics.ScaleTransform(scale,scale);
+    for(const auto& part:CoverLogoParts) {
+        Gdiplus::GraphicsPath path(Gdiplus::FillModeWinding); AddSvgPath(path,part.path);
+        if(part.fill) { Gdiplus::SolidBrush brush{Gdiplus::Color(part.fill)}; graphics.FillPath(&brush,&path); }
+        Gdiplus::Pen pen{Gdiplus::Color(part.stroke),part.strokeWidth}; pen.SetMiterLimit(10); graphics.DrawPath(&pen,&path);
+    }
+}
 HBITMAP CoverBitmap(const Overlay& constOverlay,const std::wstring& path,int w,int h,bool fit) {
     auto& o=const_cast<Overlay&>(constOverlay);
     const std::wstring key=path+L"|"+std::to_wstring(w)+L"x"+std::to_wstring(h)+(fit?L"|fit":L"|fill");
@@ -2551,8 +2606,11 @@ HBITMAP CoverBitmap(const Overlay& constOverlay,const std::wstring& path,int w,i
     if(o.coverBitmap) { DeleteObject(o.coverBitmap); o.coverBitmap=nullptr; }
     o.coverKey=key;
     if(w<=0 || h<=0) return nullptr;
-    std::unique_ptr<Gdiplus::Bitmap> image(Gdiplus::Bitmap::FromFile(path.c_str()));
-    if(!image || image->GetLastStatus()!=Gdiplus::Ok || !image->GetWidth() || !image->GetHeight()) return nullptr;
+    std::unique_ptr<Gdiplus::Bitmap> image;
+    if(!path.empty()) {
+        image.reset(Gdiplus::Bitmap::FromFile(path.c_str()));
+        if(!image || image->GetLastStatus()!=Gdiplus::Ok || !image->GetWidth() || !image->GetHeight()) return nullptr;
+    }
     BITMAPINFO info{}; info.bmiHeader={sizeof(BITMAPINFOHEADER),w,-h,1,32,BI_RGB};
     void* bits=nullptr; HBITMAP bitmap=CreateDIBSection(nullptr,&info,DIB_RGB_COLORS,&bits,nullptr,0);
     if(!bitmap) return nullptr;
@@ -2561,11 +2619,13 @@ HBITMAP CoverBitmap(const Overlay& constOverlay,const std::wstring& path,int w,i
         Gdiplus::Graphics graphics(&target);
         graphics.Clear(Gdiplus::Color(0,0,0,0));
         graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic); graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
-        const double iw=image->GetWidth(), ih=image->GetHeight();
-        const double scale=fit?std::min(w/iw,h/ih):std::max(w/iw,h/ih);
-        const float dw=static_cast<float>(iw*scale), dh=static_cast<float>(ih*scale);
-        Gdiplus::ImageAttributes clamp; clamp.SetWrapMode(Gdiplus::WrapModeTileFlipXY); // No light seam at the edges.
-        graphics.DrawImage(image.get(),Gdiplus::RectF((w-dw)/2,(h-dh)/2,dw,dh),0,0,static_cast<Gdiplus::REAL>(iw),static_cast<Gdiplus::REAL>(ih),Gdiplus::UnitPixel,&clamp);
+        if(image) {
+            const double iw=image->GetWidth(), ih=image->GetHeight();
+            const double scale=fit?std::min(w/iw,h/ih):std::max(w/iw,h/ih);
+            const float dw=static_cast<float>(iw*scale), dh=static_cast<float>(ih*scale);
+            Gdiplus::ImageAttributes clamp; clamp.SetWrapMode(Gdiplus::WrapModeTileFlipXY); // No light seam at the edges.
+            graphics.DrawImage(image.get(),Gdiplus::RectF((w-dw)/2,(h-dh)/2,dw,dh),0,0,static_cast<Gdiplus::REAL>(iw),static_cast<Gdiplus::REAL>(ih),Gdiplus::UnitPixel,&clamp);
+        } else DrawCoverLogo(graphics,w,h);
     }
     o.coverBitmap=bitmap; return bitmap;
 }

@@ -115,10 +115,9 @@ void ShowPage(Page page,Overlay* overlay=nullptr) {
     LayoutMain();
 }
 void OpenOverlay(Overlay& o) { if(app.layout!=o.layout) { Save(); app.layout=o.layout; } ShowPage(Page::Overlay,&o); }
-// The Overlays entry: the overlay open last, else the layout's first, beside the list; the layouts when it has none.
+// The Overlays entry: the overlay open last, else the layout's page, so that none is marked on screen until chosen.
 void OpenOverlays() {
     for(auto& o:app.overlays) if(&o==ui.overlay && o.layout==app.layout) { ShowPage(Page::Overlay,&o); return; }
-    for(auto& o:app.overlays) if(o.layout==app.layout) { ShowPage(Page::Overlay,&o); return; }
     ShowPage(Page::Overlays);
 }
 bool Editing(const Overlay& o) {
@@ -434,6 +433,6 @@ void SetShowTitleBar(bool on) {
     Save(); UpdateOverlays();
 }
 void ResetPositions() {
-    for(auto& o:app.overlays) if(o.layout==app.layout) { const int offset=(o.number-1)*30; SetOverlayOrigin(o,DefaultPositions[o.kind].x+offset,DefaultPositions[o.kind].y+offset); Fit(o,true); }
+    for(auto& o:app.overlays) if(o.layout==app.layout) { const POINT origin=DefaultOrigin(o); SetOverlayOrigin(o,origin.x,origin.y); Fit(o,true); }
     Save();
 }

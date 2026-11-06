@@ -292,9 +292,9 @@ Covers the garage screen in your stream while you work on the setup. It shows on
 
 | Setting | Effect |
 | --- | --- |
-| Picture | **Choose...** a PNG, JPG, BMP or GIF; the cover then takes its proportions at its width. The cross removes it. Without a picture the cover is a dark panel reading *Setup hidden*. A moved or deleted file is marked **Not found**. |
+| Picture | **Choose...** a PNG, JPG, BMP or GIF; the cover then takes its proportions at its width. The cross removes it. Without a picture the cover shows the Switch-It Racing lettering on a dark panel. A moved or deleted file is marked **Not found**. |
 | Fitting | **Fill** covers the whole area and cuts the picture at the edges where the shapes differ; **Whole** shows all of it on the dark panel. |
-| Width, Height | Its size in pixels, 160 to 3840 by 90 to 2160; **Match** sets the height to the picture's proportions again. **Size** under Window scales it further. |
+| Width, Height | Its size in pixels, 160 to 3840 by 90 to 2160, at first 1220 by 630 in the middle of your main monitor; **Match** sets the height to the picture's proportions again. **Size** under Window scales it further. |
 
 In OBS, add its Spout2 source (see [OBS output](#obs-output-spout2)) above your game capture, then move and size it there over whatever the setup shows. While the garage screen is closed the source sends nothing, so the game shows through. It has no header or footer.
 
@@ -377,7 +377,11 @@ Conditional overlays disappear when their conditions no longer apply.
 Side Warning exports both bars next to each other in one image; crop/duplicate
 the source in OBS to place the bars separately.
 
-RaceMate and OBS should use the same GPU, especially on laptops. A sender being
+RaceMate and OBS must use the same GPU: OBS can open the image only on the GPU
+it was made on. With two GPUs, such as a gaming laptop or a desktop with graphics
+in the processor, RaceMate makes it on the fastest one, where OBS normally runs.
+If OBS lists the source but shows nothing, see
+[troubleshooting](troubleshooting.md#obs-lists-the-source-but-shows-nothing). A sender being
 available does not confirm that OBS is connected. There is no network output or support for a second streaming
 PC through this feature.
 
