@@ -16,6 +16,7 @@
 | [Radar](#radar) | The cars around yours from above, lanes beside you estimated | 20 Hz |
 | [Traffic](#traffic) | Faster cars close behind you, with their gap | 10 Hz |
 | [Adjustments](#adjustments) | An in-car adjustment you make, big for a moment | 20 Hz |
+| [Lap Times](#lap-times) | Your last laps with the gap to your best, the stint average and your best lap | 2 Hz |
 | [Stream Cover](#stream-cover) | Your picture over the garage screen in OBS, so viewers don't see your setup | 5 Hz |
 
 Also on this page: [Position in the Relative](#position-in-the-relative) · [Table columns](#table-columns) · [Status badges](#status-badges) · [Header and footer metrics](#header-and-footer-metrics)
@@ -155,7 +156,7 @@ The Fuel Calculator groups information into switchable, reorderable modules: dra
 | Target and adjacent rows | Maximum per-lap burn for the normal target and one fewer, one extra or two extra laps, with the fuel to add when you stop on that lap; outside races the laps the fuel lasts at the average, and the most per lap for one fewer or more |
 | Leader forecasts | Fractional leader distance and projected final-lap start clock; off by default |
 
-Expand **Consumption** to select its individual figures, **Last 10 laps** to enable yellow caution markers, and **Target** to switch the fuel to add on the target rows. Caution laps still do not contribute to the consumption average. Adjacent card modules (refuel, one lap shorter, pit window) share a row, up to three, and adjacent target modules share a band.
+Expand **Consumption** to select its individual figures; the strip shows the same figures, one cell each, the one you plan with in blue (see [consumption learning](fuel-and-pit-strategy.md#consumption-learning)), **Last 10 laps** to enable yellow caution markers, and **Target** to switch the fuel to add on the target rows. Caution laps still do not contribute to the consumption average. Adjacent card modules (refuel, one lap shorter, pit window) share a row, up to three, and adjacent target modules share a band.
 
 ![Fuel Calculator in a horizontal strip](images/fuel-strip.png)
 
@@ -216,7 +217,7 @@ Two narrow bars, by default at the left and right edge of the screen, light up w
 
 The spotter tells the side, but not which car is there. RaceMate takes the nearest car within 10 m along the lap as the one beside you. With cars on both sides their lap distance cannot tell which is where, so neither bar shows a block then. **Where the car beside you is** switches the block off.
 
-The bars stay centred on their monitor. **Distance apart** sets how far apart their outer edges are, as a share of the screen width: 100 % puts them at its edges, down to 20 % for bars close beside the middle of the screen. Drag either bar up or down, or onto another monitor: they go over as soon as the mouse is on it, and the other bar follows at the same height. Size, opacity and rounded corners apply to both, and both get the same frame while overlays are moved or the page is open. Both bars show while overlays are moved, in grey when nobody is beside you. The Side Warning has no header or footer.
+The bars stay centred on their monitor. **Distance between the bars** sets how far apart their outer edges are, as a share of the screen width: 100 % puts them at its edges, down to 20 % for bars close beside the middle of the screen. Drag either bar up or down, or onto another monitor: they go over as soon as the mouse is on it, and the other bar follows at the same height. Size, opacity and rounded corners apply to both, and both get the same frame while overlays are moved or the page is open. Both bars show while overlays are moved, in grey when nobody is beside you. The Side Warning has no header or footer.
 
 ## Radar
 
@@ -270,8 +271,8 @@ When you change an in-car adjustment while you drive, such as ABS, traction cont
 | Where it shows | Its own window (default), placed and sized like the other overlays and hidden until you change a dial. Or in place of the **Relative**, **Standings**, **Fuel Calculator** or **Weather**: every one of them that is shown shows it instead for that moment, at its own size, on the dial's color |
 | For … s | 1, 2, 3 (default), 4 or 5 s after your last change |
 | Sample | **Show** displays ABS 4 for that long, as a change would |
-| Value before | Off (default). On: **was 3** under the value. It is the value before your first change, so two steps from 3 down to 1 read **1**, **was 3** |
-| Time left | Off (default). On: a bar along the bottom edge runs down until it goes |
+| Previous value | Off (default). On: **was 3** under the value. It is the value before your first change, so two steps from 3 down to 1 read **1**, **was 3** |
+| Countdown bar | Off (default). On: a bar along the bottom shrinks until the overlay hides |
 | Brakes, Traction, Chassis, Engine, Hybrid | Which dials it shows, all by default |
 
 | Group | Color | Dials (iRacing's `dc` variables; each car has only some) |
@@ -285,6 +286,20 @@ When you change an in-car adjustment while you drive, such as ABS, traction cont
 iRacing reports a dial's value but not its lowest and highest step. RaceMate learns them per car as you drive and keeps them for its next session. The steps appear once three or more of them have been seen, so the first sessions in a new car may show the value without them. Brake bias shows no steps.
 
 For the first 2 s after you get in, the dials settle to the setup and nothing shows. Nothing shows in replays or while you watch another car. Like Traffic, Adjustments has no header or footer.
+
+## Lap Times
+
+![Lap Times with ten laps, a caution lap, the best lap in purple and the stint average](images/lap-times.png)
+
+Your last laps, newest at the top: the lap, its time and the gap to your best lap. Your best lap is purple and marked **BEST**. Laps that do not count are grey and marked: **PIT** for laps through the pit lane, the in-lap and the out-lap, **CAUTION** for laps under a full-course caution. The first partial lap after joining is not listed. Under the laps, **STINT AVG** is the average of the counted laps since you last left the pits, with how many there were, and **BEST** your fastest counted lap of the session.
+
+| Setting | Effect |
+| --- | --- |
+| Laps shown | 3 to 10 |
+| Gap to your best | The gap beside each lap, and PIT and CAUTION; off, the overlay is narrower |
+| Stint average, Best lap | The two values under the laps |
+
+Times are iRacing's own lap times; until iRacing reports one, about a second after the line, the time RaceMate measured. A new session starts the list again. Lap Times is off in a new layout: add it with **Add overlay**, or switch it on in the list.
 
 ## Stream Cover
 

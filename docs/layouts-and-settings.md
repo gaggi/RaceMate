@@ -14,9 +14,9 @@ An overlay's page starts with **Shows on**: **Off**, **Screen**, **OBS** or **Bo
 | --- | --- | --- |
 | Rounded corners | On or off | Square corners are the default |
 | Size | Slider, 50–150% in 5% steps | Scales the overlay |
-| Opacity | Slider, 40–100% in 5% steps | Controls the overlay's opacity; **Background only** keeps text, badges and foreground at full opacity |
+| Opacity | Slider, 40–100% in 5% steps | Controls the overlay's opacity; **Opacity for the background only** fades only the panel and keeps text, badges and markings fully visible |
 | Fixed corner | The four arrows: top left, top right, bottom left, bottom right | Keeps that corner in place when content changes size |
-| Updates | 1, 2, 5, 10, 15 or 20 Hz, side by side | Controls that overlay's refresh rate |
+| Refresh rate | 1, 2, 5, 10, 15 or 20 Hz, side by side | How often that overlay redraws; lower uses less CPU |
 | OBS alpha | Premultiplied or Straight; only while it goes to OBS | Matches OBS's alpha mode; see [OBS output](overlays.md#obs-output-spout2) |
 
 A setting with a few short values shows them side by side in its row; click one to choose it. Buttons such as **100 % ▾** show the current value and open a menu of the others.
@@ -101,8 +101,9 @@ See the [metric reference](overlays.md#header-and-footer-metrics) for which valu
 | Headers on all overlays | Changes header visibility across overlays |
 | Snap to grid while moving | On by default; **Grid size** below it, a slider from 2 to 100 px, default 10 px |
 | Snap to other overlays | On by default; edges and centre lines line up with other overlays and the screen |
-| Reserve at the finish | None by default; litres or laps kept in the tank at the flag, see [Fuel reserve](fuel-and-pit-strategy.md#fuel-reserve) |
-| Additional laps with fuel saving | A slider from 0 to 10 laps, default 3; shared opponent SAVE allowance |
+| Consumption to plan with | Avg 10 by default, Avg 5 or Manual with its own slider; drives range, refuel, pit window and targets, see [Fuel and pit strategy](fuel-and-pit-strategy.md) |
+| Reserve at the finish | Litres or laps, with the **Reserve** slider: none by default, also below zero; see [Fuel reserve](fuel-and-pit-strategy.md#fuel-reserve) |
+| Laps opponents can gain by saving | A slider from 0 to 10 laps, default 3; shared opponent SAVE allowance |
 | Pit lane loss | Learned or manually fixed per track |
 | Service times | Four-tire time and refuel rate per car and rule set |
 | Check for updates on startup | Checks GitHub and reports availability in the interface |
@@ -119,8 +120,9 @@ RaceMate reads every frame iRacing publishes, 60 a second, so event recording, p
 | Ctrl + Alt + Shift + Left | Previous Race Control event |
 | Ctrl + Alt + Shift + Right | Next Race Control event |
 | Ctrl + Alt + Shift + O | Pause/resume OBS output |
+| Ctrl + Alt + Shift + F | Set refuel in iRacing's pit menu, see [Refuel shortcut](fuel-and-pit-strategy.md#refuel-shortcut) |
 
-To change a shortcut, click its button and press a combination containing **Ctrl or Alt**, or an **F key** on its own (F12 excepted), such as F6 for Hide. Shortcuts work in every program, so iRacing no longer receives an F key you assign; the shortcut's row says so. **Esc** cancels; **Backspace** disables it. The reset arrow restores a changed shortcut's default. A conflict appears as **In use**, and the main banner identifies unavailable shortcuts.
+To change a shortcut, click its button and press a combination containing **Ctrl or Alt**, or an **F key** on its own (F12 excepted), such as F6 for Hide. Pressing a **button on your wheel**, a button box or a gamepad instead assigns that button beside the keys: the shortcut then works from either, and its button reads, for example, `Ctrl+Alt+Shift+F, Button 12`. The button is kept by its device, so it stays assigned after a restart or on another USB port; two devices of the same model share their buttons. Unlike a key shortcut, iRacing still gets the button, so choose one that does nothing there. **Backspace** while waiting turns off keys and button; the reset arrow restores the default keys and removes the button. Shortcuts work in every program, so iRacing no longer receives an F key you assign; the shortcut's row says so. **Esc** cancels; **Backspace** disables it. The reset arrow restores a changed shortcut's default. A conflict appears as **In use**, and the main banner identifies unavailable shortcuts.
 
 These shortcuts work while another application has focus. Race Control's own **F**, **Enter** and divider keys are local to that window; see [Race Control](race-control.md).
 

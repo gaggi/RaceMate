@@ -12,6 +12,8 @@
 #include <objidl.h>
 #include <gdiplus.h>
 #include <shlwapi.h>
+#include <hidsdi.h>
+#include <hidusage.h>
 #include "ui/BackgroundTask.h"
 #include "ui/NavBar.h"
 #include "ui/PageWindow.h"
@@ -44,16 +46,16 @@ bool spoutPremultiplied=true;
 // The settings windows' page and text colors, light or dark: the current theme's.
 const COLORREF& Background=UiTheme::Background; const COLORREF& Text=UiTheme::Text;
 constexpr UINT TrayMessage=WM_APP+1;
-enum OverlayKind { RelativeKind, StandingsKind, FuelKind, PitLimiterKind, WeatherKind, TrackMapKind, SideWarningKind, RadarKind, TrafficKind, AdjustmentsKind, StreamCoverKind };
-constexpr int OverlayCount=StreamCoverKind+1;
+enum OverlayKind { RelativeKind, StandingsKind, FuelKind, PitLimiterKind, WeatherKind, TrackMapKind, SideWarningKind, RadarKind, TrafficKind, AdjustmentsKind, StreamCoverKind, LapTimesKind };
+constexpr int OverlayCount=LapTimesKind+1;
 constexpr bool IsTable(int kind) { return kind==RelativeKind || kind==StandingsKind; }
-const wchar_t* Titles[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pit Assist",L"Weather",L"Track Map",L"Side Warning",L"Radar",L"Traffic",L"Adjustments",L"Stream Cover"};
-const wchar_t* Sections[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pitlimiter",L"Weather",L"Track Map",L"Side Warning",L"Radar",L"Traffic",L"Adjustments",L"Stream Cover"};
+const wchar_t* Titles[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pit Assist",L"Weather",L"Track Map",L"Side Warning",L"Radar",L"Traffic",L"Adjustments",L"Stream Cover",L"Lap Times"};
+const wchar_t* Sections[]={L"Relative",L"Standings",L"Fuel Calculator",L"Pitlimiter",L"Weather",L"Track Map",L"Side Warning",L"Radar",L"Traffic",L"Adjustments",L"Stream Cover",L"Lap Times"};
 // The Side Warning's place is its left bar's, at the screen's left edge; the right bar mirrors it.
-constexpr POINT DefaultPositions[]={{40,120},{480,120},{40,470},{40,720},{40,820},{960,120},{8,380},{860,560},{840,420},{840,240},{480,240}};
+constexpr POINT DefaultPositions[]={{40,120},{480,120},{40,470},{40,720},{40,820},{960,120},{8,380},{860,560},{840,420},{840,240},{480,240},{1300,420}};
 // Refresh rates an overlay can choose, and each overlay's default; telemetry is read at least as often as the fastest.
 constexpr int OverlayRates[]={1,2,5,10,15,20};
-constexpr int DefaultRates[]={10,1,1,10,1,20,20,20,10,20,5};
+constexpr int DefaultRates[]={10,1,1,10,1,20,20,20,10,20,5,2};
 // Relative and Standings columns. The values are stored in ColumnOrder.
 enum Column {
     PositionColumn, NumberColumn, DriverColumn, GapColumn, IntervalColumn, BestColumn, LastColumn,
@@ -134,8 +136,12 @@ constexpr FigureInfo FuelFigures[]={
     {5,L"RACE",L"Race average",L"ShowAverage",false},{4,L"MIN",L"Minimum",L"ShowMinimum",true},{3,L"MAX",L"Maximum",L"ShowMaximum",true},
     {7,L"QUALI",L"Qualifying maximum",L"ShowQualifyMaximum",true}};
 static_assert(std::size(FuelFigures)==FuelMetricCount);
-// The average of the last 10 clean laps drives range, pit window, refuel and targets.
-constexpr int FuelBasis=static_cast<int>(FuelMetric::Average10);
+// The consumption that drives range, pit window, refuel and targets, chosen in Settings: the average of the
+// last 10 or 5 counted laps, or one set by hand.
+enum FuelBasisChoice { BasisAverage10, BasisAverage5, BasisManual };
+constexpr int ManualBurnMin=50, ManualBurnMax=1000; // Hundredths of a litre per lap.
+// The reserve at the finish: in tenths of a litre, or laps.
+constexpr int ReserveMinTenths=-100, ReserveMaxTenths=100, ReserveMinLaps=-5, ReserveMaxLaps=5;
 // Weather modules, top to bottom; the last two switch trend arrows and the wind relative to the car.
 enum WeatherModule {
     ConditionModule, RainModule, TemperatureModule, TemperatureHistoryModule, WindModule, DetailsModule, UsageModule,
@@ -225,6 +231,7 @@ Bands DefaultBands(int kind) {
     if(kind==FuelKind) return {true,{OverlayNameMetric,FinalLapMetric,StopsNeededMetric,NoMetric},{false,DefaultFooter}};
     if(kind==WeatherKind) return {true,{OverlayNameMetric,DeclaredWetMetric,NoMetric,NoMetric},{false,DefaultFooter}};
     if(kind==PitLimiterKind) return {false,{OverlayNameMetric,NoMetric,NoMetric,NoMetric},{false,DefaultFooter}};
+    if(kind==LapTimesKind) return {true,{OverlayNameMetric,NoMetric,NoMetric,NoMetric},{false,DefaultFooter}};
     if(kind==TrackMapKind) return {true,{TrackLayoutMetric,NoMetric,NoMetric,NoMetric},{false,DefaultFooter}};
     return {};
 }
@@ -252,6 +259,9 @@ constexpr int RadarWidth=180, RadarHeight=260;
 // faster classes only unless fasterOnly is off; transparent unless background.
 struct TrafficSettings { int gap=3, cars=1; bool fasterOnly=true, background=false; };
 constexpr int TrafficWidth=260, TrafficRow=38;
+// The Lap Times: how many of your last laps it lists, and what it shows besides each lap's time.
+struct LapTimesSettings { int laps=10; bool gap=true, stint=true, best=true; };
+constexpr int LapTimesRow=26, LapTimesSummary=48, LapTimesWidth=250, LapTimesNarrow=180;
 constexpr int TrafficGaps[]={1,2,3,5};
 int TrafficGap(int seconds) { for(int choice:TrafficGaps) if(seconds<=choice) return choice; return 5; }
 int RadarRange(int metres) { return ((std::clamp(metres,10,40)+5)/10)*10; }
@@ -313,7 +323,7 @@ struct Overlay {
     MatteSurface blackMatte, whiteMatte;
     std::vector<std::uint8_t> textCover; // Background only: the text's coverage while composing, zero otherwise.
     bool foregroundMatte=false, backgroundComposed=false;
-    Bands bands; TableSettings table; FuelSettings fuel; WeatherSettings weather; TrackMapSettings map; RadarSettings radar; TrafficSettings traffic; AdjustmentSettings adjust; CoverSettings cover;
+    Bands bands; TableSettings table; FuelSettings fuel; WeatherSettings weather; TrackMapSettings map; RadarSettings radar; TrafficSettings traffic; AdjustmentSettings adjust; CoverSettings cover; LapTimesSettings lapTimes;
     HBITMAP coverBitmap=nullptr; std::wstring coverKey; // Stream Cover: the picture drawn at its size, and for what.
     RadarTracker radarTracker; std::vector<RadarCar> radarCars; ULONGLONG radarNear=0;
     std::array<double,MaxCars> radarAcross{}; std::array<bool,MaxCars> radarPresent{}; ULONGLONG radarGlided=0; unsigned radarResets=0;
@@ -381,12 +391,19 @@ struct Overlay {
     }
 };
 // Global shortcuts, packed like the hotkey control: low byte virtual key, high byte HOTKEYF_* modifiers; 0 disables.
-constexpr int HotkeyCount=6;
-const wchar_t* HotkeyKeys[]={L"Move",L"Hide",L"Settings",L"PreviousEvent",L"NextEvent",L"PauseObs"};
+constexpr int HotkeyCount=7;
+const wchar_t* HotkeyKeys[]={L"Move",L"Hide",L"Settings",L"PreviousEvent",L"NextEvent",L"PauseObs",L"Refuel"};
 constexpr WORD HotkeyAllModifiers=(HOTKEYF_CONTROL|HOTKEYF_ALT|HOTKEYF_SHIFT)<<8;
 // The arrows are extended keys; the hotkey control shows them only with that flag.
-constexpr WORD DefaultHotkeys[]={HotkeyAllModifiers|'E',HotkeyAllModifiers|'H',HotkeyAllModifiers|'S',HotkeyAllModifiers|(HOTKEYF_EXT<<8)|VK_LEFT,HotkeyAllModifiers|(HOTKEYF_EXT<<8)|VK_RIGHT,HotkeyAllModifiers|'O'};
+constexpr WORD DefaultHotkeys[]={HotkeyAllModifiers|'E',HotkeyAllModifiers|'H',HotkeyAllModifiers|'S',HotkeyAllModifiers|(HOTKEYF_EXT<<8)|VK_LEFT,HotkeyAllModifiers|(HOTKEYF_EXT<<8)|VK_RIGHT,HotkeyAllModifiers|'O',HotkeyAllModifiers|'F'};
 static_assert(std::size(HotkeyKeys)==HotkeyCount && std::size(DefaultHotkeys)==HotkeyCount);
+// A wheel's, button box's or gamepad's button for a shortcut, beside its keys: the device's vendor and product and
+// the button's number, so it stays assigned after a restart or on another port. Two devices of one kind share their
+// buttons. The name is the device's, for showing.
+struct JoyButton {
+    unsigned short vendor=0, product=0, button=0; std::wstring name;
+    bool operator==(const JoyButton& other) const { return button && vendor==other.vendor && product==other.product && button==other.button; }
+};
 struct App {
     HINSTANCE instance=nullptr; HWND main=nullptr; HBRUSH brush=nullptr;
     RECT windowRect{}; bool windowMaximized=false;
@@ -398,7 +415,8 @@ struct App {
     bool layoutsLive=false;
     std::vector<int> openLayoutGroups;
     Frame frame; Session session; TelemetryPump pump; FuelCalculator fuel;
-    EventRecorder events; PitHistory pitHistory; TopSpeeds topSpeeds; PitLimiterVisibility pitVisibility; SetupDials setupDials;
+    EventRecorder events; PitHistory pitHistory; TopSpeeds topSpeeds; LapTimes lapTimes; PitLimiterVisibility pitVisibility; SetupDials setupDials;
+    std::wstring refuelText; ULONGLONG refuelSetAt=0; // The refuel shortcut's last result, shown for a moment.
     // The adjustment being made, and each dial's lowest and highest value seen in this car (CarPath), kept for its
     // next session: the Adjustments' steps.
     DialWatcher dialWatcher; std::wstring dialCar; std::array<double,DialCount> dialLow{}, dialHigh{}; unsigned dialRanges=0;
@@ -418,12 +436,14 @@ struct App {
     // Values Save() last wrote, keyed "section\nkey"; Save() only writes what differs.
     std::map<std::wstring,std::wstring> savedSettings; unsigned settingsWrites=0;
     std::array<WORD,HotkeyCount> hotkeys{}; bool hotkeysEnabled=false; std::wstring hotkeyError;
+    std::array<JoyButton,HotkeyCount> joyButtons{}; int joyCapture=-1; bool joyListening=false; // joyCapture: the shortcut awaiting a button.
     int timerMs=0; ULONGLONG now=0;
     // For the live benchmark: ticks, telemetry frames processed, and a call after each overlay refresh.
     unsigned long long ticks=0, framesProcessed=0; double lastFrameTime=-1; void(*refreshHook)(const Overlay&)=nullptr;
     int opponentFuelExtraLaps=3;
     // Fuel to keep at the finish, in tenths of a litre or of a lap: in refuel, needed, the pit window and the targets.
-    int reserveTenths=0; bool reserveInLaps=false;
+    int reserveTenths=0; bool reserveInLaps=false; // Below zero: arrive with that much less, as when saving fuel at the end.
+    int fuelBasis=BasisAverage10, manualBurnHundredths=300;
     int theme=0; // The settings windows: 0 as Windows' apps are set, 1 light, 2 dark.
     // Pit stop estimate: lane loss learned per track or fixed by the user, service times per car (CarPath).
     PitLaneLoss pitLane; RefuelRate refuel; PitLaneEnds pitEnds; BrakingRate braking;
@@ -565,8 +585,9 @@ int FuelFinishLap() {
     const auto& f=app.frame; const double distance=app.fuelPlan.lapsToFinish;
     return f.lapCompleted>=0 && std::isfinite(distance) && distance>=0?std::max(f.lapCompleted+1,f.lapCompleted+static_cast<int>(std::ceil(f.lapPct+distance-1e-6))):-1;
 }
+FuelEstimate BasisEstimate(const FuelPlan&);
 int StintCellCount() {
-    const double average=app.fuelPlan.estimates[FuelBasis].consumption,capacity=app.session.fuelCapacity;
+    const double average=BasisEstimate(app.fuelPlan).consumption,capacity=app.session.fuelCapacity;
     return std::isfinite(average) && average>0 && std::isfinite(capacity) && capacity>0?static_cast<int>(std::clamp(std::ceil(capacity/average),1.0,10000.0)):0;
 }
 // Cells in the weather strip: condition, rain, both temperatures and wind (two cells wide).
@@ -584,8 +605,8 @@ int WeatherHeight(const Overlay& o) {
     if(d[WindModule]) h+=d[WindRose]?108:(d[WindText]?76:0);
     return std::max(h,40);
 }
-// Values in the strip layout, including the two independent overall-leader forecasts.
-int FuelStripCount(const Overlay& o) { const auto& d=o.fuel.display; return 2*d[TankModule]+d[FiguresModule]+d[RefuelCard]+d[WindowCard]+d[TargetRow]+d[OneLongerRow]+d[LeaderDistanceModule]+2*d[OwnLapsModule]+d[WhiteFlagTimeModule]+d[PitExitModule]; }
+// Values in the strip layout: each chosen consumption figure, and the two independent overall-leader forecasts.
+int FuelStripCount(const Overlay& o) { const auto& d=o.fuel.display; return 2*d[TankModule]+(d[FiguresModule]?static_cast<int>(std::count(o.fuel.figures.begin(),o.fuel.figures.end(),true)):0)+d[RefuelCard]+d[WindowCard]+d[TargetRow]+d[OneLongerRow]+d[LeaderDistanceModule]+2*d[OwnLapsModule]+d[WhiteFlagTimeModule]+d[PitExitModule]; }
 constexpr int FuelPanelWidth=440, FuelStripCell=86;
 // Whether the strip layout shows a module or uses an option; the page marks the others "Panel only".
 bool InStrip(int kind,int id) {
@@ -631,6 +652,7 @@ int OverlayWidth(const Overlay& o) {
     if(o.kind==TrafficKind) return TrafficWidth;
     if(o.kind==AdjustmentsKind) return AdjustmentsWidth;
     if(o.kind==StreamCoverKind) return o.cover.width;
+    if(o.kind==LapTimesKind) return o.lapTimes.gap?LapTimesWidth:LapTimesNarrow;
     return 365;
 }
 COLORREF TireTextColor(const Row& row) {
@@ -809,7 +831,7 @@ void ReadInstance(Overlay& o) {
     p.scale=NormalizeScale(ReadInt(section.c_str(),L"Scale",100)); p.opacity=std::clamp(ReadInt(section.c_str(),L"Opacity",kind==StreamCoverKind?100:90),40,100); // The cover hides what is behind it.
     const int rate=ReadInt(section.c_str(),L"RefreshHz",DefaultRates[kind]);
     p.rate=*std::find_if(std::begin(OverlayRates),std::end(OverlayRates)-1,[&](int choice){return choice>=rate;});
-    p.enabled=ReadBool(section.c_str(),L"Enabled",kind!=TrackMapKind && kind!=SideWarningKind && kind!=RadarKind && kind!=TrafficKind && kind!=AdjustmentsKind && kind!=StreamCoverKind); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
+    p.enabled=ReadBool(section.c_str(),L"Enabled",kind!=TrackMapKind && kind!=SideWarningKind && kind!=RadarKind && kind!=TrafficKind && kind!=AdjustmentsKind && kind!=StreamCoverKind && kind!=LapTimesKind); p.growLeft=ReadBool(section.c_str(),L"GrowLeft",false); p.growUp=ReadBool(section.c_str(),L"GrowUp",false);
     p.lastShows=std::clamp(ReadInt(section.c_str(),L"LastShows",kind==StreamCoverKind?2:1),1,3); // The cover is for OBS.
     p.rounded=ReadBool(section.c_str(),L"RoundedCorners",false);
     p.spout=ReadBool(section.c_str(),L"SpoutOutput",false);
@@ -839,6 +861,10 @@ void ReadInstance(Overlay& o) {
         a.replace=std::find(std::begin(AdjustmentTargets),std::end(AdjustmentTargets),replace)!=std::end(AdjustmentTargets)?replace:-1;
         a.was=ReadBool(section.c_str(),L"ShowPrevious",false); a.timer=ReadBool(section.c_str(),L"ShowTimer",false);
         for(int g=0;g<static_cast<int>(a.groups.size());++g) a.groups[g]=ReadBool(section.c_str(),(L"Group"+std::to_wstring(g)).c_str(),true);
+    }
+    if(kind==LapTimesKind) {
+        auto& l=o.lapTimes; l.laps=std::clamp(ReadInt(section.c_str(),L"Laps",10),3,LapTimes::Size);
+        l.gap=ReadBool(section.c_str(),L"ShowGap",true); l.stint=ReadBool(section.c_str(),L"ShowStintAverage",true); l.best=ReadBool(section.c_str(),L"ShowBest",true);
     }
     if(kind==StreamCoverKind) {
         auto& c=o.cover; wchar_t image[MAX_PATH]{}; GetPrivateProfileStringW(section.c_str(),L"Picture",L"",image,MAX_PATH,app.config.c_str()); c.image=image;
@@ -952,13 +978,27 @@ void Load() {
     app.snapToGrid=ReadBool(L"General",L"SnapToGrid",true); app.snapToOverlays=ReadBool(L"General",L"SnapToOverlays",true);
     app.gridSize=std::clamp(ReadInt(L"General",L"GridSize",10),2,100);
     app.opponentFuelExtraLaps=std::clamp(ReadInt(L"General",L"OpponentFuelExtraLaps",3),0,10);
-    app.reserveTenths=std::clamp(ReadInt(L"General",L"FuelReserveTenths",0),0,200); app.reserveInLaps=ReadBool(L"General",L"FuelReserveInLaps",false);
+    // Litres in half litres, laps whole; earlier values in between are rounded.
+    app.reserveInLaps=ReadBool(L"General",L"FuelReserveInLaps",false); const int reserve=ReadInt(L"General",L"FuelReserveTenths",0);
+    app.reserveTenths=app.reserveInLaps?std::clamp(static_cast<int>(std::lround(reserve/10.0))*10,ReserveMinLaps*10,ReserveMaxLaps*10):std::clamp(static_cast<int>(std::lround(reserve/5.0))*5,ReserveMinTenths,ReserveMaxTenths);
+    app.fuelBasis=std::clamp(ReadInt(L"General",L"FuelBasis",BasisAverage10),0,static_cast<int>(BasisManual));
+    app.manualBurnHundredths=std::clamp(ReadInt(L"General",L"ManualConsumption",300),ManualBurnMin,ManualBurnMax);
     app.startWithWindows=ReadBool(L"General",L"StartWithWindows",false);
     app.startMinimized=ReadBool(L"General",L"StartMinimized",false);
     app.theme=std::clamp(ReadInt(L"General",L"Theme",0),0,2);
     app.windowRect={ReadInt(L"General",L"WindowLeft",0),ReadInt(L"General",L"WindowTop",0),ReadInt(L"General",L"WindowRight",0),ReadInt(L"General",L"WindowBottom",0)};
     app.windowMaximized=ReadBool(L"General",L"WindowMaximized",false);
     for(int i=0;i<HotkeyCount;++i) { const WORD hotkey=static_cast<WORD>(ReadInt(L"Hotkeys",HotkeyKeys[i],DefaultHotkeys[i])); app.hotkeys[i]=LOBYTE(hotkey)?hotkey:0; }
+    // A button as "vendor:product:button:name", the numbers in hexadecimal and decimal.
+    for(int i=0;i<HotkeyCount;++i) {
+        wchar_t text[200]{}; GetPrivateProfileStringW(L"Hotkeys",(std::wstring(HotkeyKeys[i])+L"Button").c_str(),L"",text,200,app.config.c_str());
+        JoyButton b; unsigned vendor=0,product=0,button=0; int used=0;
+        if(swscanf_s(text,L"%x:%x:%u:%n",&vendor,&product,&button,&used)==3 && button && button<=0xffff) {
+            b.vendor=static_cast<unsigned short>(vendor); b.product=static_cast<unsigned short>(product); b.button=static_cast<unsigned short>(button);
+            if(used) b.name=text+used;
+        }
+        app.joyButtons[i]=b;
+    }
 }
 // Each WritePrivateProfileString call rewrites the file; all keys take seconds, so only keys whose value
 // differs from the file go out. A missing file gets all.
@@ -1030,6 +1070,7 @@ void Save() {
             const auto& a=o.adjust; number(section,L"ShowTenths",a.tenths); number(section,L"InPlaceOf",a.replace); number(section,L"ShowPrevious",a.was); number(section,L"ShowTimer",a.timer);
             for(int g=0;g<static_cast<int>(a.groups.size());++g) number(section,(L"Group"+std::to_wstring(g)).c_str(),a.groups[g]);
         }
+        if(o.kind==LapTimesKind) { const auto& l=o.lapTimes; number(section,L"Laps",l.laps); number(section,L"ShowGap",l.gap); number(section,L"ShowStintAverage",l.stint); number(section,L"ShowBest",l.best); }
         if(o.kind==StreamCoverKind) { const auto& c=o.cover; write(section,L"Picture",c.image); number(section,L"Width",c.width); number(section,L"Height",c.height); number(section,L"FitPicture",c.fit); }
         if(o.kind==RadarKind) { const auto& r=o.radar; number(section,L"ShowBackground",r.background); number(section,L"AlwaysWhileDriving",r.always); number(section,L"ShowDistances",r.distances); number(section,L"Range",r.range); }
         if(o.kind==SideWarningKind) { number(section,L"ShowCarPosition",o.sideCar); number(section,L"BarsApart",o.sideApart); }
@@ -1048,6 +1089,7 @@ void Save() {
     number(L"General",L"ShowTitleBar",app.showTitleBar);
     number(L"General",L"OpponentFuelExtraLaps",app.opponentFuelExtraLaps);
     number(L"General",L"FuelReserveTenths",app.reserveTenths); number(L"General",L"FuelReserveInLaps",app.reserveInLaps);
+    number(L"General",L"FuelBasis",app.fuelBasis); number(L"General",L"ManualConsumption",app.manualBurnHundredths);
     number(L"General",L"StartWithWindows",app.startWithWindows); number(L"General",L"StartMinimized",app.startMinimized); number(L"General",L"Theme",app.theme); number(L"General",L"CheckForUpdates",app.checkUpdates);
     number(L"General",L"SnapToGrid",app.snapToGrid); number(L"General",L"SnapToOverlays",app.snapToOverlays); number(L"General",L"GridSize",app.gridSize);
     if(app.windowRect.right>app.windowRect.left) {
@@ -1056,6 +1098,11 @@ void Save() {
         number(L"General",L"WindowMaximized",app.windowMaximized);
     }
     for(int i=0;i<HotkeyCount;++i) number(L"Hotkeys",HotkeyKeys[i],app.hotkeys[i]);
+    for(int i=0;i<HotkeyCount;++i) {
+        const auto& b=app.joyButtons[i]; wchar_t text[32]{};
+        if(b.button) swprintf_s(text,L"%04X:%04X:%u:",b.vendor,b.product,static_cast<unsigned>(b.button));
+        write(L"Hotkeys",(std::wstring(HotkeyKeys[i])+L"Button").c_str(),b.button?text+b.name:std::wstring());
+    }
     if(!success && !app.settingsError) { app.settingsError=true; MessageBoxW(app.main,L"Could not save settings. Please check write access to the RaceMate configuration folder.",L"RaceMate",MB_OK|MB_ICONWARNING); }
 }
 // Deletes a settings section, and what Save() remembers of it so it is written again when needed.
@@ -1084,6 +1131,7 @@ UINT HotkeyModifiers(WORD hotkey) {
     return modifiers;
 }
 void UnregisterHotkeys() { for(int i=0;i<HotkeyCount;++i) UnregisterHotKey(app.main,i+1); }
+void ListenToButtons();
 // Records shortcuts that another application (or a duplicate assignment) already owns.
 void RegisterHotkeys() {
     if(!app.hotkeysEnabled) return;
@@ -1118,7 +1166,26 @@ FuelPlan PreviewPlan() {
 // The reserve in litres, or in laps at a consumption; the other unit needs a consumption, without one nothing.
 double ReserveLitres(double burn) { const double amount=app.reserveTenths/10.0; return app.reserveInLaps?(burn>0?amount*burn:0):amount; }
 double ReserveLaps(double burn) { const double amount=app.reserveTenths/10.0; return app.reserveInLaps?amount:(burn>0?amount/burn:0); }
-std::wstring ReserveText() { return app.reserveTenths?Format(app.reserveTenths/10.0,1)+(app.reserveInLaps?(app.reserveTenths==10?L" lap":L" laps"):L" L"):std::wstring(L"None"); }
+std::wstring ReserveText() {
+    const int amount=std::abs(app.reserveTenths); if(!amount) return L"None";
+    const std::wstring sign=app.reserveTenths>0?L"+":L"\u2212";
+    return sign+(app.reserveInLaps?std::to_wstring(amount/10)+(amount==10?L" lap":L" laps"):Format(amount/10.0,1)+L" L");
+}
+// The consumption the plan uses, with the fuel to add for it. By hand it counts as soon as the finish is known.
+FuelEstimate BasisEstimate(const FuelPlan& p) {
+    if(app.fuelBasis!=BasisManual) return p.estimates[static_cast<int>(app.fuelBasis==BasisAverage5?FuelMetric::Average5:FuelMetric::Average10)];
+    if(app.frame.replay && !app.preview) return {};
+    FuelEstimate e{app.manualBurnHundredths/100.0,-1,1};
+    if(p.lapsToFinish>=0 && (app.frame.fuelKnown || app.preview)) e.add=std::max(0.0,p.lapsToFinish*e.consumption+ReserveLitres(e.consumption)-app.frame.fuel);
+    return e;
+}
+// Fuel at the finish as shown: above a reserve you keep; with one below zero the fuel actually left, so that a
+// planned shortfall shows as fuel to save and never as spare.
+double FuelAtFinish(const PitWindow& window,double burn) {
+    return app.reserveTenths<0 && std::isfinite(window.fuelAtEnd)?window.fuelAtEnd+ReserveLitres(burn):window.fuelAtEnd;
+}
+// The consumption figure the plan uses, highlighted among the others; none by hand.
+int BasisMetric() { return app.fuelBasis==BasisManual?-1:static_cast<int>(app.fuelBasis==BasisAverage5?FuelMetric::Average5:FuelMetric::Average10); }
 const FuelPlan& Plan() {
     if(app.planVersion!=app.modelVersion) {
         if(app.preview) app.fuelPlan=PreviewPlan();
@@ -1217,7 +1284,7 @@ COLORREF Mix(COLORREF base,COLORREF ink,double alpha) {
 }
 // Litres with their sign: +10.8 L spare, −4.2 L missing.
 std::wstring SignedLitres(double value) { return std::isfinite(value)?(value>=0?L"+":L"\u2212")+Format(std::abs(value),1)+L" L":std::wstring(L"\u2014"); }
-// The pit window at the 10-lap average and the own pace, as the Fuel Calculator and the Stops Needed metric show it.
+// The pit window at the consumption the plan uses and the own pace, as the Fuel Calculator and the Stops Needed metric show it.
 // Writes a positive value, or removes the key.
 void WriteNumber(const wchar_t* section,const std::wstring& key,double value) {
     const auto text=Format(value,2); WritePrivateProfileStringW(section,key.c_str(),value>0?text.c_str():nullptr,app.config.c_str());
@@ -1291,7 +1358,7 @@ std::wstring PitExitAhead() {
     return {};
 }
 PitWindow FuelWindow() {
-    const auto& p=Plan(); const auto& f=app.frame; const auto& basis=p.estimates[FuelBasis];
+    const auto& p=Plan(); const auto& f=app.frame; const auto basis=BasisEstimate(p);
     double pace=p.prediction.ownPace; if(pace<=0) pace=f.lastLap>0?f.lastLap:f.bestLap;
     const double burn=basis.samples?basis.consumption:-1;
     return CalculatePitWindow(app.session,f,p.lapsToFinish,burn,pace,ReserveLaps(burn));
@@ -1402,6 +1469,7 @@ int HeightWithTitle(const Overlay& o) {
     if(o.kind==TrafficKind) return 32+6+o.traffic.cars*TrafficRow;
     if(o.kind==AdjustmentsKind) return 32+AdjustmentsHeight;
     if(o.kind==StreamCoverKind) return 32+o.cover.height;
+    if(o.kind==LapTimesKind) return 32+o.lapTimes.laps*LapTimesRow+(o.lapTimes.stint || o.lapTimes.best?LapTimesSummary:0)+FooterHeight(o);
     const auto& t=o.table;
     if(o.kind==RelativeKind) return TableRowsTop(o)+t.rows*27+FooterHeight(o);
     if(o.kind==StandingsKind) {
@@ -1435,13 +1503,15 @@ std::wstring Interval(const Row& row,const TableSettings& t) {
     if(row.intervalLaps>0) return plus+std::to_wstring(row.intervalLaps)+L" L";
     return std::isfinite(row.interval)?plus+Format(row.interval,t.gapDecimals):L"—";
 }
+// The refuel shortcut's result on the refuel card, for 5 s.
+std::wstring RefuelNote() { return app.refuelSetAt && GetTickCount64()-app.refuelSetAt<5000?L"pit menu: "+app.refuelText:std::wstring(); }
 // Fuel to add at the next stop: a final stop covers the shortfall, an intermediate stop fills the tank.
 double PlannedStopFuel(const PitWindow& window,const FuelPlan& p) {
     const auto& f=app.frame; const double capacity=app.session.fuelCapacity;
     if(window.status!=PitWindowStatus::Open || !f.fuelKnown || !std::isfinite(f.fuel) || f.fuel<0 || !std::isfinite(capacity) || capacity<=0 || !std::isfinite(window.fuelAtEnd)) return -1;
     if(window.stops<=1) return std::min(capacity,std::max(0.0,-window.fuelAtEnd));
     const double untilStop=window.openNow?0:std::max(0.0,window.firstLap-(f.lapCompleted+f.lapPct));
-    return std::max(0.0,capacity-std::max(0.0,f.fuel-untilStop*p.estimates[FuelBasis].consumption));
+    return std::max(0.0,capacity-std::max(0.0,f.fuel-untilStop*BasisEstimate(p).consumption));
 }
 COLORREF ColorOf(unsigned rgb) { return RGB((rgb>>16)&255,(rgb>>8)&255,rgb&255); }
 constexpr int CornerRadius=10;
@@ -1610,12 +1680,20 @@ constexpr COLORREF DialInks[]={Ink::Red,Ink::Yellow,Ink::Purple,RGB(118,214,186)
 const wchar_t* DialGroupNames[]={L"Brakes",L"Traction",L"Chassis",L"Engine",L"Hybrid"};
 // What the Adjustments show now: the dial changed last, or the sample its settings page shows on request.
 // left: the share of the time still to go. Steps from low to high, when the car's range is known and in whole steps.
-struct ShownAdjustment { int dial=-1; double value=0, was=0, left=0, low=0, high=0; bool steps=false; };
+// A message instead of a dial, such as the refuel shortcut's, has a name and text of its own.
+struct ShownAdjustment {
+    int dial=-1; double value=0, was=0, left=0, low=0, high=0; bool steps=false; std::wstring name, text;
+    bool Shown() const { return dial>=0 || !text.empty(); }
+};
 ShownAdjustment CurrentAdjustment(const AdjustmentSettings& a) {
     const unsigned long long hold=a.tenths*100ull;
     ShownAdjustment s;
     if(app.adjustSample && app.now-app.adjustSample<hold) {
         s={AbsDial,4,6,1-static_cast<double>(app.now-app.adjustSample)/hold,1,12,true}; return s;
+    }
+    // The refuel shortcut's result, while newer than the dial changed last.
+    if(app.refuelSetAt && app.now>=app.refuelSetAt && app.now-app.refuelSetAt<hold && app.refuelSetAt>=app.dialWatcher.ChangedAt()) {
+        s.name=L"Refuel"; s.text=app.refuelText; s.left=1-static_cast<double>(app.now-app.refuelSetAt)/hold; return s;
     }
     const int dial=app.dialWatcher.Shown();
     if(dial<0 || !(app.frame.dialsKnown>>dial&1) || !a.groups[GroupOf(dial)] || app.now-app.dialWatcher.ChangedAt()>=hold) return s;
@@ -1636,7 +1714,14 @@ const Overlay* AdjustmentsOverlay(int layout=0) {
 // The settings for an adjustment shown in place of o now, else null.
 const AdjustmentSettings* AdjustmentInPlaceOf(const Overlay& o) {
     const auto* a=AdjustmentsOverlay(o.layout);
-    return a && a->adjust.replace==o.kind && CurrentAdjustment(a->adjust).dial>=0?&a->adjust:nullptr;
+    return a && a->adjust.replace==o.kind && CurrentAdjustment(a->adjust).Shown()?&a->adjust:nullptr;
+}
+// The preview's laps: a stint since your stop on lap 4, laps of about 53.7 s, the best on lap 13.
+LapSummary PreviewLaps() {
+    LapSummary s; const double times[]={53.902,53.611,54.884,53.725,53.412,53.688,53.804,53.590,53.951,53.677};
+    for(int i=0;i<10;++i) s.laps.push_back({9+i,times[i],i!=2,false,i==2,1});
+    s.stintLaps=13; s.stintAverage=53.734; s.best=53.412;
+    return s;
 }
 void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCommand>& out) {
     out.clear();
@@ -1709,14 +1794,14 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
     if(o.kind==AdjustmentsKind || inPlace) {
         const auto& a=inPlace?*inPlace:o.adjust; auto s=CurrentAdjustment(a);
         // Its own window shows a sample in the preview and while overlays are moved.
-        if(s.dial<0 && !inPlace && (app.preview || app.edit)) s={AbsDial,4,6,.6,1,12,true};
-        if(s.dial<0) {
+        if(!s.Shown() && !inPlace && (app.preview || app.edit)) s={AbsDial,4,6,.6,1,12,true};
+        if(!s.Shown()) {
             out.push_back({DrawCommand::Text,Regular,DT_CENTER,{0,0,width,height},Ink::Muted,{},L"In-car adjustments"});
         } else {
-            const COLORREF ink=DialInks[GroupOf(s.dial)];
+            const COLORREF ink=s.dial>=0?DialInks[GroupOf(s.dial)]:Ink::Accent;
             out[0].color=Mix(Ink::Panel,ink,inPlace?.22:.08);
             out.push_back({DrawCommand::Fill,Regular,0,{0,0,width,std::max(2,px(4))},ink});
-            const std::wstring value=DialText(s.dial,s.value), was=a.was && s.was!=s.value?L"was "+DialText(s.dial,s.was):L"";
+            const std::wstring value=s.dial>=0?DialText(s.dial,s.value):s.text, was=s.dial>=0 && a.was && s.was!=s.value?L"was "+DialText(s.dial,s.was):L"";
             const int margin=width*7/100, inner=width-2*margin;
             const FontId valueFont=measure(value,DialValue)<=inner?DialValue:DialValueNarrow;
             auto lineHeight=[&](FontId font){ TEXTMETRICW m{}; if(o.dc) { SelectObject(o.dc,o.fonts[font]); GetTextMetricsW(o.dc,&m); } return static_cast<int>(m.tmHeight); };
@@ -1724,7 +1809,7 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             const int stepHeight=s.steps?std::max(px(6),height*3/100):0, gap=height*3/100;
             const int total=titleHeight+gap+valueHeight+(wasHeight?gap/2+wasHeight:0)+(stepHeight?2*gap+stepHeight:0);
             int y=std::max(px(6),(height-total)/2);
-            out.push_back({DrawCommand::Text,DialTitle,DT_CENTER,{margin,y,width-margin,y+titleHeight},ink,{},DialName(s.dial)}); y+=titleHeight+gap;
+            out.push_back({DrawCommand::Text,DialTitle,DT_CENTER,{margin,y,width-margin,y+titleHeight},ink,{},s.dial>=0?std::wstring(DialName(s.dial)):s.name}); y+=titleHeight+gap;
             // The value's line has room above its digits; drawn a little higher, they sit under the name.
             const int valueTop=y-lineHeight(valueFont)*8/100;
             out.push_back({DrawCommand::Text,valueFont,DT_CENTER,{margin,valueTop,width-margin,valueTop+lineHeight(valueFont)},Ink::White,{},value}); y+=valueHeight;
@@ -1976,8 +2061,19 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         footer(o.kind==RelativeKind?TableRowsTop(o)+o.table.rows*27:y+(rowsEmpty?54:0));
     } else if(o.kind==FuelKind) {
         const auto& p=Plan(); const auto& f=app.frame; const auto& on=o.fuel.display;
-        const auto& basis=p.estimates[FuelBasis]; const double burn=basis.samples?basis.consumption:-1;
+        const auto basis=BasisEstimate(p); const double burn=basis.samples?basis.consumption:-1;
         const auto window=FuelWindow();
+        // A chosen consumption figure as the panel and the strip show it: its heading, with the laps it has while
+        // short of them, and its value in the figure's colour; the one the plan uses in the accent.
+        struct FigureCell { std::wstring heading, value; COLORREF ink; };
+        auto figureCell=[&](int i) {
+            const auto& figure=FuelFigures[i]; const auto& estimate=p.estimates[figure.metric];
+            const COLORREF ink=figure.metric==BasisMetric()?Ink::Accent:(figure.metric==static_cast<int>(FuelMetric::Minimum)?Ink::Green:(figure.metric==static_cast<int>(FuelMetric::Maximum)?Ink::Red:(figure.metric==static_cast<int>(FuelMetric::QualifyMaximum)?Ink::Orange:Ink::White)));
+            static constexpr int laps[]={0,10,5,0,0,0,3,0};
+            static_assert(std::size(laps)==FuelMetricCount);
+            const bool partial=estimate.samples>0 && estimate.samples<laps[figure.metric];
+            return FigureCell{partial?std::wstring(figure.heading)+L" ("+std::to_wstring(estimate.samples)+L")":figure.heading,estimate.samples?Format(estimate.consumption,2):L"—",partial?Ink::Muted:ink};
+        };
         const bool open=window.status==PitWindowStatus::Open, noStop=window.status==PitWindowStatus::NoStopNeeded, extraStop=window.status==PitWindowStatus::ExtraStopNeeded;
         const bool tankKnown=f.fuelKnown && std::isfinite(f.fuel) && f.fuel>=0;
         const double capacity=app.session.fuelCapacity; const bool capacityKnown=std::isfinite(capacity) && capacity>0;
@@ -1990,7 +2086,10 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
         // At the finish at the current consumption: spare when no stop is needed any more, else missing; a small
         // shortfall can be saved instead, up to a tenth of the average.
         const double atFinish=tankKnown && burn>0?window.fuelAtEnd:std::numeric_limits<double>::quiet_NaN();
-        const bool spare=std::isfinite(atFinish) && atFinish>=0;
+        // With a reserve below zero, no stop needed can still mean arriving short: that much to save on the way.
+        const double planned=tankKnown && burn>0?FuelAtFinish(window,burn):std::numeric_limits<double>::quiet_NaN();
+        const bool toSave=std::isfinite(atFinish) && atFinish>=0 && planned<0;
+        const bool spare=std::isfinite(atFinish) && atFinish>=0 && !toSave;
         const double save=std::isfinite(atFinish) && atFinish<0 && p.lapsToFinish>0?-atFinish/p.lapsToFinish:-1;
         const bool saveable=save>0 && save<=.1*burn;
         const int current=f.lapCompleted>=0?f.lapCompleted+1:-1, finishLap=FuelFinishLap();
@@ -2020,9 +2119,12 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
             };
             for(int id:o.fuel.order) if(on[id]) switch(id) {
             case TankModule: item(L"TANK",litres(tankKnown?f.fuel:-1),white); item(L"RANGE",range>=0?Format(range,1)+L" laps":L"—",Ink::Accent); break;
-            case FiguresModule: item(L"AVG 10",burn>0?Format(burn,2):L"—",white); break;
+            case FiguresModule:
+                for(int i=0;i<FuelMetricCount;++i) if(o.fuel.figures[i]) { auto cell=figureCell(i); item(cell.heading.c_str(),std::move(cell.value),cell.ink); }
+                break;
             case RefuelCard:
-                if(spare) item(L"AT FINISH",SignedLitres(atFinish),Ink::Green);
+                if(toSave) item(L"TO SAVE",litres(-planned),Ink::Orange);
+                else if(spare) item(L"AT FINISH",SignedLitres(planned),Ink::Green);
                 else item(L"REFUEL",litres(refuel,true),refuelInk);
                 break;
             case WindowCard: item(L"BOX BY",open?lap(window.lastLap):L"—",white); break;
@@ -2104,10 +2206,11 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                     key(px(16),Ink::Accent,false,L"In tank",measure(L"In tank",Small));
                     std::wstring middle; COLORREF middleInk=Ink::Missing;
                     if(tankKnown && needed>f.fuel) middle=L"Missing "+litres(needed-f.fuel);
-                    if(spare) { middle=L"Spare "+litres(atFinish); middleInk=Ink::Green; }
+                    if(spare) { middle=L"Spare "+litres(planned); middleInk=Ink::Green; }
+                    if(toSave) { middle=L"Save "+litres(-planned); middleInk=Ink::Orange; }
                     if(!middle.empty()) { const int size=measure(middle,Small); key((px(W)-size-px(13))/2,middleInk,false,std::move(middle),size); }
                     if(needed>=0) {
-                        std::wstring text=L"Needed "+litres(needed)+L" · "+(reserve>0?L"reserve "+litres(reserve):Format(p.lapsToFinish,1)+L" laps"); const int size=measure(text,Small);
+                        std::wstring text=L"Needed "+litres(needed)+L" · "+(reserve!=0?L"reserve "+SignedLitres(reserve):Format(p.lapsToFinish,1)+L" laps"); const int size=measure(text,Small);
                         key(px(W-16)-size-px(7),RGB(255,255,255),true,std::move(text),size);
                     }
                     y+=112;
@@ -2115,15 +2218,11 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                 if(id==FiguresModule) {
                     fill(rect(0,y,W,1),Ink::Line);
                     for(int i=0,index=0;i<FuelMetricCount;++i) if(o.fuel.figures[i]) {
-                        const auto& figure=FuelFigures[i]; const auto& estimate=p.estimates[figure.metric];
                         const int left=W*index/figures,cell=W*(index+1)/figures-left; ++index;
                         if(left) fill(rect(left,y+1,1,50),Ink::Line);
-                        const COLORREF ink=figure.metric==FuelBasis?Ink::Accent:(figure.metric==static_cast<int>(FuelMetric::Minimum)?Ink::Green:(figure.metric==static_cast<int>(FuelMetric::Maximum)?Ink::Red:(figure.metric==static_cast<int>(FuelMetric::QualifyMaximum)?Ink::Orange:white)));
-                        static constexpr int laps[]={0,10,5,0,0,0,3,0};
-                        static_assert(std::size(laps)==FuelMetricCount);
-                        const bool partial=estimate.samples>0 && estimate.samples<laps[figure.metric];
-                        label(partial?std::wstring(figure.heading)+L" ("+std::to_wstring(estimate.samples)+L")":figure.heading,rect(left,y+7,cell,16),Ink::Label,Small,DT_CENTER);
-                        label(estimate.samples?Format(estimate.consumption,2):L"—",rect(left,y+23,cell,22),partial?Ink::Muted:ink,Bold,DT_CENTER);
+                        auto figure=figureCell(i);
+                        label(std::move(figure.heading),rect(left,y+7,cell,16),Ink::Label,Small,DT_CENTER);
+                        label(std::move(figure.value),rect(left,y+23,cell,22),figure.ink,Bold,DT_CENTER);
                     }
                     fill(rect(0,y+51,W,1),Ink::Line); y+=52;
                 }
@@ -2167,9 +2266,10 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                     // At the finish with a lap less to drive: the forecast counts no stops still to come, so before the
                     // leader's stop the race may run a lap shorter than it says.
                     const double shorter=std::isfinite(atFinish)?atFinish+burn:std::numeric_limits<double>::quiet_NaN();
-                    for(int which:cards) if(which==RefuelCard && spare) card(L"AT FINISH",SignedLitres(atFinish),Ink::Green,L"\u2248"+Format(atFinish/burn,1)+L" laps spare");
+                    for(int which:cards) if(which==RefuelCard && toSave) card(L"TO SAVE",litres(-planned),Ink::Orange,p.lapsToFinish>0?Format(-planned/p.lapsToFinish,2)+L" L/lap, as planned":L"as planned");
+                    else if(which==RefuelCard && spare) card(L"AT FINISH",SignedLitres(planned),Ink::Green,L"\u2248"+Format(planned/burn,1)+L" laps spare");
                     else if(which==RefuelCard) card(L"REFUEL TO FINISH",litres(refuel,true),refuelInk,
-                        refuel<0?L"waiting for laps":(saveable?L"or save "+Format(save,2)+L" L/lap":(refuel==0?L"enough fuel to finish":(!refuelFits?L"more than one tank":(reserve>0?L"incl. "+litres(reserve)+L" reserve":L"fits in the tank")))));
+                        RefuelNote().size()?RefuelNote():refuel<0?L"waiting for laps":(saveable?L"or save "+Format(save,2)+L" L/lap":(refuel==0?L"enough fuel to finish":(!refuelFits?L"more than one tank":(reserve!=0?L"incl. "+SignedLitres(reserve)+L" reserve":L"fits in the tank")))));
                     else if(which==ShorterCard) {
                         if(!std::isfinite(shorter) || p.lapsToFinish<1) card(L"ONE LAP SHORTER",L"\u2014",Ink::Muted,L"waiting for laps");
                         else if(shorter>=0) card(L"ONE LAP SHORTER",SignedLitres(shorter),Ink::Green,L"spare at the finish");
@@ -2415,6 +2515,39 @@ void BuildScene(const Overlay& o,int width,int height,int dpi,std::vector<DrawCo
                     y+=32;
                 }
             }
+        }
+        footer(y);
+    } else if(o.kind==LapTimesKind) {
+        // Newest first: the lap, its time and the gap to your best lap; laps that do not count in grey, with why.
+        // Under them the average of the stint's counted laps and your best lap of the session.
+        const auto& t=o.lapTimes; const int W=OverlayWidth(o); int y=32;
+        const LapSummary sum=app.preview?PreviewLaps():app.lapTimes.Summary();
+        const int count=std::min(t.laps,static_cast<int>(sum.laps.size()));
+        if(!count) label(L"Your laps appear as you complete them",rect(16,y,W-32,LapTimesRow),Ink::Muted,Small);
+        for(int i=0;i<count;++i) {
+            const auto& l=sum.laps[sum.laps.size()-1-i]; const int top=y+i*LapTimesRow;
+            if(i) fill(rect(16,top,W-32,1),Ink::Line);
+            const bool best=l.counted && sum.best>0 && std::abs(l.time-sum.best)<1e-6;
+            label(L"L"+std::to_wstring(l.lap),rect(16,top,48,LapTimesRow),Ink::Label,Small);
+            label(Lap(l.time),rect(64,top,100,LapTimesRow),!l.counted?Ink::Muted:(best?Ink::Purple:white),Bold);
+            if(t.gap) {
+                std::wstring gap=l.pit?L"PIT":(l.caution?L"CAUTION":(!l.counted?L"":(best?L"BEST":(sum.best>0?L"+"+Format(l.time-sum.best,3):L""))));
+                label(std::move(gap),rect(W-16-80,top,80,LapTimesRow),!l.counted?Ink::Muted:(best?Ink::Purple:Ink::Value),Small,DT_RIGHT);
+            }
+        }
+        y+=t.laps*LapTimesRow;
+        if(t.stint || t.best) {
+            fill(rect(0,y,W,1),Ink::Line);
+            if(t.stint) {
+                label(L"STINT AVG"+(sum.stintLaps?L" ("+std::to_wstring(sum.stintLaps)+L")":std::wstring()),rect(16,y+6,W-32,16),Ink::Label,Small);
+                label(Lap(sum.stintAverage),rect(16,y+21,W/2,22),sum.stintLaps?Ink::Accent:Ink::Muted,Bold);
+            }
+            if(t.best) {
+                const UINT align=t.stint?DT_RIGHT:DT_LEFT;
+                label(L"BEST",rect(16,y+6,W-32,16),Ink::Label,Small,align);
+                label(Lap(sum.best),rect(t.stint?W/2:16,y+21,t.stint?W/2-16:W-32,22),sum.best>0?Ink::Purple:Ink::Muted,Bold,align);
+            }
+            y+=LapTimesSummary;
         }
         footer(y);
     } else {
@@ -3520,7 +3653,7 @@ void UpdateOverlays(bool force=true) {
         }
         if(o.kind==AdjustmentsKind) {
             // Its own window: for a moment after you change a dial; never while it shows in place of other overlays.
-            shown=visible=visible && o.adjust.replace<0 && (app.preview || app.edit || CurrentAdjustment(o.adjust).dial>=0);
+            shown=visible=visible && o.adjust.replace<0 && (app.preview || app.edit || CurrentAdjustment(o.adjust).Shown());
         }
         if(o.kind==StreamCoverKind) {
             // While the garage screen is open, where the setup is, and for placing it.
@@ -3630,11 +3763,12 @@ void ProcessFrame(bool connected) {
     if(!connected && app.sectors.Count()) app.sectors.Reset();
     if(!connected) app.passing.Update(app.session,Frame{});
     if(app.frame.yawNorth!=app.lastYaw && std::isfinite(app.frame.yawNorth)) { app.lastYaw=app.frame.yawNorth; app.yawChanged=app.now; }
-    if(!connected) { SaveBraking(); app.frame={}; app.events.Update(app.session,app.frame); app.session={}; app.pitLane.Reset(); app.refuel.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.topSpeeds.Reset(); app.weatherHistory.Reset(); }
+    if(!connected) { SaveBraking(); app.frame={}; app.events.Update(app.session,app.frame); app.session={}; app.pitLane.Reset(); app.refuel.Reset(); app.fuel.Reset(); app.predictor.Reset(); app.pitHistory.Reset(); app.topSpeeds.Reset(); app.lapTimes.Reset(); app.weatherHistory.Reset(); }
     else {
         if(app.frame.time!=app.lastFrameTime) { app.lastFrameTime=app.frame.time; ++app.framesProcessed; }
         { ProfileScope p("analysis: pit history"); app.pitHistory.Update(app.session,app.frame); }
         { ProfileScope p("analysis: top speeds"); app.topSpeeds.Update(app.session,app.frame); }
+        { ProfileScope p("analysis: lap times"); app.lapTimes.Update(app.session,app.frame); }
         // Always, about 2 us a frame: records stay complete when a sector view is opened mid-session.
         { ProfileScope p("analysis: sector timing"); app.sectors.Update(app.session,app.frame); }
         { ProfileScope p("analysis: passing times"); app.passing.Update(app.session,app.frame); LoadPaceProfiles(app.session); SavePaceProfiles(app.session); }
@@ -3785,6 +3919,36 @@ void TrayMenu() {
     if(choice>=100 && choice<100+static_cast<int>(app.layouts.size())) SwitchLayout(app.layouts[choice-100].id);
     if(choice==6) OpenRaceControl(); if(choice==1) ShowSettings(); if(choice==2) ToggleEdit(); if(choice==3) ToggleHidden(); if(choice==7) ToggleObsPaused(); if(choice==5) DestroyWindow(app.main);
 }
+// The refuel shortcut: the fuel the Fuel Calculator plans to add, rounded up to whole litres, entered in iRacing's
+// pit menu: a full tank while more stops are to come, else the shortfall to the finish with your reserve.
+// Nothing needed unticks the fuel. What was set shows for a moment on the Fuel Calculator and the Adjustments.
+void SetRefuel() {
+    const auto& f=app.frame; std::wstring text;
+    if(!app.preview && (!f.connected || f.replay || !f.onTrack)) text=L"not in the car";
+    else {
+        // A stop with more to come fills the tank: asked for in full, so it does whenever you come in. The last stop's
+        // shortfall to the finish stays the same while you drive on, the fuel used meanwhile counting on both sides.
+        const auto& p=Plan(); const auto window=FuelWindow(); double stop=PlannedStopFuel(window,p);
+        if(stop>=0 && window.stops>1) stop=app.session.fuelCapacity;
+        const double add=stop>=0?stop:BasisEstimate(p).add;
+        if(add<0) text=L"waiting for laps";
+        else {
+            // irsdk_BroadcastPitCommand with irsdk_PitCommand_Fuel and its litres, or irsdk_PitCommand_ClearFuel.
+            const unsigned litres=static_cast<unsigned>(std::ceil(add-1e-6));
+            const bool sent=litres?SendSimMessage({9,2,litres}):SendSimMessage({9,11,0});
+            text=!sent?L"not sent":(litres?L"+"+std::to_wstring(litres)+L" L":L"no fuel");
+        }
+    }
+    app.refuelText=text; app.refuelSetAt=GetTickCount64();
+    for(auto& o:app.overlays) o.due=0;
+    UpdateOverlays();
+}
+// A shortcut's action, by its number from 1, from its keys or its button.
+void RunShortcut(WPARAM which) {
+    if(which==1) ToggleEdit(); if(which==2) ToggleHidden(); if(which==3) ShowSettings(); if(which==4 || which==5) StepRaceEventByHotkey(which==5?1:-1);
+    if(which==6) ToggleObsPaused(); if(which==7) SetRefuel();
+}
+#include "JoystickButtons.inc"
 LRESULT CALLBACK MainProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
     static const UINT taskbarCreated=RegisterWindowMessageW(L"TaskbarCreated");
     if(m==taskbarCreated) {
@@ -3809,7 +3973,9 @@ LRESULT CALLBACK MainProc(HWND w,UINT m,WPARAM wp,LPARAM lp) {
         reinterpret_cast<MINMAXINFO*>(lp)->ptMinTrackSize={minimum.right-minimum.left,minimum.bottom-minimum.top}; return 0;
     }
     case TrayMessage: if(lp==WM_LBUTTONDBLCLK || lp==WM_LBUTTONUP) ShowSettings(); else if(lp==WM_RBUTTONUP || lp==WM_CONTEXTMENU) TrayMenu(); return 0;
-    case WM_HOTKEY: if(wp==1) ToggleEdit(); if(wp==2) ToggleHidden(); if(wp==3) ShowSettings(); if(wp==4 || wp==5) StepRaceEventByHotkey(wp==5?1:-1); if(wp==6) ToggleObsPaused(); return 0;
+    case WM_HOTKEY: RunShortcut(wp); return 0;
+    case WM_INPUT: OnJoystickInput(reinterpret_cast<HRAWINPUT>(lp)); break; // DefWindowProc releases what came in the foreground.
+    case WM_INPUT_DEVICE_CHANGE: if(wp==GIDC_REMOVAL) joyDevices.erase(reinterpret_cast<HANDLE>(lp)); return 0;
     case RefreshUiMessage: UpdateStatus(); RefreshPage(); return 0;
     case RemoveOverlayMessage: RemoveOverlayNow(reinterpret_cast<Overlay*>(lp)); return 0;
     case TelemetryMessage: Tick(); return 0;
@@ -3938,7 +4104,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int show) {
     app.tray.cbSize=sizeof(app.tray); app.tray.hWnd=app.main; app.tray.uID=1; app.tray.uFlags=NIF_MESSAGE|NIF_ICON|NIF_TIP; app.tray.uCallbackMessage=TrayMessage; app.tray.hIcon=cls.hIcon; wcscpy_s(app.tray.szTip,L"RaceMate");
     app.trayAvailable=Shell_NotifyIconW(NIM_ADD,&app.tray)!=FALSE;
     if(app.startWithWindows && !RegisterStartup(true)) MessageBoxW(app.main,L"Could not refresh the Windows startup path. Select Start with Windows again to retry.",L"RaceMate",MB_OK|MB_ICONWARNING);
-    app.hotkeysEnabled=true; RegisterHotkeys();
+    app.hotkeysEnabled=true; RegisterHotkeys(); ListenToButtons();
     app.pump.Start(app.main,TelemetryMessage);
     Tick(); RestoreWindowPlacement(StartupShowCommand(app.trayAvailable,show)); UpdateWindow(app.main);
     if(!app.hotkeyError.empty()) ShowPage(Page::Settings);

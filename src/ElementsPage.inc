@@ -7,7 +7,8 @@ public:
     explicit ElementsPage(Overlay& o) : PageWindow(ui.heading,ui.text), o_(o) {}
 private:
     enum class Key { None, Window, Layout, Rounded, Module, Band, Info, SetupChanges, PitStrip, Countdown, SideCar, SideApart, RadarBackground, RadarRange, RadarShows, RadarDistances, TrafficBackground, TrafficCars, TrafficGapKey, TrafficFaster,
-        AdjustPlace, AdjustTime, AdjustWas, AdjustTimer, AdjustGroup, AdjustSample, CoverPicture, CoverFit, CoverWidth, CoverHeight, CoverPictureSize };
+        AdjustPlace, AdjustTime, AdjustWas, AdjustTimer, AdjustGroup, AdjustSample, CoverPicture, CoverFit, CoverWidth, CoverHeight, CoverPictureSize,
+        LapCount, LapGap, LapStint, LapBest };
     static constexpr int ListId=100, FuelRowEditId=200, WindPartEditId=210, HumidityEditId=212, HistoryPartEditId=213, CautionEditId=220, TargetRefuelEditId=221, ClassLeaderEditId=222, SlotEditId=230, HeaderRow=1000, FooterRow=1001, NameRow=1002;
 
     void OnCreate() override {
@@ -62,15 +63,15 @@ private:
             RowList::Row time; time.title=L"Shows for"; time.choices={L"1 s",L"2 s",L"3 s",L"4 s",L"5 s"}; time.choice=std::clamp(a.tenths/10-1,0,4);
             time.detail=L"After your last change; another change starts it again.";
             push(std::move(time),Key::AdjustTime);
-            RowList::Row sample; sample.title=L"Sample"; sample.button=L"Show";
-            sample.detail=L"Shows ABS 4 for that long, as a change would.";
+            RowList::Row sample; sample.title=L"Preview"; sample.button=L"Show";
+            sample.detail=L"Shows a sample change, ABS 4, for the time set above.";
             push(std::move(sample),Key::AdjustSample);
-            header(L"On it");
-            RowList::Row was; was.title=L"Value before"; was.toggle=a.was?1:0;
-            was.detail=L"“was 3” under the value: before your first change, so two steps from 3 to 1 read was 3.";
+            header(L"On the overlay");
+            RowList::Row was; was.title=L"Previous value"; was.toggle=a.was?1:0;
+            was.detail=L"“was 3” under the new value: the value before you started changing it.";
             push(std::move(was),Key::AdjustWas);
-            RowList::Row timer; timer.title=L"Time left"; timer.toggle=a.timer?1:0;
-            timer.detail=L"A bar along the bottom edge that runs down until it goes.";
+            RowList::Row timer; timer.title=L"Countdown bar"; timer.toggle=a.timer?1:0;
+            timer.detail=L"A bar along the bottom that shrinks until the overlay hides.";
             push(std::move(timer),Key::AdjustTimer);
             info(L"Steps",L"Under the value, once the lowest and highest steps of the dial have been seen in this car");
             header(L"Dials");
@@ -130,6 +131,22 @@ private:
             info(L"Spotter",L"Where it reports cars beside you",L"Red",RowList::Tone::Warning);
             done(); return;
         }
+        if(o_.kind==LapTimesKind) {
+            const auto& l=o_.lapTimes;
+            header(L"Laps");
+            RowList::Row count; count.title=L"Laps shown"; count.detail=L"Your last laps, newest at the top";
+            count.slider=l.laps; count.sliderMin=3; count.sliderMax=LapTimes::Size; push(std::move(count),Key::LapCount);
+            RowList::Row gap; gap.title=L"Gap to your best"; gap.toggle=l.gap?1:0;
+            gap.detail=L"Beside each lap; PIT and CAUTION mark the laps that do not count"; push(std::move(gap),Key::LapGap);
+            header(L"Under the laps");
+            RowList::Row stint; stint.title=L"Stint average"; stint.toggle=l.stint?1:0;
+            stint.detail=L"Of the counted laps since you last left the pits"; push(std::move(stint),Key::LapStint);
+            RowList::Row best; best.title=L"Best lap"; best.toggle=l.best?1:0;
+            best.detail=L"Your fastest counted lap of the session, in purple"; push(std::move(best),Key::LapBest);
+            header(L"Which laps count");
+            info(L"Whole laps at racing speed",L"Pit laps, laps under a full-course caution and the first partial lap are listed in grey and left out.");
+            bands(); done(); return;
+        }
         if(o_.kind==StreamCoverKind) {
             const auto& c=o_.cover;
             header(L"Picture");
@@ -154,7 +171,7 @@ private:
         }
         if(o_.kind==SideWarningKind) {
             header(L"Style");
-            RowList::Row apart; apart.title=L"Distance apart"; apart.slider=o_.sideApart; apart.sliderMin=20; apart.sliderMax=100; apart.sliderStep=10; apart.sliderUnit=L" %";
+            RowList::Row apart; apart.title=L"Distance between the bars"; apart.slider=o_.sideApart; apart.sliderMin=20; apart.sliderMax=100; apart.sliderStep=10; apart.sliderUnit=L" %";
             apart.detail=o_.sideApart==100?L"Of the screen width: at its edges":L"Of the screen width, centred on it";
             push(std::move(apart),Key::SideApart);
             push(RoundedRow(o_),Key::Rounded);
@@ -182,7 +199,7 @@ private:
             RowList::Row strip; strip.title=L"Pit lane progress"; strip.toggle=o_.pitStrip?1:0;
             strip.detail=L"Entry, your box and exit with your car on the way: where to brake for the speed limit and for your box, and when the limiter can go off.";
             push(std::move(strip),Key::PitStrip);
-            RowList::Row countdown; countdown.title=L"Countdown"; countdown.choices={L"Metres",L"Seconds"}; countdown.choice=o_.pitSeconds?1:0;
+            RowList::Row countdown; countdown.title=L"Countdown in"; countdown.choices={L"Metres",L"Seconds"}; countdown.choice=o_.pitSeconds?1:0;
             countdown.detail=o_.pitSeconds?L"To the brake points, your box and the exit at your current speed, in tenths of a second":L"To the brake points, your box and the exit along the lap";
             countdown.muted=!o_.pitStrip; push(std::move(countdown),Key::Countdown);
             RowList::Row setup; setup.title=L"Setup changes"; setup.toggle=o_.setupChanges?1:0;
@@ -214,7 +231,6 @@ private:
             if(!Fuel() && id==WindModule) row.detail=o_.weather.display[WindRose] && o_.weather.display[WindText]?L"Wind rose and text":(o_.weather.display[WindRose]?L"Wind rose":(o_.weather.display[WindText]?L"Wind text":L"Nothing chosen"));
             row.toggle=Shown(id)?1:0; row.muted=!Shown(id) || (Strip() && !InStrip(o_.kind,id));
             if(Strip() && !InStrip(o_.kind,id)) row.pill=L"Panel only";
-            else if(Strip() && Fuel() && id==FiguresModule) row.pill=L"Strip: AVG 10";
             // Same column for every row's button: the expand arrow or an empty slot.
             const bool open=expanded_==id;
             row.iconButtons={Expandable(id)?(open?Glyph::Collapse:Glyph::Expand):wchar_t{0}}; row.expandHeight=Expandable(id) && open?(id==FiguresModule?120:48):0;
@@ -229,7 +245,7 @@ private:
         bands();
         if(Fuel()) {
             header(L"Learning");
-            info(L"Which laps count",L"Whole laps at racing speed: caution laps, pit and out laps, refuels and the first partial lap never count. The 10-lap average drives range, pit window, refuel and targets.");
+            info(L"Which laps count",L"Whole laps at racing speed: caution laps, pit and out laps, refuels and the first partial lap never count. The consumption chosen in Settings, the 10-lap average unless changed, drives range, pit window, refuel and targets.");
         }
         done();
     }
@@ -344,6 +360,10 @@ private:
                 if(choice>=0) { o_.adjust.replace=choice?AdjustmentTargets[choice-1]:-1; Changed(); }
             }
             break;
+        case Key::LapCount: if(code==RowList::kSlider) { o_.lapTimes.laps=list_.Rows()[row].slider; Fit(o_); Changed(); } break;
+        case Key::LapGap: if(code==RowList::kToggled) { o_.lapTimes.gap=on; Fit(o_); Changed(); } break;
+        case Key::LapStint: if(code==RowList::kToggled) { o_.lapTimes.stint=on; Fit(o_); Changed(); } break;
+        case Key::LapBest: if(code==RowList::kToggled) { o_.lapTimes.best=on; Fit(o_); Changed(); } break;
         case Key::TrafficBackground: if(code==RowList::kToggled) { o_.traffic.background=on; Fit(o_); Changed(); } break;
         case Key::TrafficFaster: if(code==RowList::kToggled) { o_.traffic.fasterOnly=on; Changed(); } break;
         case Key::TrafficCars:

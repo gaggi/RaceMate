@@ -26,7 +26,7 @@ private:
         toggle(L"White track",L"White with a black edge, readable over any background. Off: grey, as the panel.",o_.map.whiteTrack,WhiteTrackKey);
         toggle(L"Background and frame",L"Off: transparent map and cars only. Hides the frame, captions, header and footer; their settings are kept.",o_.map.background,Background);
         toggle(L"Pit lane",L"Show the official pit-lane drawing, independently of cars in the pits.",o_.map.pitLane,PitLane);
-        toggle(L"Background",L"iRacing's drawing around the track, under it.",o_.map.surroundings,SurroundingsKey);
+        toggle(L"Surroundings",L"iRacing's drawing of what lies around the track, under it.",o_.map.surroundings,SurroundingsKey);
         toggle(L"All configurations",L"The track's other layouts in grey under this one; the map makes room for them.",o_.map.allConfigs,AllConfigsKey);
         toggle(L"North up",L"iRacing turns some maps to fit the screen; this turns them back. Where north lies: North, under Map data.",o_.map.northUp,NorthUpKey);
         for(size_t i=rows.size()-3;i<rows.size();++i) { rows[i].muted=o_.map.layout!=MapLayout; rows[i].toggleEnabled=o_.map.layout==MapLayout; }
@@ -41,7 +41,7 @@ private:
         toggle(L"Own class only",L"Uses the class of your car, or the car you are watching.",o_.map.ownClass,OwnClass);
         toggle(L"Cars in the pits",L"Hollow markers; on the drawn pit lane beside their lap position when Pit lane is on, else on the circuit.",o_.map.pit,Pit);
         toggle(L"Pit exit",L"A blue PIT ring where you would rejoin if you boxed now. Times under Settings, Pit stop estimate.",o_.map.pitExit,PitExitKey);
-        toggle(L"Projection details",L"A line under the map with track ID, cache source, refresh rate and the projection notice. With background only.",o_.map.details,Details);
+        toggle(L"Map info line",L"Under the map: track ID, where the drawing comes from and its refresh rate. With Background and frame only.",o_.map.details,Details);
         rows.back().muted=MapOnly(o_); rows.back().toggleEnabled=!MapOnly(o_);
         auto rounded=RoundedRow(o_); rounded.muted=MapOnly(o_); rounded.toggleEnabled=!MapOnly(o_); push(std::move(rounded),Rounded);
         heading(L"Sectors and mini-sectors");
@@ -55,7 +55,7 @@ private:
         heading(L"Corner labels");
         toggle(L"Corner numbers",L"Numbers at their official SVG positions. Also available with a transparent background.",o_.map.cornerNumbers,CornerNumbers);
         toggle(L"Corner names",L"Official names where iRacing supplies them. Tracks with numbers only do not get invented names.",o_.map.cornerNames,CornerNames);
-        toggle(L"Label contrast outline",L"Dark outline around the text for readability over the circuit or other windows.",o_.map.labelContrast,LabelContrast);
+        toggle(L"Outline around labels",L"A dark outline keeps the text readable over the circuit or other windows.",o_.map.labelContrast,LabelContrast);
         RowList::Row size; size.title=L"Label size"; size.detail=L"Of the official SVG text size; follows the overlay scale.";
         size.slider=o_.map.labelScale; size.sliderMin=75; size.sliderMax=200; size.sliderStep=25; size.sliderUnit=L" %"; push(std::move(size),LabelSize);
         heading(L"Header and footer");

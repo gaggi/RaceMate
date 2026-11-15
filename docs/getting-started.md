@@ -35,7 +35,7 @@ Keep the executable in a stable location if you enable **Start with Windows**. I
 2. Enable the overlay types you want to use. **Track Map** is disabled by default.
 3. Click **Move** in the status bar at the top. Drag the overlays into position; a dashed yellow border identifies Move mode.
 4. Click an overlay in the list. **Shows on** near the top sends it to your screen, to OBS or both; its columns, modules, header and footer follow. A red border identifies the overlay whose page is open. OBS needs the [OBS Spout2 plugin](https://github.com/Off-World-Live/obs-spout2-plugin) to receive it; see [OBS output](overlays.md#obs-output-spout2).
-5. Under **Window**, right below it, adjust **Size**, **Opacity**, **Fixed corner** and **Updates**.
+5. Under **Window**, right below it, adjust **Size**, **Opacity**, **Fixed corner** and **Refresh rate**.
 6. Click **Move** again when placement is complete.
 7. Click **Stop preview** on the layout's page when finished. Live telemetry continues during previews, and live data takes priority when the layout's condition matches.
 
@@ -56,7 +56,7 @@ When iRacing disconnects, the overlays hide unless Preview is enabled. If you ne
 
 ## Everyday controls
 
-Global shortcuts move and hide the overlays, open the settings and step through Race Control events, also while iRacing has the focus; **Ctrl + Alt + Shift + E** toggles Move mode. See [keyboard shortcuts](layouts-and-settings.md#keyboard-shortcuts) for the full list and how to change them. In settings lists, **Space** toggles a row and **Enter** opens its settings or expands it.
+Global shortcuts move and hide the overlays, open the settings, step through Race Control events and enter your refuel in iRacing's pit menu, also while iRacing has the focus; **Ctrl + Alt + Shift + E** toggles Move mode. See [keyboard shortcuts](layouts-and-settings.md#keyboard-shortcuts) for the full list and how to change them. In settings lists, **Space** toggles a row and **Enter** opens its settings or expands it.
 
 ## Closing, minimizing and quitting
 

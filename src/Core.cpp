@@ -961,16 +961,60 @@ void FuelCalculator::Update(const Session& s, const Frame& f, bool excludeYellow
     }
     previousFuel_ = f.fuel;
 }
+void LapTimes::Update(const Session& s, const Frame& f) {
+    if(!f.connected || f.replay) { anchored_=false; preStart_=-1; return; }
+    if(key_!=s.key || session_!=f.session || player_!=f.player || f.time<time_) { Reset(); key_=s.key; session_=f.session; player_=f.player; }
+    time_=f.time;
+    // iRacing's own time of the lap just completed arrives a moment after the line; the measured one stays without it.
+    if(pending_>=0) {
+        if(f.lastLap>0 && std::abs(f.lastLap-pendingLast_)>1e-4) { laps_[pending_].time=f.lastLap; Finish(pending_); }
+        else if(f.time-crossed_>ExactWait) Finish(pending_);
+    }
+    const double previousLast=lastSeen_; lastSeen_=f.lastLap;
+    if(!f.onTrack) { anchored_=false; preStart_=-1; return; }
+    const bool pitNow=f.pit || f.inStall;
+    if(inPit_ && !pitNow) { ++stint_; stintSum_=0; stintCount_=0; }
+    inPit_=pitNow;
+    if(s.type=="Race" && f.state>0 && f.state<4) { anchored_=false; preStart_=f.time; return; } // Grid and formation.
+    if(f.lapCompleted<0) { anchored_=false; return; }
+    // A full-course caution or red flag; a local yellow slows a lap too little to leave it out.
+    const bool neutralized=(f.flags & (SessionFlag::Caution | SessionFlag::CautionWaving | SessionFlag::Red))!=0;
+    if(!anchored_ || f.lapCompleted<lap_ || f.lapCompleted>lap_+1) {
+        const bool observedStart=s.type=="Race" && f.state==4 && f.lapCompleted==0 && preStart_>=0 && f.time-preStart_<=5;
+        anchored_=true; partial_=!observedStart; dirty_=pitNow; caution_=neutralized; lap_=f.lapCompleted; start_=f.time; preStart_=-1;
+    }
+    dirty_=dirty_ || pitNow; caution_=caution_ || neutralized;
+    if(f.lapCompleted==lap_) return;
+    if(!partial_ && f.time-start_>5) {
+        if(pending_>=0) Finish(pending_);
+        laps_[cursor_]={f.lapCompleted,f.time-start_,!dirty_ && !caution_,dirty_,caution_,stint_};
+        pending_=cursor_; pendingLast_=previousLast; crossed_=f.time;
+        cursor_=(cursor_+1)%Size; count_=std::min(Size,count_+1);
+    }
+    lap_=f.lapCompleted; start_=f.time; partial_=false; dirty_=pitNow; caution_=neutralized;
+}
+void LapTimes::Finish(int index) {
+    const auto& lap=laps_[index]; pending_=-1;
+    if(!lap.counted || lap.time<=0) return;
+    if(lap.stint==stint_) { stintSum_+=lap.time; ++stintCount_; }
+    best_=best_<0?lap.time:std::min(best_,lap.time);
+}
+LapSummary LapTimes::Summary() const {
+    LapSummary s;
+    for(int i=0;i<count_;++i) s.laps.push_back(laps_[(cursor_+Size-count_+i)%Size]);
+    s.stintLaps=stintCount_; s.stintAverage=stintCount_?stintSum_/stintCount_:-1; s.best=best_;
+    return s;
+}
 PitWindow CalculatePitWindow(const Session& s,const Frame& f,double distance,double burn,double pace,double reserveLaps) {
     PitWindow window;
     if(f.lapCompleted>=0 && f.lapCompleted<1000000) window.currentLap=f.lapCompleted+1;
     const bool consumptionKnown=f.connected && f.fuelKnown && !f.replay && std::isfinite(burn) && burn>0 && std::isfinite(f.fuel) && f.fuel>=0;
     if(consumptionKnown && std::isfinite(pace) && pace>0) window.timeEmpty=f.fuel/burn*pace;
-    reserveLaps=std::isfinite(reserveLaps)?std::max(0.0,reserveLaps):0;
+    reserveLaps=std::isfinite(reserveLaps)?reserveLaps:0; // Below zero: arrive with that much less.
     if(consumptionKnown && std::isfinite(distance) && distance>=0) window.fuelAtEnd=f.fuel-(distance+reserveLaps)*burn;
     if(s.type!="Race" || !consumptionKnown || f.pit || f.inStall || f.lapCompleted<0 || f.lapCompleted>=1000000 || !std::isfinite(f.lapPct) || f.lapPct<0 || f.lapPct>=1 || !std::isfinite(distance) || distance<=0 || !std::isfinite(s.fuelCapacity) || s.fuelCapacity<=0) return window;
     // The fuel lasts to need: the finish and the reserve after it. Stops stay before the finish.
-    const double progress=f.lapCompleted+f.lapPct, finish=progress+distance, need=finish+reserveLaps, stint=s.fuelCapacity/burn;
+    const double progress=f.lapCompleted+f.lapPct, finish=progress+distance, need=std::max(progress,finish+reserveLaps), stint=s.fuelCapacity/burn;
     if(finish>1000000 || !std::isfinite(stint) || stint<=0) return window;
     window.finishLap=static_cast<int>(std::ceil(finish-1e-6));
     if(window.fuelAtEnd>=0) { window.status=PitWindowStatus::NoStopNeeded; window.stops=0; return window; }

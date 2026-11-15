@@ -42,6 +42,7 @@ The exporter checks for all source files before writing. Overlay captures keep t
 | `fuel-save.png` | `fuel-save` |
 | `fuel-surplus.png` | `fuel-surplus` |
 | `fuel-strip.png` | `fuel-strip` |
+| `lap-times.png` | `lap-times` |
 | `pit-stop-settings.png` | `settings-pit-stop` |
 | `pit-assist.png` | `pit-setup-changes` and `pit-turn-off-limiter`, side by side |
 | `pit-lane-progress.png` | `pit-strip-approach`, `pit-strip-lane` and `pit-strip-exit`, side by side |

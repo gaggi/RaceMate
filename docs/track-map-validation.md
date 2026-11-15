@@ -9,7 +9,7 @@ This checklist is for validating the experimental official-Map projection in the
 1. Build the version you want to test and quit the existing RaceMate instance through the tray menu. Only one normal instance runs at a time.
 2. Start the intended executable, enable **Overlays → Track Map**, and choose **Map**. Configure size, position, opacity and refresh rate as usual.
 3. Allow the first download for that layout, or use a valid existing cache under `%LOCALAPPDATA%\RaceMate\trackmaps\v1\<TrackID>`. Preview uses Lime Rock GP with sample cars.
-4. Join the exact layout to be checked. Enable **Projection details** to record track ID, cache source and projection status. **Track and layout** is also available as a header metric.
+4. Join the exact layout to be checked. Enable **Map info line** to record track ID, cache source and projection status. **Track and layout** is also available as a header metric.
 
 Useful identity cases:
 
@@ -38,7 +38,7 @@ Use **Retry** after a loading error. Unknown or ambiguous official layouts shoul
 
 Turn **Background and frame** off. Only map content should remain over the simulator; captions, frame and header/footer disappear while their settings are retained. The checkerboard in diagnostic screenshots is only a transparency preview.
 
-Toggle **Pit lane** and **Start/finish marking** independently. Hiding these drawings must not alter the prepared position mapping. Toggle **Background** surroundings and **All configurations** in the Map layout; the view should expand to include other configurations without changing lap alignment.
+Toggle **Pit lane** and **Start/finish marking** independently. Hiding these drawings must not alter the prepared position mapping. Toggle **Surroundings** and **All configurations** in the Map layout; the view should expand to include other configurations without changing lap alignment.
 
 Enable **Corner numbers** and **Corner names** separately. Check **Label size** from 75% to 200%, the contrast outline, and transparent presentation. Suzuka GP provides numbers; Lime Rock GP and Okayama Full can also supply names. Missing official names must not be invented.
 

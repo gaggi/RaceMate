@@ -197,6 +197,12 @@ void PitWindowTests() {
         Near(kept.fuelAtEnd,plain.fuelAtEnd-3.12,"fuel at the finish counts above the reserve");
         auto close=later; close.fuel=40;
         Require(CalculatePitWindow(s,close,12.55,3.12).status==PitWindowStatus::NoStopNeeded && CalculatePitWindow(s,close,12.55,3.12,-1,1/3.12).status!=PitWindowStatus::NoStopNeeded,"a litre of reserve turns a narrow finish into a stop");
+        // Below zero: arriving with a lap less in the tank, as when saving fuel at the end.
+        const auto less=CalculatePitWindow(s,later,12.55,3.12,-1,-1);
+        Near(less.fuelAtEnd,plain.fuelAtEnd+3.12,"a reserve below zero leaves more at the finish");
+        Require(less.firstLap==plain.firstLap-1 && less.lastLap==plain.lastLap,"a reserve below zero opens the window a lap earlier");
+        auto short1=later; short1.fuel=3.12*12.55-2;
+        Require(CalculatePitWindow(s,short1,12.55,3.12).status!=PitWindowStatus::NoStopNeeded && CalculatePitWindow(s,short1,12.55,3.12,-1,-1).status==PitWindowStatus::NoStopNeeded,"a reserve below zero can save a stop");
     }
     f=later; f.fuel=50; Require(CalculatePitWindow(s,f,12.55,3.12).status==PitWindowStatus::NoStopNeeded,"no green window when current fuel already reaches finish");
     f.fuel=2; Require(CalculatePitWindow(s,f,30,3.12).stops==4,"multi-stop race provides next-stop window instead of suppressing it");
@@ -503,6 +509,42 @@ void OpponentFuelTests() {
 }
 // iRacing's estimate runs on the class reference lap: 60 s of a 120 s reference is half the lap, at a 100 s pace
 // 50 s to the line, not 40 s from dividing by the car's own 100 s lap.
+// Your laps: iRacing's own time when it arrives, the measured one without it; pit, caution and partial laps
+// shown but not counted; a stint average that starts again after the pits; the session's best lap.
+void LapTimesTests() {
+    auto s=Race(); auto f=RacingFrame(); LapTimes times; f.flags=0; f.lastLap=-1;
+    auto lap=[&](double seconds,double exact,bool pit=false,bool caution=false) {
+        // Across a lap at 20 frames a second, then iRacing's time a few frames after the line.
+        const int start=f.lapCompleted;
+        for(double t=0;t<seconds;t+=.05) {
+            f.time+=.05; f.pit=pit && t>seconds/2; f.inStall=false; f.flags=caution?SessionFlag::Caution:0;
+            if(t+.05>=seconds) f.lapCompleted=start+1;
+            times.Update(s,f);
+        }
+        f.pit=false; f.flags=0;
+        for(int i=0;i<4;++i) { f.time+=.05; if(i==2 && exact>0) f.lastLap=exact; times.Update(s,f); }
+    };
+    auto wait=[&]{ for(int i=0;i<8;++i) { f.time+=.5; times.Update(s,f); } };
+    times.Update(s,f);
+    lap(100,0); // Joined mid-lap: not timed.
+    Require(times.Summary().laps.empty(),"the first partial lap is not timed");
+    lap(100,99.512); lap(98,98.004); lap(99,0); wait();
+    auto sum=times.Summary();
+    Require(sum.laps.size()==3 && std::abs(sum.laps[0].time-99.512)<1e-9 && std::abs(sum.laps[1].time-98.004)<1e-9,"iRacing's own lap time replaces the measured one");
+    Require(std::abs(sum.laps[2].time-99)<.3 && sum.laps[2].counted,"without iRacing's time the measured one stays");
+    Require(sum.stintLaps==3 && std::abs(sum.best-98.004)<1e-9,"the best lap of the session");
+    lap(97,97.1,false,true);
+    sum=times.Summary(); Require(sum.laps.back().caution && !sum.laps.back().counted && std::abs(sum.best-98.004)<1e-9 && sum.stintLaps==3,"a caution lap is shown but not counted");
+    lap(120,120.3,true); // In-lap: the stint ends when the car leaves the pits.
+    lap(110,110.2);      // Out-lap of the next stint.
+    sum=times.Summary(); Require(sum.laps.back().pit && sum.stintLaps==0 && sum.stintAverage<0 && sum.laps.back().stint==sum.laps.front().stint+1,"leaving the pits starts a stint; its out-lap does not count");
+    lap(98.5,98.5); lap(97.5,97.5);
+    sum=times.Summary(); Require(sum.stintLaps==2 && std::abs(sum.stintAverage-98)<1e-9 && std::abs(sum.best-97.5)<1e-9,"the stint average counts only this stint's laps");
+    for(int i=0;i<12;++i) lap(99,99+i*.01);
+    wait();
+    Require(times.Summary().laps.size()==static_cast<size_t>(LapTimes::Size) && times.Summary().stintLaps==14,"ten laps listed; the stint average counts all of the stint");
+    f.session=2; times.Update(s,f); Require(times.Summary().laps.empty() && times.Summary().best<0,"a new session starts without laps");
+}
 // Top speeds from the track position: a whole lap's, none for a lap with a jump, the session's and your own car's.
 void TopSpeedTests() {
     auto s=Race(); s.trackMeters=4000; auto f=RacingFrame(); TopSpeeds speeds;
@@ -531,4 +573,4 @@ void SdkScaleTests() {
     RacePredictor predictor; const auto p=predictor.Predict(s,f);
     Near(p.finish.ownFinishIn,50,"SDK estimate divided by its class reference lap");
 }
-void PredictionTests() { SdkScaleTests(); TopSpeedTests(); PitWindowTests(); TimedTests(); LeaderChangeTests(); CrossingInvariantTests(); LimitAndStateTests(); HistoryTests(); MulticlassEnduranceTests(); FuelForecastTests(); OpponentFuelTests(); }
+void PredictionTests() { SdkScaleTests(); TopSpeedTests(); LapTimesTests(); PitWindowTests(); TimedTests(); LeaderChangeTests(); CrossingInvariantTests(); LimitAndStateTests(); HistoryTests(); MulticlassEnduranceTests(); FuelForecastTests(); OpponentFuelTests(); }

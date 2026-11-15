@@ -8,9 +8,11 @@ RaceMate derives strategy from observed telemetry. Your current fuel is measured
 
 RaceMate measures fuel used between line crossings. A sample must be a complete lap at racing speed. The first partial lap, caution laps, pit laps, out laps, refueling and replay footage do not count toward the average. History resets when the session or car changes; the one exception is **QUALI**, the qualifying maximum, which stays for the race of the same event in the same car. It is kept in memory only: after RaceMate restarts it shows **—** until another qualifying lap.
 
-The **average of the last 10 counted laps** drives range, refuel requirements, the pit window and targets. It can operate with fewer than ten samples: **AVG 10 (3)** means only three eligible laps have been collected. The reduced sample count is shown in gray.
+By default the **average of the last 10 counted laps** drives range, refuel requirements, the pit window and targets. It can operate with fewer than ten samples: **AVG 10 (3)** means only three eligible laps have been collected. The reduced sample count is shown in gray.
 
-Consumption figures can also show the last lap, 3-lap and 5-lap averages, race average, minimum and maximum. These are selectable display figures; choosing a different visible figure does not replace the 10-lap planning basis.
+**Settings → Fuel strategy → Consumption to plan with** chooses that basis: **Avg 10**, **Avg 5** (the last 5 counted laps, quicker to follow a change of pace or fuel saving), or **Manual**. Manual sets the litres per lap by hand on a slider, 0.50 to 10.00 L in steps of 0.05; it counts from the first lap on, before any lap is measured, and stays until you change it. The Fuel Calculator highlights the figure in use; by hand, none.
+
+Consumption figures can also show the last lap, 3-lap and 5-lap averages, race average, minimum and maximum. These are selectable display figures; choosing a different visible figure does not replace the planning basis.
 
 If consumption stays empty, finish complete green laps without visiting the pits or refueling. A blank value after a session/car change is expected until new valid evidence exists.
 
@@ -49,14 +51,27 @@ Refuel numbers contain no margin beyond the reserve you set. They change with le
 
 ## Fuel reserve
 
-**Settings → Fuel strategy → Reserve at the finish** keeps fuel in the tank when you take the flag: none (the default), 0.5 to 5 L, or 0.5 to 2 laps at the 10-lap average. The reserve is fuel you still need, like extra distance after the finish:
+**Settings → Fuel strategy → Reserve at the finish** keeps fuel in the tank when you take the flag. Choose **Litres** or **Laps**, then set the amount on the **Reserve** slider: −10 to +10 L in half litres, or −5 to +5 whole laps at the consumption you plan with. None is the default. Switching the unit keeps the number, laps rounded to whole ones. The reserve is fuel you still need, like extra distance after the finish:
 
 - **Refuel to finish** and **Needed** include it. The card says `incl. 2.0 L reserve`, and the tank bar's legend shows `Needed 44.3 L · reserve 2.0 L`.
 - The pit window, the stops needed and the fuel to add at a stop count with it, so a narrow finish can need a stop that it would not need without a reserve.
 - The targets to the finish leave it in the tank; targets to a stop do not, because you arrive at the box with the tank empty.
 - **At finish** and **NO STOP · +x L** count what is spare **above** the reserve.
 
+Below zero, you plan to arrive with that much less: fuel you expect to save on the way, or a finish on fumes. Refuel and the pit window then count with less, the window opens earlier, and a narrow finish can need no stop. The card says `incl. −1.0 L reserve`. Where no stop is needed but you would arrive short at your consumption, the card shows **TO SAVE** in orange with the litres and the litres per lap to save, instead of a spare at the finish; **At finish** and **NO STOP** then show the fuel actually left, below zero.
+
 Outside races, the laps on fuel ignore the reserve.
+
+## Refuel shortcut
+
+**Ctrl + Alt + Shift + F**, or a button on your wheel assigned under **Settings → Shortcuts**, enters the Fuel Calculator's refuel in iRacing's pit menu, rounded up to whole litres:
+
+- While more stops are to come and the pit window is open, a full tank, so the stop fills it whenever you come in.
+- At the last stop, the shortfall to the finish; it stays the same while you drive on.
+- Otherwise too the shortfall to the finish, with your [reserve](#fuel-reserve), at the consumption you plan with.
+- With enough fuel to finish it unticks the fuel in the pit menu.
+
+It works while you are in the car. For 5 s the refuel card shows `pit menu: +12 L`, and the Adjustments overlay, if switched on, shows **Refuel +12 L**. Before enough laps are counted it says `waiting for laps` and sets nothing. iRacing caps the fuel at what fits in the tank. The amount stays as set; press the shortcut again after the plan has changed.
 
 ## Finish forecasts
 
@@ -96,7 +111,7 @@ The optional **Fuel to finish (FUEL)** column is available independently in Rela
 | Yellow SAVE | Finishing falls within the configured additional fuel-saving allowance |
 | Blank | Insufficient modeled range or unavailable/unsupported evidence |
 
-**Settings → Additional laps with fuel saving** is a slider from 0 to 10 laps and defaults to **+3**. The allowance is converted to time using your pace. It affects yellow SAVE only; green END still uses normal full-tank range.
+**Settings → Laps opponents can gain by saving** is a slider from 0 to 10 laps and defaults to **+3**. The allowance is converted to time using your pace. It affects yellow SAVE only; green END still uses normal full-tank range.
 
 This is not a measurement of another car's fuel. RaceMate assumes a full tank at an observed race start or the exit from a completely observed service visit with at least two stationary seconds. It combines your restricted tank capacity, at least three clean consumption samples and your pace to estimate a full-tank duration. It then subtracts that opponent's elapsed stint time and compares the remainder with its projected time to finish.
 

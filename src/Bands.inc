@@ -45,15 +45,15 @@ std::vector<std::pair<int,RowList::Row>> WindowRows(const Overlay& o) {
     std::vector<std::pair<int,RowList::Row>> rows;
     auto add=[&](int item,const wchar_t* title,std::wstring detail) { RowList::Row row; row.title=title; row.detail=std::move(detail); rows.emplace_back(item,std::move(row)); return &rows.back().second; };
     auto slider=[](RowList::Row* row,int value,int from,int to) { row->slider=value; row->sliderMin=from; row->sliderMax=to; row->sliderStep=5; row->sliderUnit=L" %"; };
-    slider(add(WindowSize,L"Size",L"Text and layout alike"),o.place.scale,50,150);
-    slider(add(WindowOpacity,L"Opacity",L""),o.place.opacity,40,100);
-    add(WindowBackground,L"Background only",L"Text and markings stay solid")->toggle=o.place.backgroundOnly?1:0;
+    slider(add(WindowSize,L"Size",L"Scales text and layout together"),o.place.scale,50,150);
+    slider(add(WindowOpacity,L"Opacity",L"Lower lets the game show through"),o.place.opacity,40,100);
+    add(WindowBackground,L"Opacity for the background only",L"Only the panel fades; text and markings stay fully visible")->toggle=o.place.backgroundOnly?1:0;
     // The Side Warning's bars stay centred on their monitor, so no corner holds them.
     if(o.kind!=SideWarningKind) {
         auto* corner=add(WindowCorner,L"Fixed corner",std::wstring(OverlayCorners[CornerIndex(o.place)])+L"  \u00B7  it grows away from it");
         corner->choices={L"↖",L"↗",L"↙",L"↘"}; corner->choice=CornerIndex(o.place);
     }
-    auto* rate=add(WindowRate,L"Updates",L"Times a second it redraws");
+    auto* rate=add(WindowRate,L"Refresh rate",L"Times a second it redraws; lower uses less CPU");
     for(int n:OverlayRates) rate->choices.push_back(std::to_wstring(n));
     rate->choice=static_cast<int>(std::find(std::begin(OverlayRates),std::end(OverlayRates),o.place.rate)-std::begin(OverlayRates));
     // Straight alpha only for OBS's Default mode; while OBS gets nothing, nothing to choose.

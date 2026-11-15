@@ -110,7 +110,7 @@ private:
             expandable(head,Key::ClassHeader,-1,48); push(std::move(head),Key::ClassHeader);
             RowList::Row own; own.title=L"Only my class"; own.detail=L"Your class, or the class of the car you watch."; own.toggle=standings.ownClass?1:0;
             push(std::move(own),Key::OwnClass);
-            RowList::Row live; live.title=L"Live positions and gaps"; live.detail=L"Estimated from track position between start/finish crossings."; live.toggle=standings.liveGaps?1:0;
+            RowList::Row live; live.title=L"Live positions and gaps"; live.detail=L"Updated all lap long from where the cars are on track, estimated. Off: only when they cross the line."; live.toggle=standings.liveGaps?1:0;
             push(std::move(live),Key::LiveGaps);
             // As in the Relative; a layout for qualifying can show thousandths and one for races tenths.
             push(DecimalsRow(L"Gap decimals",L"Gap and interval"),Key::GapDecimals);

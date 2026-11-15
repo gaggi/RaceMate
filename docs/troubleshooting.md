@@ -86,7 +86,7 @@ Car-relative wind needs a heading for the car being driven or watched. If iRacin
 
 Misalignment in particular corners can result from schematic SVG distance differing from simulator distance. Report the TrackID, layout, direction and locations of the error, including whether start/finish aligns. Follow the [validation checklist](track-map-validation.md).
 
-**Background** is the official surroundings layer; **Background and frame** is the overlay panel. **Pit lane** toggles the drawing; **Cars in the pits** separately toggles markers.
+**Surroundings** is the official surroundings layer; **Background and frame** is the overlay panel. **Pit lane** toggles the drawing; **Cars in the pits** separately toggles markers.
 
 ## Race Control cannot replay an event
 

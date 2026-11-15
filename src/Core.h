@@ -377,6 +377,29 @@ struct FuelPlan {
     std::array<FuelLap, 10> history{}; int historyCount = 0; // Oldest first.
     RacePrediction prediction;
 };
+// Your own laps for the Lap Times overlay. A lap counts toward the stint average and the best lap when it ran whole
+// at racing speed: no pit lane, no caution, not the first partial lap. Leaving the pits starts a stint.
+struct TimedLap { int lap = -1; double time = -1; bool counted = false, pit = false, caution = false; int stint = 0; };
+struct LapSummary {
+    std::vector<TimedLap> laps;           // The last ones, oldest first.
+    double stintAverage = -1, best = -1;  // Of counted laps: in the current stint, and in the session.
+    int stintLaps = 0;
+};
+class LapTimes {
+public:
+    static constexpr int Size = 10;
+    static constexpr double ExactWait = 3; // Seconds to wait at the line for iRacing's own lap time.
+    void Reset() { *this = {}; }
+    void Update(const Session&, const Frame&);
+    LapSummary Summary() const;
+private:
+    void Finish(int index);
+    std::array<TimedLap, Size> laps_{}; int count_ = 0, cursor_ = 0;
+    std::string key_; int session_ = -1, player_ = -1, lap_ = -1, stint_ = 0, pending_ = -1;
+    bool anchored_ = false, partial_ = false, dirty_ = false, caution_ = false, inPit_ = false;
+    double start_ = -1, time_ = -1, crossed_ = -1, lastSeen_ = -1, pendingLast_ = -1, preStart_ = -1;
+    double stintSum_ = 0, best_ = -1; int stintCount_ = 0;
+};
 enum class OpponentFuelStatus { None, End, Save };
 // Own-class estimate: a full tank at the last observed stop, using own consumption and pace.
 OpponentFuelStatus OpponentFuel(const Session&, const Frame&, const FuelPlan&, int car, int extraLaps);

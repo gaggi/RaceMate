@@ -31,6 +31,7 @@ RaceMate puts nearby traffic, standings, fuel planning, weather, pit-limiter war
 | **Radar** | The cars around yours from above, with distances along the lap and lanes estimated from the spotter |
 | **Traffic** | Faster cars close behind you in multiclass races, with their gap |
 | **Adjustments** | ABS, TC, brake bias or another in-car adjustment you make, big for a moment, also in place of another overlay |
+| **Lap Times** | Your last ten laps with the gap to your best, the stint average and your best lap |
 | **Stream Cover** | Your own picture over the garage screen in OBS while you work on the setup |
 | **Race Control** | Observed incidents, pit visits and estimated passes, with camera/replay navigation |
 | **Layouts** | Independent arrangements that switch for driving, spectating or the garage |

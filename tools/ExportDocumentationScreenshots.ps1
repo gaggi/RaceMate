@@ -39,6 +39,7 @@ $images = [ordered]@{
     'traffic'               = @{ Sources = @('traffic-panel') }
     'side-warning'          = @{ Sources = @('side-warning-left') }
     'adjustments'           = @{ Sources = @('adjustments') }
+    'lap-times'             = @{ Sources = @('lap-times') }
 }
 # Check every source first so a missing optional cached map does not leave a partial export.
 foreach ($image in $images.Values) {

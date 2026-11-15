@@ -580,13 +580,76 @@ int RunDiagnostics() {
         bool reserveOk=true; const int savedTenths=app.reserveTenths; const bool savedLaps=app.reserveInLaps;
         app.reserveTenths=0; InvalidateModel(); const auto plain=FuelWindow();
         app.reserveTenths=20; app.reserveInLaps=false; Save(); app.reserveTenths=0; Load();
-        reserveOk=app.reserveTenths==20 && !app.reserveInLaps && ReserveText()==L"2.0 L" && reserveOk;
+        reserveOk=app.reserveTenths==20 && !app.reserveInLaps && ReserveText()==L"+2.0 L" && reserveOk;
         InvalidateModel(); const auto kept=FuelWindow();
         reserveOk=(!std::isfinite(plain.fuelAtEnd) || std::abs(kept.fuelAtEnd-(plain.fuelAtEnd-2))<1e-6) && reserveOk;
-        app.reserveInLaps=true; app.reserveTenths=10; reserveOk=ReserveLaps(3)==1 && ReserveLitres(3)==3 && ReserveText()==L"1.0 lap" && reserveOk;
+        app.reserveInLaps=true; app.reserveTenths=10; reserveOk=ReserveLaps(3)==1 && ReserveLitres(3)==3 && ReserveText()==L"+1 lap" && reserveOk;
         app.reserveInLaps=false; app.reserveTenths=30; reserveOk=ReserveLaps(3)==1 && ReserveLitres(-1)==3 && ReserveLaps(-1)==0 && reserveOk;
+        // Below zero: arriving with less leaves more at the finish.
+        app.reserveTenths=-15; reserveOk=ReserveLitres(3)==-1.5 && ReserveText()==L"−1.5 L" && reserveOk;
+        InvalidateModel(); const auto less=FuelWindow();
+        reserveOk=(!std::isfinite(plain.fuelAtEnd) || std::abs(less.fuelAtEnd-(plain.fuelAtEnd+1.5))<1e-6) && reserveOk;
+        // 8 L, five laps at 3 L and 10 L below zero: 3 L above the reserve is 7 L short, to save, not spare.
+        app.reserveTenths=-100; { PitWindow w; w.fuelAtEnd=3; reserveOk=std::abs(FuelAtFinish(w,3)+7)<1e-9 && reserveOk; }
+        app.reserveTenths=20; { PitWindow w; w.fuelAtEnd=3; reserveOk=FuelAtFinish(w,3)==3 && reserveOk; }
         app.reserveTenths=savedTenths; app.reserveInLaps=savedLaps; InvalidateModel(); Save();
-        report<<"Fuel reserve: stored, in litres or laps, kept at the finish: "<<(reserveOk?"PASS":"FAIL")<<"\n"; allOk=reserveOk && allOk;
+        // The consumption to plan with: a 5-lap average or one by hand, stored. The strip shows the chosen figures, as the panel does.
+        const int savedBasis=app.fuelBasis, savedManual=app.manualBurnHundredths;
+        app.fuelBasis=BasisManual; app.manualBurnHundredths=285; Save(); app.fuelBasis=BasisAverage10; app.manualBurnHundredths=0; Load(); InvalidateModel();
+        reserveOk=app.fuelBasis==BasisManual && app.manualBurnHundredths==285 && std::abs(BasisEstimate(Plan()).consumption-2.85)<1e-9 && BasisMetric()<0 && reserveOk;
+        app.fuelBasis=BasisAverage5; InvalidateModel();
+        reserveOk=BasisMetric()==static_cast<int>(FuelMetric::Average5) && BasisEstimate(Plan()).consumption==Plan().estimates[static_cast<int>(FuelMetric::Average5)].consumption && reserveOk;
+        {
+            auto& fuel=First(FuelKind); const FuelSettings settings=fuel.fuel;
+            fuel.fuel.strip=true; fuel.fuel.display.fill(false); fuel.fuel.display[FiguresModule]=true; fuel.fuel.figures.fill(false);
+            // The switches follow the figures' display order.
+            auto figure=[](FuelMetric metric){ for(int i=0;i<FuelMetricCount;++i) if(FuelFigures[i].metric==static_cast<int>(metric)) return i; return 0; };
+            fuel.fuel.figures[figure(FuelMetric::Average5)]=true; const int one=FuelStripCount(fuel);
+            fuel.fuel.figures[figure(FuelMetric::Last)]=true; UpdateOverlays();
+            reserveOk=one==1 && FuelStripCount(fuel)==2 && std::any_of(fuel.scene.begin(),fuel.scene.end(),[](const DrawCommand& c){ return c.text.rfind(L"AVG 5",0)==0; }) &&
+                std::any_of(fuel.scene.begin(),fuel.scene.end(),[](const DrawCommand& c){ return c.text==L"LAST"; }) && reserveOk;
+            fuel.fuel=settings; UpdateOverlays();
+        }
+        app.fuelBasis=savedBasis; app.manualBurnHundredths=savedManual; InvalidateModel(); Save();
+        report<<"Fuel reserve and plan: stored, in litres or laps, below zero, kept at the finish; 5-lap or manual consumption; chosen figures in the strip: "<<(reserveOk?"PASS":"FAIL")<<"\n"; allOk=reserveOk && allOk;
+    }
+    {
+        // Lap Times: the preview's laps newest first, the best in purple, the stint average under them; its settings
+        // stored, with height and width following them. The refuel shortcut enters the planned fuel and says so.
+        bool lapsOk=true; auto& laps=First(LapTimesKind); const auto savedLaps=laps.lapTimes; const bool savedEnabled=laps.place.enabled;
+        laps.place.enabled=true; UpdateOverlays();
+        auto shows=[&](const std::wstring& text,COLORREF color){ return std::any_of(laps.scene.begin(),laps.scene.end(),[&](const DrawCommand& c){ return c.text==text && c.color==color; }); };
+        lapsOk=laps.window && shows(L"0:53.412",Ink::Purple) && shows(L"L18",Ink::Label) && shows(L"CAUTION",Ink::Muted) && shows(L"STINT AVG (13)",Ink::Label) && lapsOk;
+        lapsOk=Export(laps.window,L"build\\qa\\lap-times.bmp") && lapsOk;
+        laps.lapTimes={5,false,false,true}; Save(); laps.lapTimes={}; Load();
+        lapsOk=laps.lapTimes.laps==5 && !laps.lapTimes.gap && !laps.lapTimes.stint && laps.lapTimes.best && OverlayWidth(laps)==LapTimesNarrow &&
+            HeightWithTitle(laps)==32+5*LapTimesRow+LapTimesSummary+FooterHeight(laps) && lapsOk;
+        laps.lapTimes=savedLaps; laps.place.enabled=savedEnabled; Save(); UpdateOverlays();
+        app.refuelSetAt=0; SendMessageW(app.main,WM_HOTKEY,7,0);
+        lapsOk=app.refuelSetAt && app.refuelText.rfind(L"+",0)==0 && app.refuelText.size()>3 && RefuelNote()==L"pit menu: "+app.refuelText && lapsOk;
+        app.refuelSetAt=0; UpdateOverlays();
+        report<<"Lap Times: newest first, best, caution and stint average, stored settings and size; the refuel shortcut and its note: "<<(lapsOk?"PASS":"FAIL")<<"\n"; allOk=lapsOk && allOk;
+    }
+    {
+        // Wheel buttons: one awaited is assigned beside the keys and stored with its device; pressed, it runs its
+        // shortcut and another button does not; the settings row shows both; the reset arrow removes it.
+        bool joyOk=true; const auto savedButtons=app.joyButtons;
+        JoyDevice wheel; wheel.vendor=0x346E; wheel.product=0x0006; wheel.name=L"Sample wheel";
+        app.joyCapture=6; ListenToButtons(); JoyPressed(wheel,12);
+        joyOk=app.joyCapture<0 && app.joyButtons[6]==JoyButton{0x346E,0x0006,12} && app.joyListening && joyOk;
+        app.joyButtons[6]={}; Load();
+        joyOk=app.joyButtons[6].button==12 && app.joyButtons[6].vendor==0x346E && app.joyButtons[6].name==L"Sample wheel" && app.hotkeys[6]==DefaultHotkeys[6] && joyOk;
+        app.refuelSetAt=0; JoyPressed(wheel,11); joyOk=!app.refuelSetAt && joyOk;
+        JoyPressed(wheel,12); joyOk=app.refuelSetAt!=0 && joyOk; app.refuelSetAt=0;
+        ShowPage(Page::Settings);
+        if(const HWND list=FindWindowExW(ui.host.Content(),nullptr,L"LaunchMateRowList",nullptr)) {
+            auto* rows=reinterpret_cast<RowList*>(GetWindowLongPtrW(list,GWLP_USERDATA)); int refuel=-1;
+            for(int i=0;i<static_cast<int>(rows->Rows().size());++i) if(rows->Rows()[i].title==L"Set refuel in iRacing") refuel=i;
+            joyOk=refuel>=0 && rows->Rows()[refuel].button==HotkeyText(DefaultHotkeys[6])+L", Button 12" && rows->Rows()[refuel].detail.find(L"Button 12 on Sample wheel")!=std::wstring::npos && joyOk;
+            if(refuel>=0) { rows->PressIconButton(refuel,0); joyOk=!app.joyButtons[6].button && joyOk; }
+        } else joyOk=false;
+        app.joyButtons=savedButtons; Save(); ListenToButtons(); UpdateOverlays(); ShowPage(Page::Overlays);
+        report<<"Wheel buttons: assigned while awaited, stored with the device, run their shortcut, shown and reset: "<<(joyOk?"PASS":"FAIL")<<"\n"; allOk=joyOk && allOk;
     }
     {
         // A layout to a file and back as a new layout, with or without its places; general settings in the file stay out.
@@ -1072,7 +1135,7 @@ int RunDiagnostics() {
         };
         ShowPage(Page::Overlays); aligned("Overlays");
         ShowPage(Page::Settings); aligned("Settings");
-        constexpr const char* pages[]={"Relative","Standings","Fuel Calculator","Pit Assist","Weather","Track Map","Side Warning","Radar","Traffic","Adjustments","Stream Cover"};
+        constexpr const char* pages[]={"Relative","Standings","Fuel Calculator","Pit Assist","Weather","Track Map","Side Warning","Radar","Traffic","Adjustments","Stream Cover","Lap Times"};
         static_assert(std::size(pages)==OverlayCount);
         for(int kind=0;kind<OverlayCount;++kind) { OpenOverlay(First(kind)); aligned(pages[kind]); }
         ShowPage(Page::Overlays);

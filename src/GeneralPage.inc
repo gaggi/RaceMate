@@ -3,7 +3,7 @@ class GeneralPage : public PageWindow {
 public:
     GeneralPage() : PageWindow(ui.heading,ui.text) {}
 private:
-    enum class Key { None, Theme, StartWithWindows, StartMinimized, TitleBar, FuelReserve, OpponentFuel, PitLane, PitService, Hotkey, CheckUpdates, Version, SnapToGrid, GridSize, SnapToOverlays };
+    enum class Key { None, Theme, StartWithWindows, StartMinimized, TitleBar, FuelBasis, ManualBurn, FuelReserve, FuelReserveAmount, OpponentFuel, PitLane, PitService, Hotkey, CheckUpdates, Version, SnapToGrid, GridSize, SnapToOverlays };
     static constexpr int ListId=100, HotkeyId=200, LaneEditId=202, TiresEditId=203, RateEditId=204;
     static constexpr int LaneRow=10, ServiceRow=11;
     // Below 5 Hz short offtracks and pit timing get lost.
@@ -13,17 +13,18 @@ private:
         editors_.Attach(list_,Instance(),TextFont());
         // Records a new shortcut while a shortcut's button waits for one: a hotkey field out of sight that takes the
         // keys. A shortcut needs Ctrl or Alt so plain typing is never captured; an F key may stand alone (CaptureProc).
+        // A button on a wheel, button box or gamepad pressed meanwhile is assigned beside the keys (JoyPressed).
         capture_=CreateWindowExW(0,HOTKEY_CLASSW,L"",WS_CHILD|WS_VISIBLE,-50,-50,1,1,Handle(),reinterpret_cast<HMENU>(static_cast<INT_PTR>(HotkeyId)),Instance(),nullptr);
         SendMessageW(capture_,HKM_SETRULES,HKCOMB_NONE|HKCOMB_S,MAKELPARAM(HOTKEYF_CONTROL|HOTKEYF_ALT,0));
         SetWindowSubclass(capture_,CaptureProc,1,reinterpret_cast<DWORD_PTR>(this));
         Refresh();
     }
-    // Esc cancels, Backspace or Delete turns the shortcut off; leaving the field ends the wait.
+    // Esc cancels, Backspace or Delete turns the shortcut off, keys and button; leaving the field ends the wait.
     static LRESULT CALLBACK CaptureProc(HWND w,UINT m,WPARAM wp,LPARAM lp,UINT_PTR id,DWORD_PTR data) {
         auto* page=reinterpret_cast<GeneralPage*>(data);
         const bool modified=GetKeyState(VK_CONTROL)<0 || GetKeyState(VK_MENU)<0;
         if((m==WM_KEYDOWN || m==WM_SYSKEYDOWN) && !modified && (wp==VK_ESCAPE || wp==VK_BACK || wp==VK_DELETE)) {
-            if(wp!=VK_ESCAPE && page->capturing_>=0) { app.hotkeys[page->capturing_]=0; Save(); }
+            if(wp!=VK_ESCAPE && page->capturing_>=0) { app.hotkeys[page->capturing_]=0; app.joyButtons[page->capturing_]={}; Save(); }
             page->EndCapture(); return 0;
         }
         // F1 to F24 alone or with Shift, which the field's rules would turn into Ctrl+Alt+F: no text is typed with them.
@@ -34,21 +35,23 @@ private:
         }
         if(m==WM_GETDLGCODE) return DLGC_WANTALLKEYS;
         if(m==WM_SETFOCUS && app.hotkeysEnabled) UnregisterHotkeys();
-        if(m==WM_KILLFOCUS) { RegisterHotkeys(); if(page->capturing_>=0) { page->capturing_=-1; PostMessageW(app.main,RefreshUiMessage,0,0); } }
+        if(m==WM_KILLFOCUS) { RegisterHotkeys(); app.joyCapture=-1; ListenToButtons(); if(page->capturing_>=0) { page->capturing_=-1; PostMessageW(app.main,RefreshUiMessage,0,0); } }
         if(m==WM_NCDESTROY) RemoveWindowSubclass(w,CaptureProc,id);
         return DefSubclassProc(w,m,wp,lp);
     }
     void StartCapture(int hotkey) {
-        capturing_=hotkey; SendMessageW(capture_,HKM_SETHOTKEY,0,0);
+        capturing_=hotkey; SendMessageW(capture_,HKM_SETHOTKEY,0,0); app.joyCapture=hotkey; ListenToButtons();
         Refresh(); SetFocus(capture_);
     }
     void EndCapture() {
-        capturing_=-1; SetFocus(list_.Handle()); // Registers the shortcuts again.
+        capturing_=-1; app.joyCapture=-1; SetFocus(list_.Handle()); // Registers the shortcuts again.
         Refresh(); UpdateStatus();
     }
     void OnSize(int width,int height) override { Place(list_.Handle(),0,0,width,height); }
 
     void Refresh() {
+        // A button assigned ends the wait for one.
+        if(capturing_>=0 && app.joyCapture!=capturing_) { capturing_=-1; SetFocus(list_.Handle()); }
         std::vector<RowList::Row> rows; keys_.clear(); hotkeys_.clear();
         auto push=[&](RowList::Row row,Key key,int hotkey=-1) { rows.push_back(std::move(row)); keys_.push_back(key); hotkeys_.push_back(hotkey); };
         auto header=[&](const wchar_t* title) { RowList::Row row; row.header=true; row.title=title; push(std::move(row),Key::None); };
@@ -66,7 +69,7 @@ private:
         if(!startupError_.empty()) { rows.back().pill=L"Not changed"; rows.back().pillTone=RowList::Tone::Warning; }
         toggle(Key::StartMinimized,L"Start minimized",L"In the tray; overlays work as usual",app.startMinimized);
         header(L"Overlays");
-        toggle(Key::TitleBar,L"Headers on all overlays",L"Every overlay at once; each page also has its own",app.showTitleBar);
+        toggle(Key::TitleBar,L"Headers on all overlays",L"Switches the title bar of every overlay at once; each overlay's page can still change its own",app.showTitleBar);
         toggle(Key::SnapToGrid,L"Snap to grid while moving",L"Hold Alt to place freely",app.snapToGrid);
         {
             RowList::Row grid; grid.title=L"Grid size"; grid.detail=L"Pixels between grid lines"; grid.muted=!app.snapToGrid;
@@ -74,12 +77,26 @@ private:
         }
         toggle(Key::SnapToOverlays,L"Snap to other overlays",L"Edges and centre lines, shown by a magenta line",app.snapToOverlays);
         header(L"Fuel strategy");
-        RowList::Row reserve; reserve.title=L"Reserve at the finish"; reserve.button=MenuButton(ReserveText());
+        RowList::Row basis; basis.title=L"Consumption to plan with"; basis.choices={L"Avg 10",L"Avg 5",L"Manual"}; basis.choice=app.fuelBasis;
+        basis.detail=app.fuelBasis==BasisManual?L"Set by hand, for range, refuel, pit window and targets":
+            (app.fuelBasis==BasisAverage5?L"Last 5 counted laps, for range, refuel, pit window and targets":L"Last 10 counted laps, for range, refuel, pit window and targets");
+        push(std::move(basis),Key::FuelBasis);
+        if(app.fuelBasis==BasisManual) {
+            RowList::Row manual; manual.title=L"Manual consumption"; manual.detail=L"Litres per lap";
+            manual.slider=app.manualBurnHundredths; manual.sliderMin=ManualBurnMin; manual.sliderMax=ManualBurnMax; manual.sliderStep=5; manual.sliderDecimals=2; manual.sliderUnit=L" L";
+            push(std::move(manual),Key::ManualBurn);
+        }
+        RowList::Row reserve; reserve.title=L"Reserve at the finish"; reserve.choices={L"Litres",L"Laps"}; reserve.choice=app.reserveInLaps?1:0;
         reserve.detail=L"Kept in refuel, needed fuel and the pit window";
         push(std::move(reserve),Key::FuelReserve);
+        RowList::Row amount; amount.title=L"Reserve"; amount.sliderSigned=true;
+        amount.detail=app.reserveTenths<0?L"Below zero: you plan to arrive with less, as when saving fuel at the end":(app.reserveTenths?L"Kept in the tank at the flag":L"None");
+        if(app.reserveInLaps) { amount.slider=app.reserveTenths/10; amount.sliderMin=ReserveMinLaps; amount.sliderMax=ReserveMaxLaps; amount.sliderUnit=L" laps"; }
+        else { amount.slider=app.reserveTenths; amount.sliderMin=ReserveMinTenths; amount.sliderMax=ReserveMaxTenths; amount.sliderStep=5; amount.sliderDecimals=1; amount.sliderUnit=L" L"; }
+        push(std::move(amount),Key::FuelReserveAmount);
         header(L"Opponent fuel estimate");
-        RowList::Row fuel; fuel.title=L"Additional laps with fuel saving";
-        fuel.detail=L"Yellow SAVE in the Relative and Standings; green END uses your full-tank range"; fuel.slider=app.opponentFuelExtraLaps; fuel.sliderMin=0; fuel.sliderMax=10; fuel.sliderUnit=L" laps";
+        RowList::Row fuel; fuel.title=L"Laps opponents can gain by saving";
+        fuel.detail=L"How far beyond its normal range a car of your class can stretch a tank: within it, Fuel to finish shows yellow SAVE"; fuel.slider=app.opponentFuelExtraLaps; fuel.sliderMin=0; fuel.sliderMax=10; fuel.sliderUnit=L" laps";
         push(std::move(fuel),Key::OpponentFuel);
         RowList::Row assumption; assumption.title=L"Full tank assumed at the last observed stop";
         assumption.detail=L"With your class's tank, consumption and pace; blank without enough data";
@@ -107,18 +124,21 @@ private:
         }
         header(L"Shortcuts  \u00B7  work in every program, iRacing too");
         // Click the shortcut, then press the new one; the reset arrow appears where it differs from the default.
-        const wchar_t* names[]={L"Move overlays",L"Hide all overlays",L"Open settings",L"Previous event in Race Control",L"Next event in Race Control",L"Pause OBS output"};
+        const wchar_t* names[]={L"Move overlays",L"Hide all overlays",L"Open settings",L"Previous event in Race Control",L"Next event in Race Control",L"Pause OBS output",L"Set refuel in iRacing"};
         const wchar_t* details[]={L"Drag the overlays with the mouse; press it again when done.",L"Hides every overlay on your screen, and shows them again; OBS keeps its output.",
-            L"Brings this window to the front.",L"Replays the event before the selected one; opens Race Control if it is closed.",L"Replays the event after the selected one.",L"Stops sending to OBS, and starts again; your screen is unchanged."};
+            L"Brings this window to the front.",L"Replays the event before the selected one; opens Race Control if it is closed.",L"Replays the event after the selected one.",L"Stops sending to OBS, and starts again; your screen is unchanged.",
+            L"Enters the Fuel Calculator's refuel in the pit menu, rounded up to whole litres."};
         static_assert(std::size(names)==HotkeyCount && std::size(details)==HotkeyCount);
         for(int i=0;i<HotkeyCount;++i) {
             RowList::Row row; row.title=names[i]; row.detail=details[i];
-            row.button=i==capturing_?L"Press a shortcut \u2026":HotkeyText(app.hotkeys[i]);
+            const auto& joy=app.joyButtons[i]; const std::wstring button=L"Button "+std::to_wstring(joy.button);
+            row.button=i==capturing_?L"Press a shortcut \u2026":(!joy.button?HotkeyText(app.hotkeys[i]):(LOBYTE(app.hotkeys[i])?HotkeyText(app.hotkeys[i])+L", "+button:button));
+            if(joy.button) row.detail+=L"  \u00B7  "+button+L" on "+(joy.name.empty()?std::wstring(L"a controller"):joy.name);
             // A shortcut takes its keys from every program: an F key alone no longer reaches iRacing.
             if(LOBYTE(app.hotkeys[i]) && !(HIBYTE(app.hotkeys[i])&(HOTKEYF_CONTROL|HOTKEYF_ALT))) row.detail+=L"  \u00B7  iRacing no longer gets "+HotkeyText(app.hotkeys[i]);
-            if(i==capturing_) row.detail=L"With Ctrl or Alt, or an F key alone  \u00B7  Esc cancels  \u00B7  Backspace turns it off";
+            if(i==capturing_) row.detail=L"With Ctrl or Alt, an F key alone, or a button on your wheel  \u00B7  Esc cancels  \u00B7  Backspace turns it off";
             if(app.hotkeyError.find(HotkeyKeys[i])!=std::wstring::npos) { row.pill=L"In use"; row.pillTone=RowList::Tone::Warning; }
-            row.iconButtons={app.hotkeys[i]!=DefaultHotkeys[i]?Glyph::Reset:wchar_t{0}};
+            row.iconButtons={app.hotkeys[i]!=DefaultHotkeys[i] || joy.button?Glyph::Reset:wchar_t{0}};
             push(std::move(row),Key::Hotkey,i);
         }
         header(L"Updates");
@@ -189,23 +209,22 @@ private:
             break;
         case Key::StartMinimized: if(code==RowList::kToggled) { SetStartMinimized(on); Refresh(); } break;
         case Key::TitleBar: if(code==RowList::kToggled) { SetShowTitleBar(on); Refresh(); } break;
+        case Key::FuelBasis: if(code==RowList::kChoice) { app.fuelBasis=list_.NotifiedChoice(); InvalidateModel(); SettingChanged(); Refresh(); } break;
+        case Key::ManualBurn: if(code==RowList::kSlider) { app.manualBurnHundredths=list_.Rows()[row].slider; InvalidateModel(); SettingChanged(); } break;
         case Key::FuelReserve:
-            if(pressed) {
-                // In litres or in laps; a choice stores the amount in tenths and its unit.
-                static constexpr struct { int tenths; bool laps; } choices[]={{0,false},{5,false},{10,false},{20,false},{30,false},{50,false},{5,true},{10,true},{20,true}};
-                std::vector<std::wstring> items; int checked=-1;
-                for(size_t i=0;i<std::size(choices);++i) {
-                    const auto& c=choices[i];
-                    items.push_back(!c.tenths?std::wstring(L"None"):Format(c.tenths/10.0,1)+(c.laps?(c.tenths==10?L" lap":L" laps"):L" L"));
-                    if(c.tenths==app.reserveTenths && (c.laps==app.reserveInLaps || !c.tenths)) checked=static_cast<int>(i);
-                }
-                const int choice=ChooseFromMenu(items,checked);
-                if(choice>=0) { app.reserveTenths=choices[choice].tenths; app.reserveInLaps=choices[choice].laps; InvalidateModel(); SettingChanged(); Refresh(); }
+            // The amount keeps its number in the other unit, laps rounded to whole ones.
+            if(code==RowList::kChoice && (list_.NotifiedChoice()==1)!=app.reserveInLaps) {
+                app.reserveInLaps=list_.NotifiedChoice()==1;
+                app.reserveTenths=app.reserveInLaps?std::clamp(static_cast<int>(std::lround(app.reserveTenths/10.0)),ReserveMinLaps,ReserveMaxLaps)*10:std::clamp(app.reserveTenths,ReserveMinTenths,ReserveMaxTenths);
+                InvalidateModel(); SettingChanged(); Refresh();
             }
+            break;
+        case Key::FuelReserveAmount:
+            if(code==RowList::kSlider) { const int value=list_.Rows()[row].slider; app.reserveTenths=app.reserveInLaps?value*10:value; InvalidateModel(); SettingChanged(); Refresh(); }
             break;
         case Key::OpponentFuel: if(code==RowList::kSlider) { app.opponentFuelExtraLaps=list_.Rows()[row].slider; SettingChanged(); Refresh(); } break;
         case Key::Hotkey:
-            if(code==RowList::kIconButton) { app.hotkeys[hotkeys_[row]]=DefaultHotkeys[hotkeys_[row]]; RegisterHotkeys(); Save(); Refresh(); UpdateStatus(); }
+            if(code==RowList::kIconButton) { app.hotkeys[hotkeys_[row]]=DefaultHotkeys[hotkeys_[row]]; app.joyButtons[hotkeys_[row]]={}; RegisterHotkeys(); ListenToButtons(); Save(); Refresh(); UpdateStatus(); }
             else if(pressed) StartCapture(hotkeys_[row]);
             break;
         case Key::PitLane: if(code==RowList::kIconButton || code==RowList::kActivated) Expand(LaneRow); break;

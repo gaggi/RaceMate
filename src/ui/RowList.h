@@ -96,6 +96,8 @@ public:
         // Instead of a button: a slider from sliderMin to sliderMax in steps of sliderStep, at slider, with its unit.
         int slider{}, sliderMin{}, sliderMax{}, sliderStep{1};
         std::wstring sliderUnit;
+        int sliderDecimals{};   // The value shown divided by 10 to this power, with as many decimals.
+        bool sliderSigned{};    // A plus before values above zero; a minus always.
         // Glyphs from Segoe Fluent Icons / Segoe MDL2 Assets; [0] is the rightmost:
         // expand first, then the others. Every row of a card with a toggle or icon
         // buttons reserves as many slots as the row with the most, so toggles and
@@ -277,6 +279,20 @@ private:
 
     int Scale(int value) const { return MulDiv(value, GetDpiForWindow(window_), 96); }
     static bool HasSlider(const Row& row) { return row.sliderMax > row.sliderMin; }
+    static std::wstring SliderText(const Row& row)
+    {
+        int scale = 1;
+        for (int i = 0; i < row.sliderDecimals; ++i) scale *= 10;
+        const int amount = std::abs(row.slider);
+        std::wstring text = std::to_wstring(amount / scale);
+        if (row.sliderDecimals)
+        {
+            const std::wstring fraction = std::to_wstring(amount % scale);
+            text += L"." + std::wstring(static_cast<size_t>(row.sliderDecimals) - fraction.size(), L'0') + fraction;
+        }
+        if (row.slider < 0) return L"\u2212" + text;
+        return row.sliderSigned && row.slider > 0 ? L"+" + text : text;
+    }
     static bool HasButton(const Row& row) { return !row.button.empty() || !row.choices.empty() || HasSlider(row); }
     bool Chosen(const Row& row, size_t choice) const { return row.choiceFlags ? (row.choice >= 0 && (row.choice >> choice & 1)) : row.choice == static_cast<int>(choice); }
 
@@ -835,7 +851,7 @@ private:
             SelectObject(dc, textFont_);
             SetTextColor(dc, UiTheme::Text);
             RECT text{track.right + Scale(4), layout.button.top, layout.button.right, layout.button.bottom};
-            DrawTextW(dc, (std::to_wstring(row.slider) + row.sliderUnit).c_str(), -1, &text, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            DrawTextW(dc, (SliderText(row) + row.sliderUnit).c_str(), -1, &text, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
 
         SelectObject(dc, glyphFont_);
